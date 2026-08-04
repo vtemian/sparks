@@ -25,7 +25,7 @@ Verified live on 2026-08-04, not read off a document:
 - Grafana 13.1.1 at `http://spark.local` (port 80), anonymous **Viewer**, datasource uid literally
   `prometheus`, one dashboard uid `spark-overview`.
 - Scrape jobs `node`, `gpu`, `prometheus` all up.
-- `/srv/bbm/{data,checkpoints,runs}`, mode 2775, group `bbm`. Both `vlad` and `marius` are in it.
+- `/srv/bbm/{data,checkpoints,runs}`, mode 2775, group `bbm`. Both human accounts are in it.
 - `/var/lib/node_exporter/textfile`, mode 2775, group `bbm`, empty.
 - Power **is** live: 14 `node_hwmon_power_watt` channels, `sys_total` ~36 W idle, and 4 energy
   counters (`pkg`, `cpu_e`, `cpu_p`, `gpu`).
@@ -159,8 +159,8 @@ a missing bind-mount source. Add to `tests/harness/vars.yml` and create the dire
 Verify after `make apply`:
 
 ```bash
-ssh vlad@spark.local 'ls -ld /srv/bbm/dashboards'       # drwxrwsr-x root bbm
-ssh vlad@spark.local 'touch /srv/bbm/dashboards/.probe && rm /srv/bbm/dashboards/.probe && echo writable'
+ssh "$SPARKS_HOST" 'ls -ld /srv/bbm/dashboards'       # drwxrwsr-x root bbm
+ssh "$SPARKS_HOST" 'touch /srv/bbm/dashboards/.probe && rm /srv/bbm/dashboards/.probe && echo writable'
 ```
 
 Then `make apply` again and confirm `changed=0`.
@@ -2143,7 +2143,7 @@ same idea: **never query a metric nobody emits.**
 ```python
 import pytest
 
-from tests.check_dashboard import CheckFailed, check, substitute
+from tests.check_dashboard import CheckFailed, check, metric_names, substitute
 
 
 def test_variables_are_substituted_not_rejected() -> None:
@@ -2157,6 +2157,23 @@ def test_rate_interval_is_substituted() -> None:
 def test_an_unknown_variable_is_an_error() -> None:
     with pytest.raises(CheckFailed):
         substitute("training_loss{x=~\"$nope\"}")
+
+
+def test_the_metric_inside_a_join_group_is_found() -> None:
+    # The shape every joined panel uses. A naive "identifier followed by
+    # something" scan misses training_run_info here, because it is followed by
+    # a closing paren, and the checker then silently skips it.
+    found = metric_names(
+        'training_loss{run_id=~"r"} * on(run_id) group_left(run_name, git_sha) '
+        "max by (run_id, run_name, git_sha) (training_run_info)"
+    )
+    assert found == {"training_loss", "training_run_info"}
+
+
+def test_label_names_are_not_mistaken_for_metrics() -> None:
+    assert metric_names('node_hwmon_power_watt{label="sys_total"}') == {
+        "node_hwmon_power_watt"
+    }
 
 
 def test_the_shipped_dashboard_passes() -> None:
@@ -2214,11 +2231,23 @@ VARIABLES = {
     "$__range": "3h",
 }
 
-METRIC = re.compile(r"\b([a-zA-Z_:][a-zA-Z0-9_:]*)\s*(?=[({\[]|\s|$)")
+# Strip the parts of an expression that contain identifiers which are not
+# metric names, then read what is left. A single "identifier followed by
+# something" regex is not enough: it misses the metric inside
+# `max by (...) (training_run_info)`, which is the shape every joined panel
+# uses, and a checker that silently skips the interesting half is worse than
+# no checker.
+STRINGS = re.compile(r"\"[^\"]*\"|'[^']*'")
+LABELS = re.compile(r"\{[^}]*\}")
+RANGES = re.compile(r"\[[^\]]*\]")
+MODIFIERS = re.compile(
+    r"\b(?:by|without|on|ignoring|group_left|group_right)\s*\([^)]*\)"
+)
+IDENT = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
+CALL = re.compile(r"([a-zA-Z_:][a-zA-Z0-9_:]*)\s*\(")
 KEYWORDS = {
-    "by", "on", "group_left", "group_right", "without", "ignoring", "offset",
-    "and", "or", "unless", "bool", "rate", "increase", "sum", "avg", "min",
-    "max", "count", "topk", "time", "last_over_time", "avg_over_time", "label",
+    "by", "without", "on", "ignoring", "group_left", "group_right", "offset",
+    "and", "or", "unless", "bool", "default", "start", "end",
 }
 
 
@@ -2235,13 +2264,22 @@ def substitute(expr: str) -> str:
 
 
 def metric_names(expr: str) -> set[str]:
-    """Every identifier that looks like a metric name."""
-    found = set()
-    for name in METRIC.findall(expr):
-        if name in KEYWORDS or name.isdigit():
-            continue
-        found.add(name)
-    return found
+    """Every identifier left once the non-metric ones are removed.
+
+    Verified against every expression the shipped dashboard contains, including
+    `... group_left(run_name, git_sha) max by (run_id, ...) (training_run_info)`,
+    where the metric sits inside a parenthesised group that a naive scan skips.
+    """
+    stripped = STRINGS.sub(" ", expr)
+    stripped = LABELS.sub(" ", stripped)
+    stripped = RANGES.sub(" ", stripped)
+    stripped = MODIFIERS.sub(" ", stripped)
+    called = set(CALL.findall(stripped))  # functions and aggregators
+    return {
+        name
+        for name in IDENT.findall(stripped)
+        if name not in called and name not in KEYWORDS
+    }
 
 
 def allowed(name: str) -> bool:
@@ -2450,13 +2488,13 @@ different mount. Grafana's `spark` provider walks its path recursively and resca
 no restart is needed.
 
 ```bash
-scp dashboards/training-runs.json vlad@spark.local:/srv/bbm/dashboards/
+scp dashboards/training-runs.json $SPARKS_HOST:/srv/bbm/dashboards/
 ```
 
 If Branch 1 has not landed yet, the fallback needs root and should be treated as temporary:
 
 ```bash
-ssh vlad@spark.local 'sudo install -o root -g root -m 0644 \
+ssh "$SPARKS_HOST" 'sudo install -o root -g root -m 0644 \
   /srv/bbm/dashboards/training-runs.json \
   /opt/monitoring/grafana/dashboards/training-runs.json'
 ```
@@ -2464,7 +2502,7 @@ ssh vlad@spark.local 'sudo install -o root -g root -m 0644 \
 Wait 15 seconds, then confirm Grafana picked it up:
 
 ```bash
-ssh vlad@spark.local 'curl -s http://127.0.0.1/api/search?query= | python3 -m json.tool | grep -A1 uid'
+ssh "$SPARKS_HOST" 'curl -s http://127.0.0.1/api/search?query= | python3 -m json.tool | grep -A1 uid'
 ```
 
 Expected: both `spark-overview` and `training-runs`.
@@ -2477,9 +2515,9 @@ cross-platform determinism story rests on; `bbm/scripts/spark.sh` rebuilds it wi
 
 ```bash
 rsync -az --delete --exclude '.git/' --exclude '.venv/' --exclude '__pycache__/' \
-  /Users/whitemonk/projects/ai/sparks/ vlad@spark.local:~/sparks/
-ssh vlad@spark.local '~/bbm-train/.venv/bin/pip install -e ~/sparks'
-ssh vlad@spark.local '~/bbm-train/.venv/bin/python -c "import sparks; print(\"ok\")"'
+  ./ "$SPARKS_HOST":sparks/
+ssh "$SPARKS_HOST" '~/bbm-train/.venv/bin/pip install -e ~/sparks'
+ssh "$SPARKS_HOST" '~/bbm-train/.venv/bin/python -c "import sparks; print(\"ok\")"'
 ```
 
 Expected: `ok`
@@ -2489,7 +2527,7 @@ Expected: `ok`
 40 epochs at 8 steps of 1 s is about 5 minutes and 30 seconds.
 
 ```bash
-ssh vlad@spark.local '~/bbm-train/.venv/bin/sparks demo --name acceptance'
+ssh "$SPARKS_HOST" '~/bbm-train/.venv/bin/sparks demo --name acceptance'
 ```
 
 Expected: a run id and a URL. Open the URL. While it plays, confirm:
@@ -2509,7 +2547,7 @@ for five minutes, the stale markers are not working and Task 2's Q3 answer was `
 **Step 4: Check what the receiver thought of it**
 
 ```bash
-ssh vlad@spark.local 'curl -s --get http://127.0.0.1:9090/api/v1/query \
+ssh "$SPARKS_HOST" 'curl -s --get http://127.0.0.1:9090/api/v1/query \
   --data-urlencode "query=prometheus_api_remote_write_invalid_labels_samples_total"'
 ```
 
@@ -2517,7 +2555,7 @@ Expected: absent, or `0`. **Anything above zero means series were dropped silent
 returned 200**, and the label names need fixing.
 
 ```bash
-ssh vlad@spark.local 'curl -s --get http://127.0.0.1:9090/api/v1/query \
+ssh "$SPARKS_HOST" 'curl -s --get http://127.0.0.1:9090/api/v1/query \
   --data-urlencode "query=prometheus_tsdb_out_of_order_samples_total"'
 ```
 
