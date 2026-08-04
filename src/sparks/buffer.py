@@ -51,7 +51,14 @@ class Buffer:
                 )
             return out
 
-    def seen(self) -> list[Series]:
-        """Every series this buffer has ever sent, for the stale markers."""
+    def seen(self) -> dict[Series, int]:
+        """Every series sent so far, mapped to its last timestamp.
+
+        The timestamp is what lets a stale marker land strictly after the real
+        sample it ends. A marker sharing a millisecond with the last sample is
+        `duplicate sample for timestamp`, an HTTP 400, and remote-write 1.0
+        rolls back the whole request, so one collision means no series gets its
+        marker and every one of them flat-lines instead.
+        """
         with self._lock:
-            return list(self._last)
+            return dict(self._last)

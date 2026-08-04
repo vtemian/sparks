@@ -11,6 +11,7 @@ variable. This is the same rule applied to a pushed dashboard.
 import json
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,8 @@ RANGES = re.compile(r"\[[^\]]*\]")
 MODIFIERS = re.compile(
     r"\b(?:by|without|on|ignoring|group_left|group_right)\s*\([^)]*\)"
 )
+LABEL_VALUES = re.compile(r"label_values\(\s*(.+?)\s*,\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\)")
+NAME_MATCHER = re.compile(r"__name__\s*=~?\s*\"([^\"]*)\"")
 IDENT = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
 CALL = re.compile(r"([a-zA-Z_:][a-zA-Z0-9_:]*)\s*\(")
 KEYWORDS = {
@@ -86,12 +89,17 @@ def metric_names(expr: str) -> set[str]:
     `... group_left(run_name, git_sha) max by (run_id, ...) (training_run_info)`,
     where the metric sits inside a parenthesised group that a naive scan skips.
     """
+    # `{__name__="foo"}` names a metric from inside the label set, so it has to
+    # be read out before the label set is stripped. Otherwise the whole
+    # expression reduces to nothing and a panel querying an invented metric
+    # passes with an empty result set.
+    named = set(NAME_MATCHER.findall(expr))
     stripped = STRINGS.sub(" ", expr)
     stripped = LABELS.sub(" ", stripped)
     stripped = RANGES.sub(" ", stripped)
     stripped = MODIFIERS.sub(" ", stripped)
     called = set(CALL.findall(stripped))  # functions and aggregators
-    return {
+    return named | {
         name
         for name in IDENT.findall(stripped)
         if name not in called and name not in KEYWORDS
@@ -102,12 +110,31 @@ def allowed(name: str) -> bool:
     return name in METRICS or name.startswith(SCRAPED_PREFIXES)
 
 
+def walk_panels(panels: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+    """Every panel, including the children of a collapsed row.
+
+    Grafana moves a row's children *inside* that row's own `panels` array when
+    the row is collapsed, so a one-level walk stops seeing them the moment
+    somebody collapses a row in the UI and re-exports. That is a silent loss of
+    coverage rather than a failure, which is the worst kind.
+    """
+    for panel in panels:
+        yield panel
+        yield from walk_panels(panel.get("panels", []))
+
+
 def expressions(dashboard: dict[str, Any]) -> list[str]:
     out: list[str] = []
-    for panel in dashboard["panels"]:
+    for panel in walk_panels(dashboard["panels"]):
         for target in panel.get("targets", []):
             if "expr" in target:
                 out.append(target["expr"])
+    # The variable query is the dashboard's entry point: a typo there ships an
+    # empty Run dropdown and every panel is blank, with nothing else failing.
+    for variable in dashboard.get("templating", {}).get("list", []):
+        definition = variable.get("definition")
+        if definition:
+            out.append(LABEL_VALUES.sub(r"\1", definition))
     return out
 
 

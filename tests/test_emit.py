@@ -1,7 +1,10 @@
 from typing import Any
 
+import pytest
+
 from sparks.emit import RunMetrics
 from sparks.metrics import LIFECYCLE
+from sparks.series import InvalidLabel
 
 
 def names(drained: list[dict[str, Any]]) -> set[str]:
@@ -109,10 +112,43 @@ def test_the_run_record_is_never_marked_stale() -> None:
     # millisecond later over everything the buffer has seen. Without the
     # lifecycle exemption it erases them immediately and training_run_status
     # never resolves. The live test caught this; this pins it.
-    m = RunMetrics(run_id="run-1", url="http://127.0.0.1:1", autostart=True)
+    m = make()
     m.begin()
     m.log(loss=0.5)
+    m._buffer.drain()  # what the pump would have sent, so seen() is populated
     m.end("finished")
-    staled = {s.name for s in m._buffer.seen() if s.name not in LIFECYCLE}
+    m._buffer.drain()
+
+    # Assert on the batch _mark_stale actually builds. Re-deriving the filter
+    # in the test would only check the test's own arithmetic, and would still
+    # pass with the exemption deleted from the implementation.
+    staled = {d["metric"]["__name__"] for d in m._stale_batch()}
     assert "training_loss" in staled
-    assert not staled & LIFECYCLE
+    assert not staled & LIFECYCLE, f"the run's own record was staled: {staled}"
+
+
+def test_a_stale_marker_lands_after_the_sample_it_ends() -> None:
+    # Sharing a millisecond with the last real sample is a duplicate-timestamp
+    # 400, and remote-write rolls back the whole request, so one collision
+    # means no series gets a marker at all.
+    m = make()
+    m.log(loss=0.5)
+    m._buffer.drain()
+    last = {s: ts for s, ts in m._buffer.seen().items() if s.name == "training_loss"}
+    ((series, sent_at),) = last.items()
+    marker = next(
+        d for d in m._stale_batch() if d["metric"]["__name__"] == "training_loss"
+    )
+    assert marker["timestamps"][0] > sent_at
+    assert series.name == "training_loss"
+
+
+def test_an_invalid_label_is_refused_on_the_caller_thread() -> None:
+    # Not five seconds later on the pump, where it would kill telemetry for the
+    # rest of the run behind a bare threading traceback.
+    with pytest.raises(InvalidLabel):
+        RunMetrics(run_id="r", url="http://unused", autostart=False, info={"g-s": "a"})
+    with pytest.raises(InvalidLabel):
+        RunMetrics(
+            run_id="r", url="http://unused", autostart=False, labels={"a b": "c"}
+        )

@@ -65,6 +65,12 @@ class RunMetrics:
         self.url = url.rstrip("/")
         self._info = {"run_id": run_id, **(info or {})}
         self._labels = {"run_id": run_id, **(labels or {})}
+        # Fail here, on the caller's thread, rather than five seconds later on
+        # the pump. _beat builds these same two Series every cycle, and an
+        # InvalidLabel raised there would kill telemetry for the whole run with
+        # nothing but a bare threading traceback to show for it.
+        Series("training_run_info", self._info)
+        Series("training_run_heartbeat_timestamp_seconds", self._labels)
         self._buffer = Buffer()
         self._writer: Any = None
         self._thread: Any = None
@@ -165,10 +171,19 @@ class RunMetrics:
         atexit.register(self._shutdown)
 
     def _pump(self) -> None:
-        """The only thread that ever calls send()."""
+        """The only thread that ever calls send().
+
+        The body is guarded as a whole, not just the network call. An exception
+        anywhere in here kills the thread for the rest of the run, nothing
+        restarts it, and the only trace is a bare threading.excepthook that no
+        training log would ever show.
+        """
         while not self._stop.wait(FLUSH_SECONDS):
-            self._beat(time.time())
-            self._flush()
+            try:
+                self._beat(time.time())
+                self._flush()
+            except Exception as e:  # deliberately broad: the pump must not die
+                LOG.warning("sparks: pump cycle failed: %s", e, exc_info=True)
 
     def _flush(self) -> None:
         batch = self._buffer.drain()
@@ -184,6 +199,20 @@ class RunMetrics:
             return
         self._stop.set()
         self._thread.join(timeout=FLUSH_SECONDS * 2)
+        if self._thread.is_alive():
+            # The pump is wedged inside send(). A stalled Prometheus that
+            # accepts the connection and never answers costs 4 attempts at a 5s
+            # read timeout, which outlives this join, and flushing here anyway
+            # would put a second writer on the wire. Remote-write 1.0 rolls back
+            # a whole request on one bad sample, so the two batches can destroy
+            # each other. Losing the terminal samples is the lesser harm, and
+            # the frozen heartbeat still says the run stopped.
+            LOG.warning(
+                "sparks: pump still sending after %.0fs; skipping the final "
+                "flush rather than writing concurrently",
+                FLUSH_SECONDS * 2,
+            )
+            return
         self._flush()
         self._mark_stale()
 
@@ -196,15 +225,28 @@ class RunMetrics:
         the buffer has seen would erase them a millisecond after writing them and
         `training_run_status` would never resolve at all.
         """
-        ended = int(time.time() * 1000)
-        batch = [
-            {"metric": s.as_metric(), "values": [STALE_NAN], "timestamps": [ended]}
-            for s in self._buffer.seen()
-            if s.name not in LIFECYCLE
-        ]
+        batch = self._stale_batch()
         if not batch:
             return
         try:
             self._writer.send(batch)
         except Exception as e:  # deliberately broad: telemetry never kills a run
             LOG.warning("sparks: could not mark %d series stale: %s", len(batch), e)
+
+    def _stale_batch(self) -> list[dict[str, Any]]:
+        """The stale markers this run would write, separated out so a test can
+        assert on the batch itself rather than re-implementing the filter and
+        then checking its own arithmetic."""
+        ended = int(time.time() * 1000)
+        return [
+            {
+                "metric": series.as_metric(),
+                "values": [STALE_NAN],
+                # Strictly after the last real sample. Sharing its millisecond
+                # is a 400 that rolls back every marker in the batch, and the
+                # measured margin here is single-digit milliseconds.
+                "timestamps": [max(ended, last + 1)],
+            }
+            for series, last in self._buffer.seen().items()
+            if series.name not in LIFECYCLE
+        ]

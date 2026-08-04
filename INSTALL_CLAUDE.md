@@ -165,3 +165,39 @@ experiments viewable.
 
 If permanence beyond retention is wanted, the answer is `POST /api/snapshots` at run end, which
 freezes a board **with its data** into a URL that never queries Prometheus again.
+
+## Findings from the slice-1 code review, and what they changed
+
+All six were real. Two were mutation-proven before and after the fix.
+
+- **`_shutdown` used to flush without checking the join result**, so a Prometheus that accepts the
+  connection and never answers (compaction, memory pressure, the other person's job) put a second
+  writer on the wire: measured at 12 concurrent `send()` calls, with `end()` blocking for 56s.
+  That breaks the single-writer invariant the whole design exists to enforce. `_shutdown` now
+  returns without flushing if the pump is still alive. Losing the terminal samples is the lesser
+  harm, and the frozen heartbeat still says the run stopped.
+  `tests/test_concurrency.py` pins it against a real stalling HTTP server; with the check removed
+  that test fails and takes 63s.
+- **`_mark_stale` picked its own timestamp**, and the measured margin against the last real sample
+  was 2 to 7 ms. A collision is `duplicate sample for timestamp`, a 400, and the rollback means *no*
+  series gets a marker and every one of them flat-lines. It now uses `max(now, last + 1)` per series,
+  which is why `Buffer.seen()` returns timestamps rather than just names.
+- **The pump loop had no exception guard.** Only `send()` was wrapped, so an `InvalidLabel` from
+  `_beat` killed telemetry for the rest of the run behind a bare `threading.excepthook`, with
+  `_stop` never set so nothing could detect it. The loop body is guarded now, and `RunMetrics.__init__`
+  builds both Series eagerly so a bad label fails on the caller's thread instead.
+- **The first `test_the_run_record_is_never_marked_stale` was vacuous**: it re-implemented
+  `_mark_stale`'s filter in the test and asserted its own arithmetic, and still passed with the
+  exemption deleted from the implementation. `_stale_batch()` was split out so the test can assert
+  on the batch that is actually sent.
+- **The dashboard checker had two bypasses.** `{__name__="fake_metric"}` names a metric from inside
+  the label set, which was stripped before being read, so such a panel passed with an empty result
+  set. And `expressions()` walked only one level, so a panel inside a *collapsed* row was invisible
+  (Grafana nests the children in the row panel on collapse, which is one UI round-trip away). It now
+  reads `__name__` matchers, recurses, and checks the templating variable's own query.
+- **`tests/test_metrics.py` was in the plan and never written.** `METRICS` is the checker's
+  allowlist, so an invalid name in it makes a metric dashboardable and unemittable.
+
+Known and accepted: `SCRAPED_PREFIXES` means the checker's guarantee covers `training_*` only.
+`node_hwmon_energy_input_joule_total`, the typo this project has now made twice, passes it. Checking
+the scraped half needs sparkup's exporter defaults, which is its checker's job, not this one's.

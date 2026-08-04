@@ -1,6 +1,12 @@
 import pytest
 
-from tests.check_dashboard import CheckFailed, check, metric_names, substitute
+from tests.check_dashboard import (
+    CheckFailed,
+    check,
+    expressions,
+    metric_names,
+    substitute,
+)
 
 
 def test_variables_are_substituted_not_rejected() -> None:
@@ -40,3 +46,41 @@ def test_the_shipped_dashboard_passes() -> None:
 def test_a_panel_querying_an_undeclared_metric_fails() -> None:
     with pytest.raises(CheckFailed):
         check(extra_exprs=["training_invented_metric"])
+
+
+def test_a_metric_named_from_inside_the_label_set_is_found() -> None:
+    # `{__name__="x"}` is a legal way to name a metric. Stripping the label set
+    # before reading it reduces the whole expression to nothing, so a panel
+    # querying an invented metric passes with an empty result set.
+    assert metric_names('{__name__="totally_fake_metric"}') == {"totally_fake_metric"}
+    assert metric_names('{__name__=~"training_invented.*"}') == {"training_invented.*"}
+    assert "fake_metric" in metric_names(
+        'training_loss{run_id=~"r"} or {__name__="fake_metric"}'
+    )
+
+
+def test_a_panel_hidden_in_a_collapsed_row_is_still_checked() -> None:
+    # Grafana moves a row's children inside the row panel when it is collapsed,
+    # so a one-level walk silently stops seeing them after a UI round-trip.
+    collapsed = {
+        "panels": [
+            {
+                "type": "row",
+                "collapsed": True,
+                "panels": [{"targets": [{"expr": "training_invented_metric"}]}],
+            }
+        ]
+    }
+    assert expressions(collapsed) == ["training_invented_metric"]
+
+
+def test_the_variable_query_is_checked_too() -> None:
+    # A typo here ships an empty Run dropdown and a blank dashboard, with every
+    # panel query still passing.
+    board = {
+        "panels": [],
+        "templating": {
+            "list": [{"definition": "label_values(training_run_inf, run_id)"}]
+        },
+    }
+    assert expressions(board) == ["training_run_inf"]
