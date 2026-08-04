@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from sparks.metrics import METRICS
 
 ROOT = Path(__file__).resolve().parents[1]
-DASHBOARD = ROOT / "dashboards" / "training-runs.json"
+DASHBOARDS = ROOT / "dashboards"
 
 # Scraped by sparkup, so legitimate here even though sparks never emits them.
 # Prefixes, because node_exporter names a series after every key in
@@ -34,6 +34,9 @@ VARIABLES = {
     "$__rate_interval": "5m",
     "$__interval": "1m",
     "$__range": "3h",
+    # A Grafana constant variable, so the tariff can change without a dashboard
+    # rebuild. Substituted here as a plain number so the expression parses.
+    "$tariff": "1.3",
 }
 
 # Strip the parts of an expression that contain identifiers which are not
@@ -129,6 +132,15 @@ def expressions(dashboard: dict[str, Any]) -> list[str]:
         for target in panel.get("targets", []):
             if "expr" in target:
                 out.append(target["expr"])
+    # An annotation naming a metric nobody emits draws no region and fails
+    # nothing else. Grafana's own built-in annotations are not PromQL, so they
+    # are skipped by looking at the datasource rather than the shape.
+    for anno in dashboard.get("annotations", {}).get("list", []):
+        if anno.get("datasource", {}).get("type") != "prometheus":
+            continue
+        expr = anno.get("target", {}).get("expr")
+        if expr:
+            out.append(expr)
     # The variable query is the dashboard's entry point: a typo there ships an
     # empty Run dropdown and every panel is blank, with nothing else failing.
     for variable in dashboard.get("templating", {}).get("list", []):
@@ -138,11 +150,23 @@ def expressions(dashboard: dict[str, Any]) -> list[str]:
     return out
 
 
+def dashboards() -> list[Path]:
+    """Every board this repo ships. A hardcoded single path is how a second
+    dashboard ends up shipping unvalidated, which is the gap in sparkup's
+    equivalent."""
+    return sorted(DASHBOARDS.glob("*.json"))
+
+
 def check(extra_exprs: list[str] | None = None) -> None:
-    dashboard = json.loads(DASHBOARD.read_text())
-    exprs = expressions(dashboard) + list(extra_exprs or [])
-    if not exprs:
-        raise CheckFailed("the dashboard has no queries at all")
+    boards = dashboards()
+    if not boards:
+        raise CheckFailed("no dashboards found to check")
+    exprs = list(extra_exprs or [])
+    for path in boards:
+        found = expressions(json.loads(path.read_text()))
+        if not found:
+            raise CheckFailed(f"{path.name} has no queries at all")
+        exprs += found
     for expr in exprs:
         for name in metric_names(substitute(expr)):
             if not allowed(name):
@@ -158,7 +182,7 @@ def main() -> int:
     except CheckFailed as e:
         print(f"FAIL: {e}", file=sys.stderr)
         return 1
-    print(f"ok: {DASHBOARD.name}")
+    print("ok: " + ", ".join(p.name for p in dashboards()))
     return 0
 
 

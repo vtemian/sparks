@@ -1,0 +1,34 @@
+# Alerts for the failures nothing else reports.
+#
+# sparkup's INSTALL_CLAUDE.md says a non-world-readable .prom fails silently.
+# That is wrong: it sets node_textfile_scrape_error 1. The genuinely silent
+# failures are below, and the first one is the reason this file exists.
+groups:
+  - name: sparks
+    rules:
+      - alert: SparksRunIndexEmpty
+        # An empty or headers-only .prom reports scrape_error 0, a FRESH mtime,
+        # and zero series. Total data loss with every health signal green.
+        # Nothing in node_exporter reports it; this is the only defence.
+        expr: absent(sparks_run_info)
+        for: 15m
+        annotations:
+          summary: "The run index is empty or unreadable"
+
+      - alert: SparksTextfileError
+        # Catches unparseable, unreadable, timestamped, or missing-newline
+        # files. Note there is no `file` label, so this says something broke
+        # without saying what.
+        expr: node_textfile_scrape_error{job="node_textfile"} > 0
+        for: 15m
+        annotations:
+          summary: "node_exporter could not read a textfile collector file"
+
+      - alert: SparksDuplicateSeries
+        # A duplicate series within one file, or across two files with matching
+        # HELP, is dropped by the gatherer with scrape_error still 0. This
+        # counter is the only place it surfaces.
+        expr: rate(promhttp_metric_handler_errors_total{cause="gathering"}[15m]) > 0
+        for: 15m
+        annotations:
+          summary: "node_exporter is dropping duplicate series"

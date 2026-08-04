@@ -1,8 +1,10 @@
 import pytest
 
 from tests.check_dashboard import (
+    ROOT,
     CheckFailed,
     check,
+    dashboards,
     expressions,
     metric_names,
     substitute,
@@ -84,3 +86,44 @@ def test_the_variable_query_is_checked_too() -> None:
         },
     }
     assert expressions(board) == ["training_run_inf"]
+
+
+def test_every_shipped_dashboard_is_checked_not_just_one() -> None:
+    # sparkup's equivalent hardcodes a single path, which is how a second board
+    # ships unvalidated. Ours must find them all.
+    found = {p.name for p in dashboards()}
+    assert "training-runs.json" in found
+    assert len(found) == len(list(dashboards()))
+    assert found == {p.name for p in (ROOT / "dashboards").glob("*.json")}
+
+
+def test_the_annotation_query_is_checked_too() -> None:
+    # An annotation naming a metric nobody emits draws no region and fails
+    # nothing else.
+    board = {
+        "panels": [],
+        "annotations": {
+            "list": [
+                {
+                    "datasource": {"type": "prometheus", "uid": "prometheus"},
+                    "target": {"expr": "training_run_invented"},
+                }
+            ]
+        },
+    }
+    assert "training_run_invented" in expressions(board)
+
+
+def test_a_grafana_builtin_annotation_is_not_treated_as_promql() -> None:
+    board = {
+        "panels": [],
+        "annotations": {
+            "list": [
+                {
+                    "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+                    "target": {"type": "dashboard", "limit": 100},
+                }
+            ]
+        },
+    }
+    assert expressions(board) == []
