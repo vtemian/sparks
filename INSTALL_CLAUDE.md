@@ -279,3 +279,55 @@ minutes and that is the honest behaviour.
   exists, and falls back to `<shared>/index` otherwise.** The fallback is never scraped. On a real
   box confirm the file is where node_exporter reads it, or `count(sparks_run_info)` stays empty and
   `SparksRunIndexEmpty` fires forever.
+
+## Energy under real load, which corrects the design research
+
+Everything the design research said about power was extrapolated, because no GPU-saturating run had
+ever coincided with spbm hwmon coverage. One finally did, and the extrapolation was low.
+
+```
+                        research said        measured under real load
+sys_total, loaded       ~95 W (extrapolated)   125.7 W   (max seen 166.6 W)
+sys_total, max ever      42.4 W                166.6 W
+gpu rail                 ~73 W (extrapolated)   73.7 W
+NVML draw                 60 W                  61.6 W
+gpu / sys_total          "0.5 is the ceiling"    0.586
+firmware gpu / NVML       1.22                   1.195
+```
+
+Three things follow.
+
+- **The "0.5 ceiling" on `gpu_energy / total_energy` is wrong.** Measured 0.586 under load, so a
+  heuristic like "below 0.5 means the GPU is not the bottleneck" would misread a genuinely
+  GPU-bound run. The research predicted this would break and it did.
+- **The 22.5% NVML-versus-firmware gap holds under real load** (1.195 against 1.22 at idle), which
+  is the strongest evidence yet that it is a measurement-boundary difference rather than noise.
+  Keep reporting both, labelled.
+- **Cost is still small but not as small as the plan said.** At 166.6 W and 1.3 RON/kWh a
+  continuously saturating box is 0.217 RON/hour, so a 40-minute run is about 0.14 RON. The plan's
+  "2 to 9 bani" was based on a 42 W ceiling that no longer holds. Watt-hours per run between configs
+  remains the number worth reading; the currency column remains decoration.
+
+## Verified on the box
+
+The acceptance matrix, run against real hardware with a training job in flight:
+
+```
+t1  true                                    finished   exit=0    signal=None     $?=0
+t2  sh -c 'exit 3'                          crashed    exit=3    signal=None     $?=3
+t4  trap "exit 0" TERM; sleep 30            cancelled  exit=0    signal=SIGTERM  $?=143
+    (the WRAPPER signalled, child exited 0 under its own power)
+```
+
+t4 is the row that matters, and both `exit_code` and `signal` are set at once. All three runs landed
+`training_run_info`, `training_run_status` and `training_run_end_timestamp_seconds`; before the
+second-writer fix, the non-`finished` ones held nothing at all. `training_run_active` returns zero
+series once the runs end, so the annotation region is exact.
+`prometheus_api_remote_write_invalid_labels_samples_total` and `prometheus_tsdb_out_of_order_samples_total`
+are both 0.
+
+The index writes `0644`, ends with a newline, and passes `promtool check metrics`.
+
+**`--url` and `--grafana` are top-level flags and must precede the subcommand**:
+`sparks --url http://127.0.0.1:9090 run --name x -- cmd`. Putting them after `run` is an argparse
+usage error and exits 2.
