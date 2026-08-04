@@ -2143,7 +2143,7 @@ same idea: **never query a metric nobody emits.**
 ```python
 import pytest
 
-from tests.check_dashboard import CheckFailed, check, substitute
+from tests.check_dashboard import CheckFailed, check, metric_names, substitute
 
 
 def test_variables_are_substituted_not_rejected() -> None:
@@ -2157,6 +2157,23 @@ def test_rate_interval_is_substituted() -> None:
 def test_an_unknown_variable_is_an_error() -> None:
     with pytest.raises(CheckFailed):
         substitute("training_loss{x=~\"$nope\"}")
+
+
+def test_the_metric_inside_a_join_group_is_found() -> None:
+    # The shape every joined panel uses. A naive "identifier followed by
+    # something" scan misses training_run_info here, because it is followed by
+    # a closing paren, and the checker then silently skips it.
+    found = metric_names(
+        'training_loss{run_id=~"r"} * on(run_id) group_left(run_name, git_sha) '
+        "max by (run_id, run_name, git_sha) (training_run_info)"
+    )
+    assert found == {"training_loss", "training_run_info"}
+
+
+def test_label_names_are_not_mistaken_for_metrics() -> None:
+    assert metric_names('node_hwmon_power_watt{label="sys_total"}') == {
+        "node_hwmon_power_watt"
+    }
 
 
 def test_the_shipped_dashboard_passes() -> None:
@@ -2214,11 +2231,23 @@ VARIABLES = {
     "$__range": "3h",
 }
 
-METRIC = re.compile(r"\b([a-zA-Z_:][a-zA-Z0-9_:]*)\s*(?=[({\[]|\s|$)")
+# Strip the parts of an expression that contain identifiers which are not
+# metric names, then read what is left. A single "identifier followed by
+# something" regex is not enough: it misses the metric inside
+# `max by (...) (training_run_info)`, which is the shape every joined panel
+# uses, and a checker that silently skips the interesting half is worse than
+# no checker.
+STRINGS = re.compile(r"\"[^\"]*\"|'[^']*'")
+LABELS = re.compile(r"\{[^}]*\}")
+RANGES = re.compile(r"\[[^\]]*\]")
+MODIFIERS = re.compile(
+    r"\b(?:by|without|on|ignoring|group_left|group_right)\s*\([^)]*\)"
+)
+IDENT = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
+CALL = re.compile(r"([a-zA-Z_:][a-zA-Z0-9_:]*)\s*\(")
 KEYWORDS = {
-    "by", "on", "group_left", "group_right", "without", "ignoring", "offset",
-    "and", "or", "unless", "bool", "rate", "increase", "sum", "avg", "min",
-    "max", "count", "topk", "time", "last_over_time", "avg_over_time", "label",
+    "by", "without", "on", "ignoring", "group_left", "group_right", "offset",
+    "and", "or", "unless", "bool", "default", "start", "end",
 }
 
 
@@ -2235,13 +2264,22 @@ def substitute(expr: str) -> str:
 
 
 def metric_names(expr: str) -> set[str]:
-    """Every identifier that looks like a metric name."""
-    found = set()
-    for name in METRIC.findall(expr):
-        if name in KEYWORDS or name.isdigit():
-            continue
-        found.add(name)
-    return found
+    """Every identifier left once the non-metric ones are removed.
+
+    Verified against every expression the shipped dashboard contains, including
+    `... group_left(run_name, git_sha) max by (run_id, ...) (training_run_info)`,
+    where the metric sits inside a parenthesised group that a naive scan skips.
+    """
+    stripped = STRINGS.sub(" ", expr)
+    stripped = LABELS.sub(" ", stripped)
+    stripped = RANGES.sub(" ", stripped)
+    stripped = MODIFIERS.sub(" ", stripped)
+    called = set(CALL.findall(stripped))  # functions and aggregators
+    return {
+        name
+        for name in IDENT.findall(stripped)
+        if name not in called and name not in KEYWORDS
+    }
 
 
 def allowed(name: str) -> bool:
