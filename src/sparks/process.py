@@ -210,6 +210,7 @@ class Supervisor:
         oom_before = oom_kills(self.cgroup)
         log = self.log_path.open("wb")
         reader: io.BufferedReader | None = None
+        tee: threading.Thread | None = None
         try:
             # Handlers before the child exists, so a signal arriving in the gap
             # is recorded and delivered as soon as there is something to deliver
@@ -258,9 +259,21 @@ class Supervisor:
 
             self._sweep()
             tee.join(timeout=self.drain_seconds)
+            if tee.is_alive():
+                LOG.warning(
+                    "sparks: something still holds %s open after %.0fs; the log "
+                    "stops here",
+                    self.log_path,
+                    self.drain_seconds,
+                )
         finally:
             self._restore()
-            if reader is not None:
+            # Only when the tee has finished with it. `close()` takes the same
+            # lock the reader holds while blocked in read(), so closing it under
+            # a live tee waits for the writer that outlived the drain -- which
+            # is the exact hostage situation the bounded join exists to avoid.
+            # Measured: a 0.1s run held here for 60s by three strays.
+            if reader is not None and (tee is None or not tee.is_alive()):
                 reader.close()
             log.close()
 

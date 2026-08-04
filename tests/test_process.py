@@ -12,6 +12,7 @@ is correct for a checkpointing training script and would make this suite
 unusable.
 """
 
+import contextlib
 import os
 import signal
 import subprocess
@@ -43,6 +44,7 @@ def supervisor(
     command: list[str],
     grace: float = GRACE,
     sweep: float = SWEEP,
+    drain: float = DRAIN,
     cgroup: Path | None = None,
 ) -> Supervisor:
     return Supervisor(
@@ -50,7 +52,7 @@ def supervisor(
         tmp_path / "stdout.log",
         cgroup=cgroup,
         grace_seconds=grace,
-        drain_seconds=DRAIN,
+        drain_seconds=drain,
         sweep_seconds=sweep,
         poll_seconds=POLL,
     )
@@ -300,6 +302,58 @@ def test_the_duration_excludes_the_wait_for_orphaned_writers(tmp_path: Path) -> 
 
     assert done.duration_seconds < 1.0, "cleanup was billed to the run"
     assert elapsed - done.duration_seconds > 0.8, "the cleanup never happened"
+
+
+def test_a_stray_the_sweep_cannot_reach_never_holds_the_wrapper_open(
+    tmp_path: Path,
+) -> None:
+    """A grandchild in its own session inherits the stdout pipe and is out of
+    reach of the group sweep, so the tee never sees EOF. The drain is bounded
+    for exactly this, and so is everything after it: closing the reader under a
+    live tee waits on the same lock the blocked read holds, which held a 0.1 s
+    run open for the stray's full 60 s before it was caught."""
+    drain = 1.0
+    pidfile = tmp_path / "stray.pid"
+    stray = tmp_path / "stray.py"
+    stray.write_text(
+        textwrap.dedent(
+            """
+            import os, pathlib, sys, time
+            pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
+            time.sleep(20)
+            """
+        ).lstrip()
+    )
+    command = child(
+        tmp_path,
+        "escapes",
+        """
+        import pathlib, subprocess, sys, time
+        subprocess.Popen(
+            [sys.executable, sys.argv[1], sys.argv[2]], start_new_session=True
+        )
+        while not pathlib.Path(sys.argv[2]).exists():
+            time.sleep(0.01)
+        print('spawned', flush=True)
+        sys.exit(0)
+        """,
+        str(stray),
+        str(pidfile),
+    )
+
+    started = time.monotonic()
+    done = supervisor(tmp_path, command, drain=drain).run()
+    elapsed = time.monotonic() - started
+    try:
+        assert done.outcome.status == "finished"
+        assert done.duration_seconds < 1.0
+        assert elapsed > drain, "the drain was skipped; late output would be lost"
+        assert elapsed < drain + 2.0, "the wrapper waited on a process it cannot kill"
+    finally:
+        # Tolerant on purpose: if the wrapper did wait, the stray is long gone
+        # by now and the assertion above is the failure worth reading.
+        with contextlib.suppress(OSError, ValueError):
+            os.kill(int(pidfile.read_text()), signal.SIGKILL)
 
 
 # -- output -------------------------------------------------------------------
