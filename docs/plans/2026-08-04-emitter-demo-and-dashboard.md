@@ -119,6 +119,113 @@ batch is rolled back. Timestamps are int64 **milliseconds**.
 
 ---
 
+## Task 0: The sparkup changes
+
+Four separate branches, one concern each, because sparkup's CONTRIBUTING asks for that. Branch 1 is
+a prerequisite for Task 14; the rest are independent and can land in any order.
+
+Every one of these was verified against the running box on 2026-08-04, not inferred.
+
+### Branch 1: a dashboard directory other projects can write
+
+**Why:** `/opt/monitoring/grafana/dashboards/` is root:root 0755. A dashboard cannot be installed
+there without sudo, so every deploy needs root and nothing a job writes for itself can land at all.
+This gives sparkup a documented seam for handing Grafana a dashboard, without sparkup learning
+anything about training.
+
+`group_vars/all.yml`:
+
+```diff
+-spark_shared_subdirs: [data, checkpoints, runs]
++spark_shared_subdirs: [data, checkpoints, runs, dashboards]
+```
+
+`roles/monitoring/templates/compose.yml.j2`, in the grafana service's volumes:
+
+```diff
+       - ./grafana/dashboards:{{ monitoring_dashboards_container_dir }}:ro
++      # Other projects hand Grafana a dashboard by writing here. The directory
++      # is setgid to the shared group, so a job installs its own board without
++      # root. The `spark` provider walks its path recursively and picks these
++      # up, so this needs no second provider and cannot collide with one.
++      - "{{ spark_shared_dir }}/dashboards:{{ monitoring_dashboards_container_dir }}/sparks:ro"
+```
+
+**The part that breaks CI if you skip it.** `tests/harness/render.yml` renders this same template, so
+the harness needs `spark_shared_dir` set to a directory it creates, or `make dashboard-live` fails on
+a missing bind-mount source. Add to `tests/harness/vars.yml` and create the directory in
+`tests/harness-up.sh` before `docker compose up`.
+
+Verify after `make apply`:
+
+```bash
+ssh vlad@spark.local 'ls -ld /srv/bbm/dashboards'       # drwxrwsr-x root bbm
+ssh vlad@spark.local 'touch /srv/bbm/dashboards/.probe && rm /srv/bbm/dashboards/.probe && echo writable'
+```
+
+Then `make apply` again and confirm `changed=0`.
+
+### Branch 2: retention
+
+**Why:** this is what makes one dashboard plus a `$run_id` variable a permanent experiment index
+instead of a rolling 30-day window, and it is the reason generated per-run dashboards were rejected.
+
+`group_vars/all.yml`:
+
+```diff
+-prometheus_retention: 30d
++prometheus_retention: 1y
+```
+
+**Measured cost, on this box on 2026-08-04:** 1527 active series, 101.7 samples/sec, 55 MB of TSDB
+after roughly a day and a half, so on the order of 10 GB for a year against 3.5 TB free. Recheck
+`prometheus_tsdb_head_series` before assuming this still holds if the exporter set grows.
+
+Note the interaction with the dashboard: `label_values(training_run_info, run_id)` is bounded by the
+dashboard's time range, and the variable's `refresh: 2` re-queries when that range changes. So the
+dropdown shows runs from the visible window, not all year. Widening the range is what surfaces old
+runs, and the slice-2 overview table is the real entry point for them. Say this in the variable's
+description rather than letting someone conclude the retention change did not work.
+
+### Branch 3: the energy metric name
+
+**Why:** the documented PromQL returns nothing. The series is `node_hwmon_energy_joule_total`;
+`node_hwmon_energy_input_joule_total` does not exist. Confirmed live: 4 counters, `pkg` 180833 J,
+`cpu_e` 1788 J, `cpu_p` 4997 J, `gpu` 68693 J. The repo's own code has it right already
+(`tests/fake_exporters.py:198` and the dashboard), so this is a prose-only fix in two files:
+
+- `docs/training-observability.md:24` and `:202`
+- `INSTALL_CLAUDE.md:117`
+
+Same class of bug as commit `9d731f8` ("Fix the power metric name"), made again for energy and never
+caught because nothing queries it yet.
+
+### Branch 4: declare spbm
+
+**Why, stated accurately.** The urgency here is lower than it first appears. Verified on the box:
+Secure Boot is enabled, `CN=spark Secure Boot Module Signature key` **is already enrolled**,
+`spbm-dkms 0.3.0` is installed, DKMS has built for all three kernels including the running
+`6.17.0-1029-nvidia`, and `linux-headers-nvidia-hwe-24.04` is present. So DKMS *will* rebuild on the
+next kernel and power is not about to stop.
+
+The real problem is that none of that is declared. `spbm_enabled` is absent from
+`host_vars/spark.yml`, so it inherits `false` and the role is skipped on every converge. The packages
+are installed because somebody installed them before the role became opt-in. Nothing in tracked
+config maintains them, so a rebuilt box, a removed meta package or a rotated PPA silently loses
+power with no error.
+
+`host_vars/spark.yml` is **gitignored, so this is not a branch at all**, it is a local edit:
+
+```yaml
+spbm_enabled: true
+```
+
+Then `make apply`. Because the key is already enrolled, this should not ask for a trip to the
+machine; the role's own MOK check finds the key present. If the converge reports otherwise, stop and
+read `roles/spbm/README.md` rather than rebooting to find out.
+
+---
+
 ## Task 1: Scaffold the repo
 
 **Files:**
@@ -2336,17 +2443,22 @@ The point of the slice. Everything until now was rehearsal.
 
 **Step 1: Push the dashboard**
 
-The dashboard goes into the directory sparkup already provisions. This survives a sparkup
-re-converge: `roles/monitoring/tasks/main.yml:55-63` uses `ansible.builtin.copy`, which has no purge
-option and can only overwrite a file whose **basename** collides with something in
-`roles/monitoring/files/dashboards/`. Today that is only `spark-overview.json`. `remove_orphans:
-true` removes containers, not files. Grafana's `spark` provider rescans on a 10s timer, so no restart
-is needed.
+Requires Task 0 Branch 1 to have landed, so `/srv/bbm/dashboards` exists and is group-writable. No
+sudo, and nothing sparkup's converge will touch: its `copy` task can only overwrite a **basename**
+collision inside `/opt/monitoring/grafana/dashboards/`, which is a different directory and a
+different mount. Grafana's `spark` provider walks its path recursively and rescans on a 10s timer, so
+no restart is needed.
 
 ```bash
-scp dashboards/training-runs.json vlad@spark.local:/tmp/
+scp dashboards/training-runs.json vlad@spark.local:/srv/bbm/dashboards/
+```
+
+If Branch 1 has not landed yet, the fallback needs root and should be treated as temporary:
+
+```bash
 ssh vlad@spark.local 'sudo install -o root -g root -m 0644 \
-  /tmp/training-runs.json /opt/monitoring/grafana/dashboards/training-runs.json'
+  /srv/bbm/dashboards/training-runs.json \
+  /opt/monitoring/grafana/dashboards/training-runs.json'
 ```
 
 Wait 15 seconds, then confirm Grafana picked it up:
@@ -2510,10 +2622,46 @@ git commit -m "docs: the README and the agent doc"
   about it.
 - `INSTALL_CLAUDE.md` records the spike answers and the three spec corrections.
 
+## Two dashboard decisions, settled twice. Do not re-open them.
+
+**There is no dashboard per experiment.** One `training-runs` board with a `$run_id` variable, and a
+deep link per run. Killed on 2026-07-31 on Grafana's own best-practice guidance ("you don't need a
+separate dashboard for each node, you can use query variables") and because no maintained project
+anywhere generates one per run. Re-raised on 2026-08-04 and killed again on a stronger argument:
+**a generated per-run dashboard queries live Prometheus, so it is an empty grid of panels once its
+data ages out.** It looks like a permanent record of an experiment and is not one. Raising retention
+(Task 0 Branch 2) is what actually makes old experiments viewable, and it costs one word.
+
+For the record, since it was the stated model: **k6 does not do this either.** Community dashboard
+19665 defines `testid` as `label_values(...)` with `multi: true` and filters every panel on it. One
+dashboard, one variable. That is the pattern this plan already implements.
+
+If permanence beyond retention is ever wanted, the answer is `POST /api/snapshots` at run end, which
+freezes a board **with its data** into a URL that never queries Prometheus again. That is a real
+per-experiment artifact. It needs the same Grafana service account token annotations need.
+
+**The overview dashboard is slice 2, and it comes from the textfile collector.** One table, one row
+per run: run_id, who submitted it, name, arm and seed, start, duration, status, watt-hours, cost,
+final loss, with per-row data links into `training-runs` with the time range pinned to that run.
+
+Source it from `/var/lib/node_exporter/textfile`, **not** from remote-write, and the reason is not
+convenience. A textfile `.prom` is re-scraped every 15s for as long as the file exists, so those
+series never go stale and never age out; the files on disk stay the source of truth even if the TSDB
+is lost entirely. Pushed metrics expire. That difference is exactly the difference between a live run
+view and a permanent experiment log. The directory is already group `bbm` mode 2775, so no root is
+needed, but the files must be `0644` and written atomically (`mktemp` in the same directory, then
+`mv`) or node_exporter skips them in silence.
+
+Write **one** aggregated `sparks_runs.prom` rebuilt from `/srv/bbm/runs/*/summary.json`, not one file
+per run: the collector reads every file in the directory on every scrape, so hundreds of files is a
+scrape-latency problem. That same exporter publishes the queue in slice 3, so it is one component.
+
 ## What slice 1 deliberately does not do
 
 - **No `sparks run -- <cmd>`.** Slice 2. It brings run directories under `/srv/bbm/runs/<id>/`,
-  the NVML energy delta, the idle baseline, and `summary.json`.
+  the NVML energy delta, the idle baseline, `summary.json`, and the `sparks-overview` table described
+  above. A `user` label comes from the submitting account, which is what makes "who ran this"
+  answerable.
 - **No annotations.** They need `POST /api/annotations` and the box's Grafana is anonymous Viewer.
   Resolving that means a service account token provisioned by sparkup. First problem of slice 2.
 - **No queue.** Slice 3: a spool directory under `/srv/bbm`, one systemd service under a `sparks`
