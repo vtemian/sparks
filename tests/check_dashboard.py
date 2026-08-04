@@ -1,0 +1,139 @@
+"""Every panel query names a metric something actually emits.
+
+sparkup's equivalent cannot check this board: it hardcodes one file path,
+asserts the uid matches the Grafana home page, derives its allowlist only from
+node_exporter's collectors, and refuses any expression containing a Grafana
+variable. This is the same rule applied to a pushed dashboard.
+
+    uv run python tests/check_dashboard.py
+"""
+
+import json
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from sparks.metrics import METRICS
+
+ROOT = Path(__file__).resolve().parents[1]
+DASHBOARD = ROOT / "dashboards" / "training-runs.json"
+
+# Scraped by sparkup, so legitimate here even though sparks never emits them.
+# Prefixes, because node_exporter names a series after every key in
+# /proc/meminfo and an exhaustive list would be a claim about a kernel.
+SCRAPED_PREFIXES = ("node_", "nvidia_smi_", "up", "scrape_")
+
+# What a Grafana variable becomes for parsing purposes. A real run id, so the
+# regex the datasource would generate is the regex promtool parses.
+VARIABLES = {
+    "$run_id": "run-20260804-1530-demo",
+    "$__rate_interval": "5m",
+    "$__interval": "1m",
+    "$__range": "3h",
+}
+
+# Strip the parts of an expression that contain identifiers which are not
+# metric names, then read what is left. A single "identifier followed by
+# something" regex is not enough: it misses the metric inside
+# `max by (...) (training_run_info)`, which is the shape every joined panel
+# uses, and a checker that silently skips the interesting half is worse than
+# no checker.
+STRINGS = re.compile(r"\"[^\"]*\"|'[^']*'")
+LABELS = re.compile(r"\{[^}]*\}")
+RANGES = re.compile(r"\[[^\]]*\]")
+MODIFIERS = re.compile(
+    r"\b(?:by|without|on|ignoring|group_left|group_right)\s*\([^)]*\)"
+)
+IDENT = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
+CALL = re.compile(r"([a-zA-Z_:][a-zA-Z0-9_:]*)\s*\(")
+KEYWORDS = {
+    "by",
+    "without",
+    "on",
+    "ignoring",
+    "group_left",
+    "group_right",
+    "offset",
+    "and",
+    "or",
+    "unless",
+    "bool",
+    "default",
+    "start",
+    "end",
+}
+
+
+class CheckFailed(Exception):
+    """A panel query this dashboard should not ship with."""
+
+
+def substitute(expr: str) -> str:
+    for name, value in VARIABLES.items():
+        expr = expr.replace(name, value)
+    if "$" in expr:
+        raise CheckFailed(f"unknown Grafana variable in {expr!r}")
+    return expr
+
+
+def metric_names(expr: str) -> set[str]:
+    """Every identifier left once the non-metric ones are removed.
+
+    Verified against every expression the shipped dashboard contains, including
+    `... group_left(run_name, git_sha) max by (run_id, ...) (training_run_info)`,
+    where the metric sits inside a parenthesised group that a naive scan skips.
+    """
+    stripped = STRINGS.sub(" ", expr)
+    stripped = LABELS.sub(" ", stripped)
+    stripped = RANGES.sub(" ", stripped)
+    stripped = MODIFIERS.sub(" ", stripped)
+    called = set(CALL.findall(stripped))  # functions and aggregators
+    return {
+        name
+        for name in IDENT.findall(stripped)
+        if name not in called and name not in KEYWORDS
+    }
+
+
+def allowed(name: str) -> bool:
+    return name in METRICS or name.startswith(SCRAPED_PREFIXES)
+
+
+def expressions(dashboard: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    for panel in dashboard["panels"]:
+        for target in panel.get("targets", []):
+            if "expr" in target:
+                out.append(target["expr"])
+    return out
+
+
+def check(extra_exprs: list[str] | None = None) -> None:
+    dashboard = json.loads(DASHBOARD.read_text())
+    exprs = expressions(dashboard) + list(extra_exprs or [])
+    if not exprs:
+        raise CheckFailed("the dashboard has no queries at all")
+    for expr in exprs:
+        for name in metric_names(substitute(expr)):
+            if not allowed(name):
+                raise CheckFailed(
+                    f"{name!r} is neither declared in sparks.metrics.METRICS "
+                    f"nor scraped by sparkup: {expr!r}"
+                )
+
+
+def main() -> int:
+    try:
+        check()
+    except CheckFailed as e:
+        print(f"FAIL: {e}", file=sys.stderr)
+        return 1
+    print(f"ok: {DASHBOARD.name}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
