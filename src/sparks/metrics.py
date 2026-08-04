@@ -30,3 +30,22 @@ METRICS: dict[str, str] = {
     # Held-out evaluation, emitted once per epoch rather than per step.
     "training_eval_loss": "held-out loss, labelled by head",
 }
+
+LIFECYCLE = frozenset(
+    {
+        "training_run_info",
+        "training_run_start_timestamp_seconds",
+        "training_run_heartbeat_timestamp_seconds",
+        "training_run_end_timestamp_seconds",
+        "training_run_status",
+    }
+)
+"""The run's record of itself, which is never marked stale on shutdown.
+
+Everything else is the live view and should stop dead when the run ends, so a
+finished run does not hold its last loss on the graph for the lookback window.
+These five are the opposite: they say the run happened and how it ended, and
+staling them erases that. `training_run_status` in particular is written and
+then immediately staled if this distinction is not made, so it never resolves
+at all - which is exactly the bug the live test caught.
+"""

@@ -33,7 +33,7 @@ from typing import Any, Self
 from prometheus_remote_writer import RemoteWriter  # type: ignore[import-untyped]
 
 from sparks.buffer import Buffer
-from sparks.metrics import METRICS
+from sparks.metrics import LIFECYCLE, METRICS
 from sparks.series import Series
 
 LOG = logging.getLogger("sparks")
@@ -188,12 +188,19 @@ class RunMetrics:
         self._mark_stale()
 
     def _mark_stale(self) -> None:
-        """End every series this run wrote, so a finished run stops dead on the
-        graph instead of flat-lining for the lookback window."""
+        """End the live series, so a finished run stops dead on the graph
+        instead of flat-lining for the lookback window.
+
+        The lifecycle metrics are deliberately spared. `end()` writes the status
+        and end-time samples immediately before this runs, so staling everything
+        the buffer has seen would erase them a millisecond after writing them and
+        `training_run_status` would never resolve at all.
+        """
         ended = int(time.time() * 1000)
         batch = [
             {"metric": s.as_metric(), "values": [STALE_NAN], "timestamps": [ended]}
             for s in self._buffer.seen()
+            if s.name not in LIFECYCLE
         ]
         if not batch:
             return

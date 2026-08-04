@@ -1,6 +1,7 @@
 from typing import Any
 
 from sparks.emit import RunMetrics
+from sparks.metrics import LIFECYCLE
 
 
 def names(drained: list[dict[str, Any]]) -> set[str]:
@@ -81,10 +82,18 @@ def test_a_metric_labelled_by_group_keeps_the_group_label() -> None:
 
 
 def test_shutdown_is_idempotent() -> None:
-    m = make()
+    # Must run with the pump started. With autostart=False `_stop` is None and
+    # _shutdown returns on its first line, so the guard this test exists for is
+    # never reached and the test passes having exercised nothing. The second
+    # call is not hypothetical: _start registers _shutdown with atexit, so every
+    # real run calls it twice.
+    m = RunMetrics(run_id="run-1", url="http://127.0.0.1:1", autostart=True)
     m.begin()
+    assert m._thread is not None and m._thread.is_alive()
     m.end("finished")
-    m.end("finished")  # must not raise
+    assert not m._thread.is_alive(), "the pump thread should have stopped"
+    m.end("finished")  # must not raise, and must not restart anything
+    assert not m._thread.is_alive()
 
 
 def test_a_push_failure_does_not_propagate() -> None:
@@ -93,3 +102,17 @@ def test_a_push_failure_does_not_propagate() -> None:
     m.begin()
     m.log(loss=0.5)
     m.end("finished")  # must not raise
+
+
+def test_the_run_record_is_never_marked_stale() -> None:
+    # end() writes the status and end-time samples, and _mark_stale runs a
+    # millisecond later over everything the buffer has seen. Without the
+    # lifecycle exemption it erases them immediately and training_run_status
+    # never resolves. The live test caught this; this pins it.
+    m = RunMetrics(run_id="run-1", url="http://127.0.0.1:1", autostart=True)
+    m.begin()
+    m.log(loss=0.5)
+    m.end("finished")
+    staled = {s.name for s in m._buffer.seen() if s.name not in LIFECYCLE}
+    assert "training_loss" in staled
+    assert not staled & LIFECYCLE

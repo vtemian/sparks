@@ -1,0 +1,18 @@
+# A real Prometheus, for tests that must not mock the thing under test.
+# The project name and the port are both offset from sparkup's stack and from
+# its harness, so this can run on the Spark itself without colliding.
+name: sparks-harness
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.13.2
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+      # The whole point of this harness.
+      - --web.enable-remote-write-receiver
+    ports:
+      - "127.0.0.1:19091:9090"
