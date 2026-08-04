@@ -1,9 +1,10 @@
 """A synthetic training run.
 
 The acceptance test for the whole pipeline: it must be indistinguishable from a
-real run in Grafana. The shape follows bbm's measured loop - 8 optimizer steps
-per epoch, 30 to 60 epochs, 6 to 12 s per epoch - so the dashboard is tuned
-against a realistic cadence rather than against a tight loop.
+real run in Grafana. The shape is taken from a real fine-tuning loop on a small
+corpus - 8 optimizer steps per epoch, 30 to 60 epochs, 6 to 12 s per epoch - so
+the dashboard is tuned against a realistic cadence rather than a tight loop.
+`--epochs` shortens it without changing that cadence.
 """
 
 import math

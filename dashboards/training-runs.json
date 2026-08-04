@@ -203,7 +203,7 @@
       "id": 11,
       "type": "timeseries",
       "title": "Held-out loss",
-      "description": "Emitted once per epoch, not per step, because it needs a full evaluation pass. Labelled by head: bbm's two-stream model has separate draw and say losses and averaging them hides the one the experiment turns on.",
+      "description": "Emitted once per epoch, not per step, because it needs a full evaluation pass. Labelled, so a model with more than one head keeps its losses apart: averaging them hides the one an experiment is actually turning on.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 5 },
       "fieldConfig": {

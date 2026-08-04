@@ -1,8 +1,11 @@
 """Per-run training metrics, pushed to Prometheus.
 
-Deliberately not a `TrainerCallback`. bbm's training loop is hand written and
-rejected HuggingFace `Trainer` for four measured reasons, so there is no
-callback to attach to. This is a plain object a loop calls.
+Deliberately not a `TrainerCallback`. A hand-written training loop has no
+callback to attach one to, and plenty of loops are hand written for good
+reasons: the one this was built against rejected HuggingFace `Trainer` over four
+measured problems with it under a PEFT wrapper. So this is a plain object a loop
+calls. Wrapping it in a `TrainerCallback` for a project that does use `Trainer`
+is a twenty-line shim; the reverse is not.
 
     m = RunMetrics(run_id="run-20260804-1530-e0", url="http://127.0.0.1:9090",
                    info={"model": "helium-2b", "git_sha": sha})
@@ -104,8 +107,11 @@ class RunMetrics:
     def log_group(self, name: str, by_group: dict[str, float]) -> None:
         """A metric that only means something per parameter group.
 
-        bbm trains LoRA at 2e-4 and the warm-started draw tables at 2e-5, so a
-        single `learning_rate` series would be wrong by 10x for one of them."""
+        Two groups at different rates is normal whenever part of a model is
+        warm-started and part is not: a LoRA adapter that has to travel wants a
+        rate an order of magnitude above the pretrained tables beside it, and a
+        single `learning_rate` series would then be wrong by 10x for one of
+        them."""
         if name not in METRICS:
             raise KeyError(f"{name} is not declared in sparks.metrics.METRICS")
         now = time.time()

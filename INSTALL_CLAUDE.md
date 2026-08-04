@@ -9,13 +9,13 @@ and its `INSTALL_CLAUDE.md` says explicitly that it does not own training runs. 
 across that line in either direction.
 
 [docs/training-observability.md](docs/training-observability.md) is the original design research.
-It used to live in sparkup and was deleted there on 2026-08-04 ("docs: drop the training-observability
-handoff") because it specifies this project. **Three of its claims are wrong; they are corrected
+It used to live in sparkup and was deleted there ("docs: drop the training-observability handoff")
+because it specifies this project. **Three of its claims are wrong; they are corrected
 below and in the plan. Read those corrections before implementing anything from it.**
 
 ---
 
-## Verified against a real Prometheus, 2026-08-04
+## Verified against a real Prometheus
 
 Run with `prom/prometheus:v3.13.2`, remote-write receiver on, via `tests/harness-up.sh`. These four
 answers are the reason the design has the shape it does. Re-run the spike rather than trusting this
@@ -71,9 +71,9 @@ what it actually holds. `tests/test_live.py` is not optional coverage.
 
 ## Three corrections to `docs/training-observability.md`
 
-**1. C1's `PrometheusCallback(TrainerCallback)` has nothing to attach to.** `bbm/bbm_train/train.py`
-opens by rejecting HuggingFace `Trainer` with four measured reasons, and `train_arm()` is a hand
-written loop. Hence `RunMetrics` with `begin()`/`log()`/`end()`. A `TrainerCallback` adapter is a
+**1. C1's `PrometheusCallback(TrainerCallback)` has nothing to attach to.** The loop it was written
+for is hand written, having rejected HuggingFace `Trainer` over four measured problems with it under
+a PEFT wrapper. Hence `RunMetrics` with `begin()`/`log()`/`end()`. A `TrainerCallback` adapter is a
 20-line shim if some project ever wants one; do not invert this.
 
 The doc also says the structure is copied from Axolotl. Axolotl's `OpenTelemetryMetricsCallback` is
@@ -120,15 +120,29 @@ the match group` and the panel goes **fully red** rather than degrading. Termina
   re-queries when that range changes. With the default `now-3h` it lists recent runs only. Widening
   the range is what surfaces old ones. This is not the retention change failing.
 
-## The box
+## Paths, and why none of them are literals here
 
-- **Dashboards go to `/srv/bbm/dashboards/`**, and this is live as of 2026-08-04. sparkup creates it
-  at 2775 group `bbm` and bind-mounts it read-only into Grafana. `cp` as yourself, no root; Grafana
-  rescans on a 10s timer, no restart.
+sparks is not tied to any one training project. Every path below comes from
+sparkup's **`spark_shared_dir`**, whose repo default is `/srv/spark` and which a box may override in
+its untracked `host_vars`. Write `$SPARKS_SHARED_DIR` in this repo, never a literal: baking one
+project's name into a framework meant to serve several is the mistake this section exists to prevent.
 
-  ```sh
-  scp dashboards/training-runs.json vlad@spark.local:/srv/bbm/dashboards/
-  ```
+`make deploy` reads three values, defaults in the Makefile, overrides in an untracked `local.mk`
+(copy `local.mk.example`). That is the same tracked-defaults plus untracked-identity split sparkup
+uses, and for the same reason.
+
+- `SPARKS_HOST` defaults to `spark.local`, so it uses your own SSH login. Nobody else's belongs in a
+  tracked file.
+- `SPARKS_SHARED_DIR` defaults to `/srv/spark`, matching sparkup's default rather than any box.
+- `SPARKS_VENV` has **no** default and `make deploy` refuses without it. It is the venv your training
+  code runs in, which belongs to a project this one does not know about. Guessing would be worse than
+  failing.
+
+## The seam into Grafana
+
+- **Dashboards go to `$SPARKS_SHARED_DIR/dashboards/`.** sparkup creates it at 2775, group
+  `spark_shared_group`, and bind-mounts it read-only into Grafana, so installing one needs no root and
+  no restart: Grafana rescans on a 10s timer.
 
   Do **not** also leave a copy in `/opt/monitoring/grafana/dashboards/`. Both directories are mounted
   under the same provider path (`/etc/grafana/dashboards/spark` and `.../sparks`), and the provider
@@ -137,39 +151,34 @@ the match group` and the panel goes **fully red** rather than degrading. Termina
   inside the other fails at container init: runc has to create the mountpoint and the read-only
   parent refuses the write. This was found by trying it, and the naive version would have broken
   `make apply` on the box rather than just CI.
-- Retention is **1y** as of 2026-08-04, which is what makes the `$run_id` variable a permanent
-  experiment index. Recheck `prometheus_tsdb_head_series` against free space before growing the
-  exporter set.
-- sparks installs into **`~/bbm-train/.venv`** on the box, never `~/bbm/.venv`. The latter is built
-  from bbm's `uv.lock` by `bbm/scripts/spark.sh` with `uv sync --frozen`, which drops anything added
-  by hand, and it carries the Pillow pin the cross-platform determinism story rests on.
-- `bbm`'s training loop has **never been run**: no `out/`, no `*.jsonl`, no `verdict.json` anywhere
-  in that repo or its history. Every timing estimate for it is from a plan document, not a
-  measurement.
+- Retention is **1y**, which is what makes the `$run_id` variable a permanent experiment index.
+  Recheck `prometheus_tsdb_head_series` against free space before growing the exporter set.
+- Install sparks into the **training** venv, not a library venv that a lockfile owns. A venv rebuilt
+  by `uv sync --frozen` drops anything added by hand, silently, at the next sync.
 
 ## What is not built yet
 
-Slice 2: `sparks run -- <cmd>`, run directories under `/srv/bbm/runs/<id>/`, the NVML energy delta
+Slice 2: `sparks run -- <cmd>`, run directories under `$SPARKS_SHARED_DIR/runs/<id>/`, the NVML energy delta
 and idle baseline, `summary.json`, Grafana annotations, and the `sparks-overview` table. Annotations
 and snapshots both need a Grafana service account token, because the box's Grafana is anonymous
 **Viewer** and cannot POST.
 
-Slice 3: the queue. A spool directory under `/srv/bbm`, one systemd service under a service account
+Slice 3: the queue. A spool directory under `$SPARKS_SHARED_DIR`, one systemd service under a service account
 so exclusivity is structural, and a textfile exporter. Exclusivity is what makes marginal energy
 attribution mean anything.
 
 **The overview table must come from the textfile collector, not remote-write.** A `.prom` file in
 `/var/lib/node_exporter/textfile` is re-scraped every 15s for as long as it exists, so those series
 never go stale and never age out, and the files on disk stay the source of truth even if the TSDB is
-lost. Write one aggregated `sparks_runs.prom` rebuilt from `/srv/bbm/runs/*/summary.json`, not one
+lost. Write one aggregated `sparks_runs.prom` rebuilt from `$SPARKS_SHARED_DIR/runs/*/summary.json`, not one
 file per run: the collector reads every file on every scrape. Files must be `0644` and written
 atomically (`mktemp` in the same directory, then `mv`) or node_exporter skips them in silence.
 
 ## Settled twice. Do not re-open.
 
 **There is no dashboard per experiment.** One `training-runs` board with a `$run_id` variable.
-Killed 2026-07-31 on Grafana's own best-practice guidance and because no maintained project
-generates one per run; raised again and killed again 2026-08-04 on a stronger argument: a generated
+Killed on Grafana's own best-practice guidance and because no maintained project generates one per
+run; raised a second time and killed again on a stronger argument: a generated
 per-run dashboard queries live Prometheus, so it is an empty grid of panels once its data ages out.
 It looks like a permanent record and is not one. Raising retention is what actually makes old
 experiments viewable.

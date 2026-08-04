@@ -31,13 +31,15 @@ a training run.
 `info` is immutable metadata for the info metric. For a value that differs per parameter group, use
 `m.log_group("training_learning_rate", {"lora": 2e-4, "tables": 2e-5})`.
 
-## Install the dashboard
+## Deploy to the box
 
 ```sh
-scp dashboards/training-runs.json vlad@spark.local:/srv/bbm/dashboards/
+make deploy                              # SPARKS_HOST defaults to spark.local
+make deploy SPARKS_HOST=you@spark.local  # if your SSH login differs
 ```
 
-Grafana picks it up within 10 seconds. No restart, no root.
+Pushes the tree, installs it into the training venv, and hands Grafana the dashboard. Grafana picks
+that up within 10 seconds; no restart, no root.
 
 ## Develop
 

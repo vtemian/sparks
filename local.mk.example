@@ -1,0 +1,15 @@
+# Your box, untracked. Copy to local.mk and edit.
+#
+# The same split sparkup uses: tracked defaults suit any box, and the values
+# that identify one particular box stay out of git.
+
+# Only needed if your SSH login on the box differs from your local username.
+# SPARKS_HOST = you@spark.local
+
+# sparkup's `spark_shared_dir`. The repo default is /srv/spark; set this to
+# whatever your host_vars overrode it to.
+# SPARKS_SHARED_DIR = /srv/spark
+
+# The venv your training code runs in. Required by `make deploy`, and
+# project-specific by nature, so there is no default worth guessing.
+# SPARKS_VENV = $$HOME/myproject/.venv
