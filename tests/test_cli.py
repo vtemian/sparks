@@ -29,3 +29,20 @@ def test_an_unknown_command_exits_two() -> None:
     with pytest.raises(SystemExit) as e:
         build_parser().parse_args(["nope"])
     assert e.value.code == 2
+
+
+def test_run_takes_a_name_and_a_command_after_the_separator() -> None:
+    args = build_parser().parse_args(["run", "--name", "e0", "--", "python", "t.py"])
+    assert args.name == "e0"
+    assert args.command == ["python", "t.py"]
+
+
+def test_run_refuses_an_empty_command() -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["run", "--name", "e0", "--"])
+
+
+def test_the_shared_dir_defaults_to_sparkups_default() -> None:
+    # /srv/spark is sparkup's repo default. A box that overrode spark_shared_dir
+    # in host_vars passes --shared-dir, and no one project's name is baked in.
+    assert build_parser().parse_args(["run", "--", "true"]).shared_dir == "/srv/spark"

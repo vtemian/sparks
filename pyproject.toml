@@ -5,6 +5,10 @@ description = "Training runs on the DGX Spark: metrics, launcher, queue"
 requires-python = ">=3.12"
 dependencies = [
     "prometheus-remote-writer>=1.1.3",
+    # NVML, for the GPU energy counter. Optional at runtime: energy.py imports
+    # it lazily and degrades to zero, because development happens where there
+    # is no GPU and a box may have no monitoring at all.
+    "nvidia-ml-py>=12.560",
 ]
 
 [project.scripts]

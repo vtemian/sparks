@@ -185,6 +185,20 @@ class RunMetrics:
             if name in METRICS
         ]
 
+    def send_now(self, batch: list[dict[str, Any]]) -> None:
+        """Push a batch immediately, outside the pump's cadence.
+
+        Only safe once the pump has stopped, which is why the launcher calls it
+        between the child's death and end(): two concurrent send() calls are
+        exactly the rollback this design exists to avoid.
+        """
+        if self._writer is None or not batch:
+            return
+        try:
+            self._writer.send(batch)
+        except Exception as e:  # deliberately broad: telemetry never kills a run
+            LOG.warning("sparks: could not send %d series: %s", len(batch), e)
+
     def _beat(self, now: float) -> None:
         """The heartbeat freezes when the run dies, which is what lets one
         expression cover live and finished runs. The info metric rides along
