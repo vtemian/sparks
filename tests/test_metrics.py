@@ -36,3 +36,29 @@ def test_the_lifecycle_set_is_not_everything() -> None:
     # If it were, no series would ever be marked stale and a finished run would
     # hold its last loss on the graph for the whole lookback window.
     assert set(METRICS) - LIFECYCLE
+
+
+def test_run_active_is_declared_but_deliberately_not_lifecycle() -> None:
+    # Measured on the box: training_run_info is LIFECYCLE-exempt from stale
+    # marking, so it persists for the full 5m lookback. A 48s run's info series
+    # ended 293s past the end, while stale-marked training_loss ended 12s
+    # before it. An annotation built on info draws a region 7x the run.
+    # training_run_active exists to be stale-marked, so the region is exact.
+    assert "training_run_active" in METRICS
+    assert "training_run_active" not in LIFECYCLE
+
+
+def test_the_run_index_families_are_declared() -> None:
+    # check_dashboard.py uses METRICS as its allowlist, so the overview
+    # dashboard's queries fail the gate unless these are declared.
+    for name in (
+        "sparks_run_info",
+        "sparks_run_start_timestamp_seconds",
+        "sparks_run_duration_seconds",
+        "sparks_run_energy_joules",
+        "sparks_run_marginal_energy_joules",
+        "sparks_run_gpu_nvml_energy_joules",
+        "sparks_run_gpu_firmware_energy_joules",
+        "sparks_run_final_loss",
+    ):
+        assert name in METRICS

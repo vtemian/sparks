@@ -18,6 +18,13 @@ METRICS: dict[str, str] = {
     "training_run_heartbeat_timestamp_seconds": "unix seconds, refreshed every flush",
     "training_run_end_timestamp_seconds": "unix seconds, written once at the end",
     "training_run_status": "1, labelled finished or crashed, written once at the end",
+    # 1 while the run is going, and deliberately NOT in LIFECYCLE below, so it
+    # is stale-marked at end(). This is what a Grafana annotation queries: the
+    # info metric is exempt from stale marking to keep panel joins resolvable,
+    # and so persists for the whole 5m lookback. Measured on a 48s run, the
+    # info series ended 293s past the end while stale-marked series ended 12s
+    # before it, so an annotation on info draws a region 7x the run.
+    "training_run_active": "1 while the run is running, ended by a stale marker",
     # Progress.
     "training_epoch": "fractional epoch",
     "training_step": "optimizer steps since this run began",
@@ -29,6 +36,17 @@ METRICS: dict[str, str] = {
     "training_tokens_per_sec": "tokens per second over the last window",
     # Held-out evaluation, emitted once per epoch rather than per step.
     "training_eval_loss": "held-out loss, labelled by head",
+    # The permanent run index, written to the node_exporter textfile collector
+    # rather than pushed. A .prom file is re-scraped for as long as it exists,
+    # so these never age out of retention the way pushed series do.
+    "sparks_run_info": "1, carrying a completed run's identity as labels",
+    "sparks_run_start_timestamp_seconds": "unix seconds the run started",
+    "sparks_run_duration_seconds": "wall-clock duration",
+    "sparks_run_energy_joules": "total energy drawn over the run",
+    "sparks_run_marginal_energy_joules": "energy above the measured idle baseline",
+    "sparks_run_gpu_nvml_energy_joules": "GPU energy per NVML",
+    "sparks_run_gpu_firmware_energy_joules": "GPU energy per the firmware counter",
+    "sparks_run_final_loss": "final training loss, absent when the run produced none",
 }
 
 LIFECYCLE = frozenset(

@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from sparks.emit import RunMetrics
+from sparks.emit import RunMetrics, from_env
 from sparks.metrics import LIFECYCLE
 from sparks.series import InvalidLabel
 
@@ -11,7 +11,7 @@ def names(drained: list[dict[str, Any]]) -> set[str]:
     return {d["metric"]["__name__"] for d in drained}
 
 
-def make(**kw: dict[str, str]) -> RunMetrics:
+def make(**kw: Any) -> RunMetrics:
     # autostart=False keeps the pump thread out of the unit tests; the live
     # test in tests/test_live.py is what exercises the thread and the network.
     return RunMetrics(run_id="run-1", url="http://unused", autostart=False, **kw)
@@ -25,6 +25,7 @@ def test_begin_emits_identity_and_start_time() -> None:
         "training_run_info",
         "training_run_start_timestamp_seconds",
         "training_run_heartbeat_timestamp_seconds",
+        "training_run_active",
     }
 
 
@@ -152,3 +153,63 @@ def test_an_invalid_label_is_refused_on_the_caller_thread() -> None:
         RunMetrics(
             run_id="r", url="http://unused", autostart=False, labels={"a b": "c"}
         )
+
+
+def test_run_active_is_emitted_and_gets_a_stale_marker() -> None:
+    # It must be staled, unlike the info metric, or the annotation region
+    # overshoots by the whole lookback window.
+    m = make()
+    m.begin()
+    m._buffer.drain()
+    assert "training_run_active" in {d["metric"]["__name__"] for d in m._stale_batch()}
+
+
+def test_a_child_emitter_writes_no_lifecycle_series() -> None:
+    # The supervisor and the training child both hold a RunMetrics for one
+    # run_id. Two writers on the SAME series interleave timestamps, which is an
+    # out-of-order 400, and remote-write 1.0 rolls back the whole request,
+    # destroying the batch that carried training_loss.
+    child = RunMetrics(
+        run_id="run-1", url="http://unused", autostart=False, lifecycle=False
+    )
+    child.begin()
+    child.log(loss=0.5)
+    child.end("finished")
+    written = names(child._buffer.drain())
+    assert written == {"training_loss"}
+    assert not written & LIFECYCLE
+
+
+def test_from_env_is_a_no_op_outside_sparks_run(monkeypatch: Any) -> None:
+    # The same training script must still run standalone without branching.
+    monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
+    monkeypatch.delenv("SPARKS_PROMETHEUS_URL", raising=False)
+    assert from_env() is None
+
+
+def test_from_env_builds_a_child_emitter(monkeypatch: Any) -> None:
+    monkeypatch.setenv("SPARKS_RUN_ID", "run-7")
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:9090")
+    m = from_env(arm="real", autostart=False)
+    assert m is not None
+    assert m.run_id == "run-7"
+    m.log(loss=1.0)
+    sample = m._buffer.drain()[0]
+    assert sample["metric"]["arm"] == "real"
+    m.begin()
+    assert m._buffer.drain() == []  # still no lifecycle series
+
+
+def test_the_parent_can_stale_a_dead_childs_series() -> None:
+    # An OOM-killed child never runs atexit and never flushes, so it cannot
+    # end its own curves. Without this a killed run's loss flat-lines for the
+    # lookback window instead of stopping dead.
+    parent = make()
+    parent.begin()
+    parent._buffer.drain()
+    batch = parent.stale_batch_for(["training_loss", "training_step"])
+    assert {d["metric"]["__name__"] for d in batch} == {
+        "training_loss",
+        "training_step",
+    }
+    assert all(d["metric"]["run_id"] == "run-1" for d in batch)
