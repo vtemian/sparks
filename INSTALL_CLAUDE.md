@@ -122,10 +122,24 @@ the match group` and the panel goes **fully red** rather than degrading. Termina
 
 ## The box
 
-- Dashboards go to `/srv/bbm/dashboards/`, which sparkup's `feat/shared-dashboard-dir` branch creates
-  at 2775 group `bbm` and bind-mounts into Grafana. No root. Grafana rescans on a 10s timer.
-  **Until that branch lands**, the fallback is `sudo install` into `/opt/monitoring/grafana/dashboards/`,
-  which is root:root 0755.
+- **Dashboards go to `/srv/bbm/dashboards/`**, and this is live as of 2026-08-04. sparkup creates it
+  at 2775 group `bbm` and bind-mounts it read-only into Grafana. `cp` as yourself, no root; Grafana
+  rescans on a 10s timer, no restart.
+
+  ```sh
+  scp dashboards/training-runs.json vlad@spark.local:/srv/bbm/dashboards/
+  ```
+
+  Do **not** also leave a copy in `/opt/monitoring/grafana/dashboards/`. Both directories are mounted
+  under the same provider path (`/etc/grafana/dashboards/spark` and `.../sparks`), and the provider
+  walks recursively, so two files with one uid is a duplicate-uid conflict and Grafana drops one.
+- **sparkup's compose mounts the two dashboard directories as siblings, never nested.** Mounting one
+  inside the other fails at container init: runc has to create the mountpoint and the read-only
+  parent refuses the write. This was found by trying it, and the naive version would have broken
+  `make apply` on the box rather than just CI.
+- Retention is **1y** as of 2026-08-04, which is what makes the `$run_id` variable a permanent
+  experiment index. Recheck `prometheus_tsdb_head_series` against free space before growing the
+  exporter set.
 - sparks installs into **`~/bbm-train/.venv`** on the box, never `~/bbm/.venv`. The latter is built
   from bbm's `uv.lock` by `bbm/scripts/spark.sh` with `uv sync --frozen`, which drops anything added
   by hand, and it carries the Pillow pin the cross-platform determinism story rests on.
