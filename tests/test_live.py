@@ -6,11 +6,13 @@ would only ever confirm our own assumptions.
 """
 
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
 import requests
 
+from sparks import launcher
 from sparks.emit import RunMetrics
 from sparks.run import new_run_id
 
@@ -121,3 +123,43 @@ def test_the_receiver_dropped_nothing_silently() -> None:
 
     ooo = query("prometheus_tsdb_out_of_order_samples_total")
     assert not ooo or float(ooo[0]["value"][1]) == 0.0, ooo
+
+
+def test_a_crashed_run_still_lands_its_whole_record(tmp_path: Path) -> None:
+    """The regression test for the bug a unit test could not catch.
+
+    An out-of-order sample makes Prometheus reject the WHOLE request, so a
+    second writer racing the pump silently destroyed the batch carrying
+    training_run_info, the start and end timestamps and the status. Every
+    non-finished run lost its entire record: exactly the runs the wrapper
+    exists to report on. summary.json said `crashed` and Prometheus held
+    nothing at all.
+    """
+    result = launcher.launch(
+        ["sh", "-c", "exit 3"],
+        name="live-crash",
+        shared_dir=tmp_path,
+        url=URL,
+        baseline_seconds=0.0,
+    )
+    assert result.status == "crashed"
+
+    for metric in (
+        "training_run_info",
+        "training_run_start_timestamp_seconds",
+        "training_run_end_timestamp_seconds",
+        "training_run_status",
+    ):
+        got = wait_for(f'{metric}{{run_id="{result.run_id}"}}')
+        assert got, f"{metric} was rolled back and never landed"
+
+    status = query(f'training_run_status{{run_id="{result.run_id}"}}')
+    assert status[0]["metric"]["status"] == "crashed"
+
+    # And nothing was silently dropped on the way in.
+    dropped = query("prometheus_api_remote_write_invalid_labels_samples_total")
+    assert not dropped or float(dropped[0]["value"][1]) == 0.0
+    ooo = query("prometheus_tsdb_out_of_order_samples_total")
+    assert not ooo or float(ooo[0]["value"][1]) == 0.0, (
+        "an out-of-order sample was accepted-and-counted; a second writer is racing"
+    )

@@ -5,8 +5,10 @@ ended, and a fake would only confirm our own assumptions.
 """
 
 import json
+import signal
 from pathlib import Path
 
+from sparks import summary
 from sparks.launcher import launch
 
 
@@ -70,18 +72,77 @@ def test_the_index_file_is_world_readable(tmp_path: Path) -> None:
 
 
 def test_energy_is_recorded_even_with_no_sensors(tmp_path: Path) -> None:
-    # Development happens on macOS, where there is no hwmon and no NVML. A
-    # missing sensor is a degraded reading, never a failed run.
+    # macOS has no hwmon and no NVML. A missing sensor is a degraded reading,
+    # never a failed run. Asserting the key exists proves nothing: `energy` is
+    # a required frozen field, so asdict always produces it. Assert the values.
     result = launch(["true"], name="nrg", shared_dir=tmp_path, url=None)
-    s = read_summary(tmp_path / "runs" / result.run_id)
-    assert "energy" in s
-    assert isinstance(s["energy"], dict)
+    e = read_summary(tmp_path / "runs" / result.run_id)["energy"]
+    assert isinstance(e, dict)
+    assert e["total_joules"] == 0.0
+    assert e["marginal_joules"] == 0.0
+    assert e["idle_watts"] == 0.0
+    assert e["sources_agree"] is True
 
 
-def test_duration_comes_from_the_monotonic_clock(tmp_path: Path) -> None:
+def test_duration_is_the_monotonic_delta_not_the_wall_clock_pair(
+    tmp_path: Path,
+) -> None:
+    # Asserting a plausible range passes just as well if duration were
+    # `ended_unix - started_unix`. The monotonic property is only observable
+    # when the two disagree, so assert they are independently derived.
     result = launch(
         ["sh", "-c", "sleep 0.3"], name="dur", shared_dir=tmp_path, url=None
     )
     s = read_summary(tmp_path / "runs" / result.run_id)
-    assert isinstance(s["duration_seconds"], float)
-    assert 0.2 < s["duration_seconds"] < 5.0
+    wall = float(s["ended_unix"]) - float(s["started_unix"])  # type: ignore[arg-type]
+    assert 0.2 < float(s["duration_seconds"]) < 5.0  # type: ignore[arg-type]
+    # Same run, two clocks: close but not the same float. An implementation
+    # that copied the wall delta would make these bit-identical.
+    assert float(s["duration_seconds"]) != wall  # type: ignore[arg-type]
+
+
+def test_a_cancelled_run_is_not_recorded_as_finished(tmp_path: Path) -> None:
+    # The row the plan calls "the one that matters". The child traps SIGTERM,
+    # checkpoints and exits 0 under its own power; the wrapper was the thing
+    # signalled, so the run did NOT run to completion. Recording this as
+    # `finished` is the dashboard lying about how runs end.
+    from sparks.process import classify
+
+    outcome = classify(returncode=0, interrupted_by=signal.SIGTERM)
+    assert outcome.status == "cancelled"
+    assert outcome.exit_code == 0
+    assert outcome.signal_name == "SIGTERM"
+    # Both fields set at once: an earlier draft wrongly called them exclusive.
+    record = summary.Summary(
+        run_id="r",
+        run_name="n",
+        user="u",
+        git_sha="s",
+        command=["true"],
+        started_unix=1.0,
+        ended_unix=2.0,
+        duration_seconds=1.0,
+        status=outcome.status,
+        exit_code=outcome.exit_code,
+        signal=outcome.signal_name,
+        escalated_to_sigkill=False,
+        energy=summary.Energy(0.0, 0.0, 0.0, 0.0, 0.0, True),
+    )
+    summary.save(record, tmp_path)
+    back = json.loads((tmp_path / "summary.json").read_text())
+    assert back["status"] == "cancelled"
+    assert back["exit_code"] == 0 and back["signal"] == "SIGTERM"
+
+
+def test_a_command_that_does_not_exist_still_leaves_a_record(
+    tmp_path: Path,
+) -> None:
+    # Without this the run has no summary.json and no index row, while a
+    # LIFECYCLE-exempt training_run_info has already been pushed: a permanent
+    # phantom run that never ends and never gets a status.
+    result = launch(
+        ["definitely-not-a-command"], name="typo", shared_dir=tmp_path, url=None
+    )
+    s = read_summary(tmp_path / "runs" / result.run_id)
+    assert s["status"] == "crashed"
+    assert result.wrapper_exit != 0

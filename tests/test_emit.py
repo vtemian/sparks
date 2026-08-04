@@ -1,3 +1,4 @@
+import struct
 from typing import Any
 
 import pytest
@@ -200,16 +201,40 @@ def test_from_env_builds_a_child_emitter(monkeypatch: Any) -> None:
     assert m._buffer.drain() == []  # still no lifecycle series
 
 
-def test_the_parent_can_stale_a_dead_childs_series() -> None:
-    # An OOM-killed child never runs atexit and never flushes, so it cannot
-    # end its own curves. Without this a killed run's loss flat-lines for the
-    # lookback window instead of stopping dead.
-    parent = make()
-    parent.begin()
-    parent._buffer.drain()
-    batch = parent.stale_batch_for(["training_loss", "training_step"])
-    assert {d["metric"]["__name__"] for d in batch} == {
-        "training_loss",
-        "training_step",
-    }
-    assert all(d["metric"]["run_id"] == "run-1" for d in batch)
+def test_a_child_cannot_write_a_supervisor_series() -> None:
+    # Byte-identical series from two processes is the out-of-order rollback the
+    # whole split exists to prevent, and it is silent: the batch carrying the
+    # loss simply never lands. Enforced in code, not by convention.
+    child = RunMetrics(
+        run_id="run-1", url="http://unused", autostart=False, lifecycle=False
+    )
+    with pytest.raises(KeyError):
+        child.log(run_active=1.0)
+    with pytest.raises(KeyError):
+        child.log(run_start_timestamp_seconds=1000.0)
+
+
+def test_a_standalone_run_may_still_write_both_halves() -> None:
+    # `sparks demo` has no child and owns everything. The guard is asymmetric
+    # for exactly this reason; making it symmetric breaks the demo.
+    m = make()
+    m.begin()
+    m.log(loss=0.5)
+    m.log_group("training_grad_norm", {"lora": 1.0})
+    assert "training_loss" in names(m._buffer.drain())
+
+
+def test_a_stale_marker_actually_carries_the_stale_nan() -> None:
+    # Nothing else in the suite checks the payload. Change _stale_batch to emit
+    # 1.0 and everything else still passes, while every killed run's loss curve
+    # flat-lines for the whole lookback window instead of stopping dead.
+    # It must be THE stale NaN, 0x7FF0000000000002, not any NaN: an ordinary
+    # NaN is a value, and only this bit pattern ends the series.
+    m = make()
+    m.log(loss=0.5)
+    m._buffer.drain()
+    marker = next(
+        d for d in m._stale_batch() if d["metric"]["__name__"] == "training_loss"
+    )
+    (value,) = marker["values"]
+    assert struct.pack("<d", value) == struct.pack("<Q", 0x7FF0000000000002)

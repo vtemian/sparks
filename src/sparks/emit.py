@@ -117,6 +117,7 @@ class RunMetrics:
             name = f"training_{key}"
             if name not in METRICS:
                 raise KeyError(f"{name} is not declared in sparks.metrics.METRICS")
+            self._refuse_if_not_ours(name)
             self._sample(Series(name, self._labels), float(value), now)
 
     def log_group(self, name: str, by_group: dict[str, float]) -> None:
@@ -129,6 +130,7 @@ class RunMetrics:
         them."""
         if name not in METRICS:
             raise KeyError(f"{name} is not declared in sparks.metrics.METRICS")
+        self._refuse_if_not_ours(name)
         now = time.time()
         for group, value in by_group.items():
             self._sample(
@@ -166,38 +168,26 @@ class RunMetrics:
     def _sample(self, series: Series, value: float, when: float) -> None:
         self._buffer.add(series, value, int(when * 1000))
 
-    def stale_batch_for(self, names: list[str]) -> list[dict[str, Any]]:
-        """Stale markers for series this process never wrote itself.
+    def _refuse_if_not_ours(self, name: str) -> None:
+        """Keep the supervisor and the child on disjoint series.
 
-        The supervisor uses this when a child dies abnormally. The child cannot
-        end its own curves precisely in the case where it matters, so without
-        this a killed run's loss flat-lines for the lookback window rather than
-        stopping dead.
+        Two writers on one series choose timestamps independently, which is out
+        of order, a 400, and remote-write 1.0 rolls back the whole request. The
+        split is enforced here rather than by convention because the failure is
+        silent: the batch that carried the loss simply never lands.
         """
-        ended = int(time.time() * 1000)
-        return [
-            {
-                "metric": Series(name, self._labels).as_metric(),
-                "values": [STALE_NAN],
-                "timestamps": [ended],
-            }
-            for name in names
-            if name in METRICS
-        ]
-
-    def send_now(self, batch: list[dict[str, Any]]) -> None:
-        """Push a batch immediately, outside the pump's cadence.
-
-        Only safe once the pump has stopped, which is why the launcher calls it
-        between the child's death and end(): two concurrent send() calls are
-        exactly the rollback this design exists to avoid.
-        """
-        if self._writer is None or not batch:
+        # Asymmetric on purpose. A standalone run (`sparks demo`) has no child
+        # and legitimately owns both halves, so the supervisor side is not
+        # constrained. The child is: the supervisor is definitely writing the
+        # lifecycle series, so a child writing them too is a guaranteed
+        # collision rather than a possible one.
+        if self._lifecycle:
             return
-        try:
-            self._writer.send(batch)
-        except Exception as e:  # deliberately broad: telemetry never kills a run
-            LOG.warning("sparks: could not send %d series: %s", len(batch), e)
+        if name in LIFECYCLE or name == "training_run_active":
+            raise KeyError(
+                f"{name} belongs to the supervisor; a child emitter writing it "
+                "would collide on the same series"
+            )
 
     def _beat(self, now: float) -> None:
         """The heartbeat freezes when the run dies, which is what lets one

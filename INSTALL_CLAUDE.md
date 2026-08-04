@@ -224,3 +224,58 @@ All six were real. Two were mutation-proven before and after the fix.
 Known and accepted: `SCRAPED_PREFIXES` means the checker's guarantee covers `training_*` only.
 `node_hwmon_energy_input_joule_total`, the typo this project has now made twice, passes it. Checking
 the scraped half needs sparkup's exporter defaults, which is its checker's job, not this one's.
+
+## The supervisor and the child write disjoint series, enforced in code
+
+`sparks run` is the supervisor and holds a `RunMetrics` with `lifecycle=True`; the training child
+gets its own via `emit.from_env(...)`, which sets `lifecycle=False`. They must never write the same
+series. Two writers choose timestamps independently, and remote-write 1.0 rejects an out-of-order
+sample by rolling back the **entire request**, so the batch carrying the loss simply never lands.
+
+A review caught this happening for real. The launcher pushed stale markers for the child's series
+while the pump thread was still running, and the resulting out-of-order sample destroyed the batch
+holding `training_run_info`, both timestamps and `training_run_status`. `summary.json` said
+`crashed` and Prometheus held **nothing at all** for the run. `finished` runs were unaffected, so the
+failure was confined to crashed, killed, oom and cancelled: precisely the runs the wrapper exists to
+report on.
+
+Two things came out of that and must not be undone:
+
+- **There is no `send_now`.** There is no safe moment for a second writer, so the API does not offer
+  one. The only send path is the pump, plus `_mark_stale` after the pump has stopped.
+- **`_refuse_if_not_ours` is asymmetric on purpose.** A child may not write `LIFECYCLE` or
+  `training_run_active`. The supervisor side is deliberately unconstrained, because `sparks demo` is
+  a single process with no child that legitimately owns both halves; making the guard symmetric
+  breaks it.
+
+`tests/test_live.py::test_a_crashed_run_still_lands_its_whole_record` is the regression test, and it
+is the only kind that could have caught this. Reintroducing the bug makes it fail with
+`status=400, body=out of order sample`. No unit test caught it or could have.
+
+**The parent cannot stale the child's series on its behalf.** It was tried and removed: the parent
+builds markers from its own label set, and a child that passes labels (`from_env(arm="real")`, or
+anything using `log_group`, which always adds `group`) has a different label set and therefore a
+different series. The parent would write markers to series nobody ever wrote while the child's real
+curves flat-lined for the lookback window. Doing this properly needs the child to publish its label
+set somewhere the parent can read; until something needs it, a killed run's curves flat-line for five
+minutes and that is the honest behaviour.
+
+## Deferred in slice 2, with reasons
+
+- **`oom` is unreachable.** `Supervisor` accepts a `cgroup=` and promotes `killed` to `oom` on a
+  positive `memory.events.local` delta, and `tests/test_process.py` proves the mechanism, but the
+  launcher never creates a cgroup and never passes one. Wiring it needs
+  `systemd-run --user --scope -p Delegate=yes`. The box supports it: systemd 255, `systemd-oomd`
+  inactive, `Delegate=yes`, `systemd-run --user --scope` works. Until then every OOM reads as
+  `killed`, which is honest but coarse.
+- **`final_loss` is always absent**, so the overview column is empty. The supervisor has no channel
+  to learn the child's last loss; the child would have to write it into the run directory on the way
+  out.
+- **`total_joules` has no cross-check.** The GPU pair catches a counter reset through
+  `sources_agree`, but a `pkg` reset or a failed read yields `0.0`, which is indistinguishable from a
+  real zero and from a box with no sensors. There is no representation for "unknown", so `absent()`
+  cannot help either.
+- **The index lands in `SPARKS_TEXTFILE_DIR`, or node_exporter's default when that directory
+  exists, and falls back to `<shared>/index` otherwise.** The fallback is never scraped. On a real
+  box confirm the file is where node_exporter reads it, or `count(sparks_run_info)` stays empty and
+  `SparksRunIndexEmpty` fires forever.
