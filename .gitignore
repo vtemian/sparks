@@ -8,3 +8,4 @@ dist/
 tests/harness/rendered/
 .claude/
 local.mk
+.DS_Store
