@@ -78,3 +78,18 @@ def test_a_metric_labelled_by_group_keeps_the_group_label() -> None:
     m.log_group("training_learning_rate", {"lora": 2e-4, "tables": 2e-5})
     out = m._buffer.drain()
     assert {d["metric"]["group"] for d in out} == {"lora", "tables"}
+
+
+def test_shutdown_is_idempotent() -> None:
+    m = make()
+    m.begin()
+    m.end("finished")
+    m.end("finished")  # must not raise
+
+
+def test_a_push_failure_does_not_propagate() -> None:
+    # A metrics outage must never kill a training run. The URL is unroutable.
+    m = RunMetrics(run_id="run-1", url="http://127.0.0.1:1", autostart=True)
+    m.begin()
+    m.log(loss=0.5)
+    m.end("finished")  # must not raise

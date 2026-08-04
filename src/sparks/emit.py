@@ -20,10 +20,17 @@ Or as a context manager, which records `crashed` on an exception:
 Every push is wrapped in try/except. A metrics outage must never kill a run.
 """
 
+import atexit
 import logging
+import struct
+import threading
 import time
 from types import TracebackType
 from typing import Any, Self
+
+# 1.1.3 ships no py.typed, so mypy cannot see into it and strict mode refuses
+# the import outright. The writer is used through one method, send().
+from prometheus_remote_writer import RemoteWriter  # type: ignore[import-untyped]
 
 from sparks.buffer import Buffer
 from sparks.metrics import METRICS
@@ -34,6 +41,12 @@ LOG = logging.getLogger("sparks")
 FLUSH_SECONDS = 5.0
 """k6's number. Small enough to feel live, large enough that a slow push does
 not queue behind itself."""
+
+STALE_NAN = struct.unpack("<d", struct.pack("<Q", 0x7FF0000000000002))[0]
+"""Prometheus's stale marker. A pushed series is never marked stale
+automatically, so without this a finished run holds its last value for five
+minutes and then vanishes. Task 2's spike is what proved this survives the
+Python protobuf encoder."""
 
 
 class RunMetrics:
@@ -134,7 +147,57 @@ class RunMetrics:
         self._sample(Series("training_run_info", self._info), 1.0, now)
 
     def _start(self) -> None:
-        raise NotImplementedError("Task 7")
+        self._writer = RemoteWriter(
+            url=f"{self.url}/api/v1/write",
+            timeout=5.0,
+            retries=3,
+            backoff_factor=0.5,
+            sort_labels=True,
+            strict_timestamps=True,
+            auto_convert_seconds_to_ms=False,
+        )
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._pump, name="sparks-pump", daemon=True
+        )
+        self._thread.start()
+        # Backstop: a run killed without reaching end() still flushes what it had.
+        atexit.register(self._shutdown)
+
+    def _pump(self) -> None:
+        """The only thread that ever calls send()."""
+        while not self._stop.wait(FLUSH_SECONDS):
+            self._beat(time.time())
+            self._flush()
+
+    def _flush(self) -> None:
+        batch = self._buffer.drain()
+        if not batch:
+            return
+        try:
+            self._writer.send(batch)
+        except Exception as e:  # deliberately broad: telemetry never kills a run
+            LOG.warning("sparks: dropped %d series: %s", len(batch), e)
 
     def _shutdown(self) -> None:
-        """Nothing to shut down until Task 7 owns the pump thread."""
+        if self._stop is None or self._stop.is_set():
+            return
+        self._stop.set()
+        self._thread.join(timeout=FLUSH_SECONDS * 2)
+        self._flush()
+        self._mark_stale()
+
+    def _mark_stale(self) -> None:
+        """End every series this run wrote, so a finished run stops dead on the
+        graph instead of flat-lining for the lookback window."""
+        ended = int(time.time() * 1000)
+        batch = [
+            {"metric": s.as_metric(), "values": [STALE_NAN], "timestamps": [ended]}
+            for s in self._buffer.seen()
+        ]
+        if not batch:
+            return
+        try:
+            self._writer.send(batch)
+        except Exception as e:  # deliberately broad: telemetry never kills a run
+            LOG.warning("sparks: could not mark %d series stale: %s", len(batch), e)

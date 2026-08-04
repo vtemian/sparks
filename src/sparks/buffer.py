@@ -50,3 +50,8 @@ class Buffer:
                     }
                 )
             return out
+
+    def seen(self) -> list[Series]:
+        """Every series this buffer has ever sent, for the stale markers."""
+        with self._lock:
+            return list(self._last)
