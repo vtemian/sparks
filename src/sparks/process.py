@@ -321,13 +321,34 @@ class Supervisor:
 
     def _raw(self, signum: int) -> None:
         """Detail 1: the group AND the pid, because a child that calls
-        `setpgid` itself escapes the group."""
+        `setpgid` itself escapes the group.
+
+        Exactly one of the two reaches any one process, though. Measured: a
+        child still inside the group received both copies in 6 runs out of 10,
+        and a second SIGTERM arriving after its handler has called `exit()`
+        kills it during interpreter shutdown, when CPython has already restored
+        SIG_DFL. The run then reads `cancelled / null / SIGTERM` when the child
+        in fact checkpointed and exited 0, which is the wrapper corrupting the
+        very record it exists to keep.
+        """
         self._group(signum)
         child = self.child
-        if child is not None and child.returncode is None:
-            # send_signal already guards the pid-reuse race by re-polling.
-            with contextlib.suppress(ProcessLookupError, ValueError):
-                child.send_signal(signum)
+        if child is None or child.returncode is not None:
+            return
+        if self._in_group(child.pid):
+            return  # killpg already delivered it
+        # send_signal already guards the pid-reuse race by re-polling.
+        with contextlib.suppress(ProcessLookupError, ValueError):
+            child.send_signal(signum)
+
+    def _in_group(self, pid: int) -> bool:
+        """Whether the child is still inside the group we just signalled."""
+        if self.pgid is None:
+            return False
+        try:
+            return os.getpgid(pid) == self.pgid
+        except OSError:
+            return False
 
     def _group(self, signum: int) -> None:
         if self.pgid is None:

@@ -170,6 +170,47 @@ def test_a_signalled_wrapper_is_cancelled_even_when_the_child_exits_zero(
     assert not done.outcome.escalated_to_sigkill
 
 
+def test_a_signal_reaches_the_child_exactly_once(tmp_path: Path) -> None:
+    """The group and the pid are two routes to the same process, and a child
+    that has not left the group is on both. Measured: it received both copies
+    in 6 runs out of 10, and the duplicate lands after its handler has called
+    exit(), when CPython has restored SIG_DFL -- so a run that checkpointed and
+    exited 0 gets recorded `cancelled / null / SIGTERM`. That is the wrapper
+    corrupting the record it exists to keep, and it showed up first as the test
+    above failing one run in four.
+
+    Sampled rather than asserted once, because a duplicate that arrives before
+    the child dequeues the first is coalesced by the kernel and leaves no trace.
+    """
+    deliveries = 0
+    for i in range(5):
+        counted = tmp_path / f"deliveries{i}"
+        command = child(
+            tmp_path,
+            f"counts{i}",
+            """
+            import os, pathlib, signal, sys, time
+            log = pathlib.Path(sys.argv[1])
+            def count(signum, frame):
+                with log.open('a') as f:
+                    f.write('SIGTERM\\n')
+            signal.signal(signal.SIGTERM, count)
+            os.kill(os.getppid(), signal.SIGTERM)
+            time.sleep(0.3)   # long enough for a second copy to arrive
+            sys.exit(0)
+            """,
+            str(counted),
+        )
+        # A grace period longer than the child's wait, so nothing escalates
+        # while we are watching for the duplicate.
+        done = supervisor(tmp_path, command, grace=5.0).run()
+        assert done.outcome.status == "cancelled"
+        assert done.outcome.exit_code == 0
+        deliveries += counted.read_text().count("SIGTERM")
+
+    assert deliveries == 5, f"5 signals were delivered {deliveries} times"
+
+
 def test_a_child_that_ignores_sigterm_is_escalated_to_sigkill(tmp_path: Path) -> None:
     done = run(
         tmp_path,
