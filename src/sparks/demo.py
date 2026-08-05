@@ -60,12 +60,16 @@ def run(
             time.sleep(step_seconds)
             loss = curve(step, total, seed)
             elapsed = time.monotonic() - started
+            progress = (step + 1) / total
+            eta = (total - step - 1) * (elapsed / max(step + 1, 1))
             m.log(
                 step=step,
                 epoch=step / STEPS_PER_EPOCH,
                 loss=loss,
                 steps_per_sec=(step + 1) / max(elapsed, 1e-6),
                 tokens_per_sec=1180.0 * (step + 1) / max(elapsed, 1e-6),
+                progress=progress,
+                eta_seconds=eta,
             )
             m.log_group(
                 "training_grad_norm", {"lora": loss * 1.7, "tables": loss * 0.2}
