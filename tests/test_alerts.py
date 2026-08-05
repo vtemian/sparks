@@ -7,10 +7,11 @@ wires it up. This applies the dashboard checker's rule to the rules file.
 """
 
 import re
-import shutil
-import subprocess
 from pathlib import Path
 
+import pytest
+
+from tests import promtool
 from tests.check_dashboard import allowed as dashboard_allowed
 from tests.check_dashboard import metric_names
 
@@ -24,7 +25,6 @@ ALERTS = sorted((ROOT / "alerts").glob("*.yml"))
 ALERT_PREFIXES = ("promhttp_",)
 
 EXPR = re.compile(r"^\s*expr:\s*(.+?)\s*$", re.MULTILINE)
-PROMTOOL = shutil.which("promtool")
 
 
 def exprs() -> list[str]:
@@ -48,16 +48,8 @@ def test_every_alert_queries_a_metric_something_emits_or_scrapes() -> None:
             assert allowed(name), f"{name!r} in alert {expr!r} is emitted by nobody"
 
 
+@pytest.mark.skipif(not promtool.usable(), reason=promtool.REASON)
 def test_promtool_accepts_the_rules() -> None:
-    if PROMTOOL is None:
-        import pytest
-
-        pytest.skip("promtool is not installed")
     for path in ALERTS:
-        done = subprocess.run(
-            [PROMTOOL, "check", "rules", str(path)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        done = promtool.check_rules(path)
         assert done.returncode == 0, done.stdout + done.stderr

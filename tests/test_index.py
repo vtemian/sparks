@@ -1,7 +1,5 @@
 import re
-import shutil
 import stat
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -9,9 +7,8 @@ import pytest
 
 from sparks.index import FILENAME, rebuild, render
 from sparks.summary import Energy, Summary, save
+from tests import promtool
 from tests.test_summary import a_summary
-
-PROMTOOL = shutil.which("promtool")
 
 SECOND = {
     "run_id": "run-20260805-1500-e1",
@@ -243,21 +240,14 @@ def test_rebuild_over_a_missing_runs_directory_writes_an_empty_index(
     assert target.read_text() == ""
 
 
-@pytest.mark.skipif(PROMTOOL is None, reason="promtool is not installed")
+@pytest.mark.skipif(not promtool.usable(), reason=promtool.REASON)
 def test_promtool_accepts_the_rendered_index() -> None:
-    assert PROMTOOL is not None
     weird: dict[str, Any] = {
         "run_id": "run-20260805-1600-e2",
         "run_name": 'a"b\\c\nd',
         "user": "a\tb",
     }
-    done = subprocess.run(
-        [PROMTOOL, "check", "metrics"],
-        input=render([*two_runs(), a_summary(**weird)]),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    done = promtool.check_metrics(render([*two_runs(), a_summary(**weird)]))
     assert done.returncode == 0, done.stdout + done.stderr
 
 
