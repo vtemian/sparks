@@ -208,8 +208,11 @@ def test_a_child_that_emits_lands_alongside_the_supervisor_lifecycle(
     )
     assert result.status == "finished"
 
-    # The child's own series landed, carrying the label it set.
-    loss = wait_for(f'training_loss{{run_id="{result.run_id}"}}')
+    # The child's own series landed, carrying the label it set. last_over_time,
+    # because the child marked its series stale on the way out: by the time
+    # launch() returns, a bare training_loss correctly resolves to nothing, and
+    # that is the behaviour the stale-marker test above exists to guarantee.
+    loss = wait_for(f'last_over_time(training_loss{{run_id="{result.run_id}"}}[1h])')
     assert loss[0]["metric"]["arm"] == "real"
     assert float(loss[0]["value"][1]) == pytest.approx(0.25)
 
