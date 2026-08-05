@@ -49,16 +49,20 @@ class Energy:
     "GPU energy" number is meaningless without saying which one it is, and
     `gpu_sources` records whether their ratio still says both are trustworthy.
 
-    `marginal_joules` is None, never 0.0, when the baseline could not carry the
-    subtraction; the window and baseline seconds are persisted so the record
-    reproduces its own arithmetic, and `idle_gpu_watts` is kept so the busy-GPU
-    threshold can be recalibrated from records rather than guessed again.
+    Every measured quantity is None, never 0.0, when it could not be measured:
+    the three counters when the box has no such sensor or an endpoint of their
+    delta failed to read, and `marginal_joules` additionally when the baseline
+    could not carry the subtraction. A zero would claim the run drew nothing,
+    which is a different and false statement. The window and baseline seconds
+    are persisted so the record reproduces its own arithmetic, and
+    `idle_gpu_watts` is kept so the busy-GPU threshold can be recalibrated from
+    records rather than guessed again.
     """
 
-    total_joules: float
+    total_joules: float | None
     marginal_joules: float | None
-    gpu_nvml_joules: float
-    gpu_firmware_joules: float
+    gpu_nvml_joules: float | None
+    gpu_firmware_joules: float | None
     idle_watts: float
     idle_gpu_watts: float
     window_seconds: float
@@ -119,9 +123,9 @@ class Summary:
         data = asdict(self)
         if self.final_loss is None or not math.isfinite(self.final_loss):
             data.pop("final_loss", None)
-        marginal = data["energy"]["marginal_joules"]
-        if marginal is not None and not math.isfinite(marginal):
-            data["energy"]["marginal_joules"] = None
+        for field, value in data["energy"].items():
+            if isinstance(value, float) and not math.isfinite(value):
+                data["energy"][field] = None
         return data
 
     @classmethod

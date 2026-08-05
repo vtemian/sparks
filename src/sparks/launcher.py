@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from sparks import index, shared, summary
+from sparks import energy, index, shared, summary
 from sparks.emit import RunMetrics
 from sparks.energy import (
     SOURCES_DISAGREE,
@@ -125,11 +125,15 @@ def launch(
         measured_seconds = max(
             completed.duration_seconds, time.monotonic() - energy_read_at
         )
+        # A delta needs BOTH endpoints. Coalescing a failed read to 0.0 made a
+        # glitched start read report the entire accumulator as this run's
+        # energy, and a backwards delta means the counter reset mid-run; both
+        # are non-measurements, and energy.delta returns None for them.
         reading = EnergyReading(
-            total_joules=max(0.0, sampler.total_joules() - energy_start),
-            gpu_nvml_joules=max(0.0, sampler.gpu_nvml_joules() - gpu_nvml_start),
-            gpu_firmware_joules=max(
-                0.0, sampler.gpu_firmware_joules() - gpu_firmware_start
+            total_joules=energy.delta(energy_start, sampler.total_joules()),
+            gpu_nvml_joules=energy.delta(gpu_nvml_start, sampler.gpu_nvml_joules()),
+            gpu_firmware_joules=energy.delta(
+                gpu_firmware_start, sampler.gpu_firmware_joules()
             ),
             idle_watts=base.idle_watts,
             gpu_idle_watts=base.gpu_watts,
@@ -254,13 +258,14 @@ def _record_failed_launch(
             exit_code=127,
             signal=None,
             escalated_to_sigkill=False,
-            # Nothing was measured, so marginal is unknown (None, not 0.0) and
-            # the sources are unmeasured (not "agree", the old hard-coded lie).
+            # The command never ran, so nothing was measured: every counter is
+            # unknown (None, not 0.0, which would claim a measured zero) and the
+            # sources are unmeasured, not "agree", the old hard-coded lie.
             energy=summary.Energy(
-                total_joules=0.0,
+                total_joules=None,
                 marginal_joules=None,
-                gpu_nvml_joules=0.0,
-                gpu_firmware_joules=0.0,
+                gpu_nvml_joules=None,
+                gpu_firmware_joules=None,
                 idle_watts=0.0,
                 idle_gpu_watts=0.0,
                 window_seconds=0.0,

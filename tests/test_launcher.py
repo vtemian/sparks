@@ -81,7 +81,12 @@ def test_energy_is_recorded_even_with_no_sensors(tmp_path: Path) -> None:
     result = launch(["true"], name="nrg", shared_dir=tmp_path, url=None)
     e = read_summary(tmp_path / "runs" / result.run_id)["energy"]
     assert isinstance(e, dict)
-    assert e["total_joules"] == 0.0
+    # None, not 0.0: there is no sensor, so the run's draw was never measured,
+    # and 0 J would be a measurement claiming it drew nothing. The index omits
+    # the sample entirely rather than recording a zero it cannot support.
+    assert e["total_joules"] is None
+    assert e["gpu_nvml_joules"] is None
+    assert e["gpu_firmware_joules"] is None
     assert e["idle_watts"] == 0.0
     # No baseline was measured, so marginal is unknown (None), never 0.0, and
     # the sources are unmeasured rather than the old hard-coded "agree".
