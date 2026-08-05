@@ -109,9 +109,15 @@ the match group` and the panel goes **fully red** rather than degrading. Termina
   "identifier followed by something" regex misses the metric inside
   `max by (...) (training_run_info)`, which is the shape every joined panel uses, so it silently
   skips the interesting half. Two tests pin this.
-- **`sort: 8` in the dashboard variable is Natural DESC** and is real, though the Grafana web docs
-  list no numeric sort values at all. It is verified from `VariableSort` in `types.gen.ts` at
-  v13.1.1. Alphabetical would put `run-9` above `run-10`.
+- **The dashboard variable uses `sort: 4` (numerical DESC), not `sort: 8`.** An earlier note here
+  claimed `sort: 8` was Natural DESC, "verified from `VariableSort` in `types.gen.ts` at v13.1.1".
+  That was read rather than run, and it is wrong. Observed in a real Grafana 13.1.1 testing every
+  value 0-8: sort values **5, 6, 7 and 8 are silently ignored** (byte-identical to `sort: 0`, raw
+  datasource order). The `@grafana/scenes` `sortVariableValues` switch does have arms for 5-8, which
+  is what the earlier agent read, but they never fire at runtime. `sort: 8` therefore auto-selected
+  the oldest run in the window, which with the default `now-3h` had already scrolled out of range,
+  leaving every training panel "No data". Use **`sort: 4`**: it keys on the leading number, so it
+  auto-selects the newest run and also puts `run-10` above `run-9`. Do not "restore" `sort: 8`.
 - **Panels match with `=~`, never `=`.** A multi-select variable interpolates to `(a|b)`, so `=`
   silently matches nothing the moment a second run is ticked.
 - **The info join wraps its right side in `max by (...)`.** Two `training_run_info` series sharing a
@@ -166,6 +172,13 @@ and snapshots both need a Grafana service account token, because the box's Grafa
 Slice 3: the queue. A spool directory under `$SPARKS_SHARED_DIR`, one systemd service under a service account
 so exclusivity is structural, and a textfile exporter. Exclusivity is what makes marginal energy
 attribution mean anything.
+
+**The alerts are a specification, not a live rule set.** `alerts/sparks.yml` is valid — `promtool
+check rules` passes and `tests/test_alerts.py` holds every expression to the same "a metric something
+emits or scrapes" rule the dashboards get — but nothing loads it. sparkup's Prometheus config has no
+`rule_files:`, there is no Alertmanager, and `make deploy` does not ship the file, so no rule here
+can fire until someone wires it up. Read it as the intended alerts, and mind the `CAVEAT` comments on
+the ones that depend on config that does not exist yet (`SparksTextfileError`'s `job` label, for one).
 
 **The overview table must come from the textfile collector, not remote-write.** A `.prom` file in
 `/var/lib/node_exporter/textfile` is re-scraped every 15s for as long as it exists, so those series
@@ -277,8 +290,9 @@ minutes and that is the honest behaviour.
   cannot help either.
 - **The index lands in `SPARKS_TEXTFILE_DIR`, or node_exporter's default when that directory
   exists, and falls back to `<shared>/index` otherwise.** The fallback is never scraped. On a real
-  box confirm the file is where node_exporter reads it, or `count(sparks_run_info)` stays empty and
-  `SparksRunIndexEmpty` fires forever.
+  box confirm the file is where node_exporter reads it, or `count(sparks_run_info)` stays empty. The
+  `SparksRunIndexEmpty` rule in `alerts/sparks.yml` would catch that, but nothing loads that file: it
+  is a specification, not a live alert (see "What is not built yet").
 
 ## Energy under real load, which corrects the design research
 

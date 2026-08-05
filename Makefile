@@ -58,7 +58,7 @@ harness-down:
 	./tests/harness-down.sh
 
 # Push the working tree, install it into the training venv, and hand Grafana the
-# dashboard. The dashboard directory is setgid to the shared group, so this
+# dashboards. The dashboard directory is setgid to the shared group, so this
 # needs no root, and Grafana rescans on a 10s timer, so it needs no restart.
 deploy:
 	@test -n "$(SPARKS_VENV)" || { \
@@ -71,6 +71,6 @@ deploy:
 	  ./ $(SPARKS_HOST):sparks/
 	ssh $(SPARKS_HOST) 'PATH=$$HOME/.local/bin:$$PATH \
 	  VIRTUAL_ENV=$(SPARKS_VENV) uv pip install -q -e $$HOME/sparks'
-	scp -q dashboards/training-runs.json \
+	scp -q dashboards/*.json \
 	  $(SPARKS_HOST):$(SPARKS_SHARED_DIR)/dashboards/
 	@echo "deployed to $(SPARKS_HOST):$(SPARKS_SHARED_DIR)"
