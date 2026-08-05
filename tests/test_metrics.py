@@ -22,6 +22,8 @@ def test_the_names_the_dashboard_depends_on_are_declared() -> None:
         "training_loss",
         "training_step",
         "training_epoch",
+        "training_progress",
+        "training_eta_seconds",
     ):
         assert name in METRICS
 
@@ -36,6 +38,13 @@ def test_the_lifecycle_set_is_not_everything() -> None:
     # If it were, no series would ever be marked stale and a finished run would
     # hold its last loss on the graph for the whole lookback window.
     assert set(METRICS) - LIFECYCLE
+
+
+def test_progress_metrics_are_not_lifecycle() -> None:
+    assert "training_progress" in METRICS
+    assert "training_eta_seconds" in METRICS
+    assert "training_progress" not in LIFECYCLE
+    assert "training_eta_seconds" not in LIFECYCLE
 
 
 def test_run_active_is_declared_but_deliberately_not_lifecycle() -> None:

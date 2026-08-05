@@ -26,6 +26,8 @@ METRICS: dict[str, str] = {
     # before it, so an annotation on info draws a region 7x the run.
     "training_run_active": "1 while the run is running, ended by a stale marker",
     # Progress.
+    "training_progress": "fraction of the whole job complete, 0-1",
+    "training_eta_seconds": "estimated seconds remaining until the job finishes",
     "training_epoch": "fractional epoch",
     "training_step": "optimizer steps since this run began",
     "training_loss": "training loss for the last batch",
