@@ -315,6 +315,96 @@
       ]
     },
     {
+      "id": 7,
+      "type": "stat",
+      "title": "Progress",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "training_progress{run_id=~\"$run_id\"}",
+          "legendFormat": "{{run_id}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "ETA",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "training_eta_seconds{run_id=~\"$run_id\"}",
+          "legendFormat": "{{run_id}}"
+        }
+      ]
+    },
+    {
       "id": 10,
       "type": "timeseries",
       "title": "Loss",
@@ -327,7 +417,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 5
+        "y": 9
       },
       "fieldConfig": {
         "defaults": {
@@ -381,7 +471,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 5
+        "y": 9
       },
       "fieldConfig": {
         "defaults": {
@@ -431,7 +521,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 14
+        "y": 18
       },
       "fieldConfig": {
         "defaults": {
@@ -481,7 +571,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 14
+        "y": 18
       },
       "fieldConfig": {
         "defaults": {
@@ -530,7 +620,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 14
+        "y": 18
       },
       "fieldConfig": {
         "defaults": {
@@ -597,7 +687,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 26
       },
       "collapsed": false,
       "panels": []
@@ -615,7 +705,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 23
+        "y": 27
       },
       "fieldConfig": {
         "defaults": {
@@ -666,7 +756,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 23
+        "y": 27
       },
       "fieldConfig": {
         "defaults": {
@@ -716,7 +806,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 23
+        "y": 27
       },
       "fieldConfig": {
         "defaults": {
