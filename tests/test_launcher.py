@@ -56,21 +56,23 @@ def test_output_lands_in_the_log_file(tmp_path: Path) -> None:
     assert "hello" in (tmp_path / "runs" / result.run_id / "output.log").read_text()
 
 
-def test_the_run_index_is_rebuilt_from_the_summaries(tmp_path: Path) -> None:
+def test_the_run_index_is_rebuilt_from_the_summaries(
+    tmp_path: Path, textfile_dir: Path
+) -> None:
     launch(["true"], name="a", shared_dir=tmp_path, url=None)
     launch(["sh", "-c", "exit 1"], name="b", shared_dir=tmp_path, url=None)
-    index = (tmp_path / "index" / "sparks_runs.prom").read_text()
+    index = (textfile_dir / "sparks_runs.prom").read_text()
     assert index.count("sparks_run_info{") == 2
     assert 'status="finished"' in index
     assert 'status="crashed"' in index
     assert index.endswith("\n")
 
 
-def test_the_index_file_is_world_readable(tmp_path: Path) -> None:
+def test_the_index_file_is_world_readable(tmp_path: Path, textfile_dir: Path) -> None:
     # mkstemp creates 0600 and node_exporter drops privileges, so a 0600 file
     # is skipped with no error anybody notices.
     launch(["true"], name="perm", shared_dir=tmp_path, url=None)
-    mode = (tmp_path / "index" / "sparks_runs.prom").stat().st_mode & 0o777
+    mode = (textfile_dir / "sparks_runs.prom").stat().st_mode & 0o777
     assert mode == 0o644
 
 
@@ -214,6 +216,7 @@ def test_a_command_that_does_not_exist_still_leaves_a_record(
 
 def test_a_non_utf8_name_neither_poisons_the_index_nor_crashes(
     tmp_path: Path,
+    textfile_dir: Path,
 ) -> None:
     # argv is surrogate-escaped; a lone surrogate persisted raw makes every
     # later rebuild raise UnicodeEncodeError and freezes the shared index.
@@ -222,7 +225,7 @@ def test_a_non_utf8_name_neither_poisons_the_index_nor_crashes(
     s = read_summary(tmp_path / "runs" / result.run_id)
     assert s["run_name"] == "e0\ufffd"
     # The whole record round-trips through UTF-8, and the rebuilt index does too.
-    index_text = (tmp_path / "index" / "sparks_runs.prom").read_text(encoding="utf-8")
+    index_text = (textfile_dir / "sparks_runs.prom").read_text(encoding="utf-8")
     assert result.run_id in index_text
     assert index_text.endswith("\n")
 

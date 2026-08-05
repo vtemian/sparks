@@ -3,7 +3,16 @@
 Training runs on the DGX Spark, with the curves in Grafana next to the hardware they ran on.
 
 Needs a box provisioned by [sparkup](https://github.com/vtemian/sparkup): Prometheus with the
-remote-write receiver, and Grafana on `http://spark.local`.
+remote-write receiver, and Grafana on `http://spark.local`. sparkup's `sparks` role provisions the
+rest and writes `/etc/sparks/box.toml`, which is where this framework learns the box's shared
+directory, textfile directory and Prometheus URL.
+
+Without that file `sparks run` refuses to start, exiting 78, rather than recording a run into a
+directory nothing reads. On a machine sparkup does not manage, say where things are explicitly:
+
+```sh
+sparks run --shared-dir /tmp/runs --url "" -- python train.py   # empty url: no telemetry
+```
 
 ## Watch a synthetic run
 

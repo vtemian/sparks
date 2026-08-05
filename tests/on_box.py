@@ -37,7 +37,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sparks import index, launcher, shared, summary
+from sparks import box, cli, index, launcher, shared, summary
 from sparks.energy import (
     MIN_COUNTER_WINDOW_SECONDS,
     RATIO_TOLERANCE,
@@ -136,6 +136,58 @@ def umask(value: int) -> Iterator[None]:
         yield
     finally:
         os.umask(previous)
+
+
+# --------------------------------------------------------------------------
+# contract
+# --------------------------------------------------------------------------
+
+
+def check_contract(report: Report, shared_dir: Path) -> None:
+    """What sparkup's `sparks` role promised, checked against the box and against
+    the shared tree this script was pointed at.
+
+    The last of those matters most. Two sources of truth for one path is how a
+    run ends up recorded where nobody reads it, and this script taking
+    --shared-dir is itself a second source.
+    """
+    heading("contract: what sparkup declared this box provides")
+    try:
+        contract = box.load()
+    except box.Malformed as e:
+        report.bad("the contract parses", str(e))
+        return
+    if contract is None:
+        report.bad(
+            "the box declares itself provisioned",
+            f"{box.config_path()} is absent, so `sparks run` refuses with exit "
+            f"{cli.EX_CONFIG}. Converge sparkup with the sparks role.",
+        )
+        return
+    report.ok("the box declares itself provisioned", str(box.config_path()))
+
+    complaints = box.preflight(contract)
+    report.expect(
+        not complaints,
+        "everything the contract promises is there",
+        "; ".join(complaints),
+        passed=f"{contract.runs_dir} and {contract.textfile_dir}",
+    )
+    report.expect(
+        contract.shared_dir == shared_dir,
+        "the contract and --shared-dir agree",
+        f"contract says {contract.shared_dir}, this run was given {shared_dir}. "
+        f"One of them is wrong, and the contract is what real runs will use.",
+        passed=str(shared_dir),
+    )
+    # Not fatal: the index is published through the textfile collector, and a
+    # box with no Prometheus still records complete runs on disk.
+    report.expect(
+        bool(contract.prometheus_url),
+        "the contract names a Prometheus",
+        "prometheus_url is empty, so runs record to disk but publish nothing",
+        passed=contract.prometheus_url,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -585,8 +637,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--section",
         action="append",
-        choices=["permissions", "acceptance", "calibration"],
-        help="repeatable; default is all three",
+        choices=["contract", "permissions", "acceptance", "calibration"],
+        help="repeatable; default is all four",
     )
     parser.add_argument(
         "--fix-permissions",
@@ -609,10 +661,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    sections = args.section or ["permissions", "acceptance", "calibration"]
+    sections = args.section or ["contract", "permissions", "acceptance", "calibration"]
     report = Report()
     print(f"sparks on-box verification, as {current_user()}, on {os.uname().nodename}")
 
+    # First: everything below assumes the shared tree is the one real runs use,
+    # and this is what establishes that.
+    if "contract" in sections:
+        check_contract(report, args.shared_dir)
     if "permissions" in sections:
         check_permissions(report, args.shared_dir, args.fix_permissions)
     if "acceptance" in sections:

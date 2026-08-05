@@ -1,4 +1,4 @@
-.PHONY: sync fmt lint typecheck test dashboard check live on-box harness-up harness-down deploy
+.PHONY: sync fmt lint typecheck test dashboard check live on-box harness-up harness-down deploy deploy-preflight
 
 # Your box's values, untracked, same split sparkup uses between tracked
 # defaults and an untracked host file. Copy local.mk.example to local.mk.
@@ -65,14 +65,41 @@ harness-up:
 harness-down:
 	./tests/harness-down.sh
 
-# Push the working tree, install it into the training venv, and hand Grafana the
-# dashboards. The dashboard directory is setgid to the shared group, so this
-# needs no root, and Grafana rescans on a 10s timer, so it needs no restart.
-deploy:
+# Refuse to install onto a box that cannot run what we are installing, and
+# refuse to scp dashboards into a directory that is not the one the box uses.
+# Both were silent before: the framework would install happily and the first run
+# would record itself where nothing reads. Checked over one SSH round trip,
+# before anything is written.
+deploy-preflight:
 	@test -n "$(SPARKS_VENV)" || { \
 	  echo "set SPARKS_VENV to the venv your training code runs in."; \
 	  echo "cp local.mk.example local.mk and edit it, or pass it inline:"; \
 	  echo "  make deploy SPARKS_VENV=\$$HOME/myproject/.venv"; exit 2; }
+	@contract=$$(ssh $(SPARKS_HOST) \
+	  'cat /etc/sparks/box.toml 2>/dev/null || echo __ABSENT__') || { \
+	  echo "cannot reach $(SPARKS_HOST) over ssh, so there is nothing to check."; \
+	  echo "This is a connection problem, not a provisioning one."; exit 2; }; \
+	declared=$$(printf '%s' "$$contract" \
+	  | sed -n 's/^shared_dir *= *"\(.*\)"/\1/p'); \
+	if [ -z "$$declared" ]; then \
+	  echo "$(SPARKS_HOST) is not configured for sparks."; \
+	  echo "/etc/sparks/box.toml is missing or unreadable there, so a run on that"; \
+	  echo "box would have nowhere to record itself. sparkup writes that file:"; \
+	  echo "  cd sparkup && make apply"; \
+	  exit 78; \
+	fi; \
+	if [ "$$declared" != "$(SPARKS_SHARED_DIR)" ]; then \
+	  echo "SPARKS_SHARED_DIR does not match what $(SPARKS_HOST) provides."; \
+	  echo "  here: $(SPARKS_SHARED_DIR)"; \
+	  echo "  box:  $$declared"; \
+	  echo "The box wins. Set it in local.mk, or drop the override."; \
+	  exit 78; \
+	fi
+
+# Push the working tree, install it into the training venv, and hand Grafana the
+# dashboards. The dashboard directory is setgid to the shared group, so this
+# needs no root, and Grafana rescans on a 10s timer, so it needs no restart.
+deploy: deploy-preflight
 	rsync -az --delete \
 	  --exclude '.git/' --exclude '.venv/' --exclude '.claude/' \
 	  --exclude '__pycache__/' --exclude '*.pyc' --exclude '.*_cache/' \

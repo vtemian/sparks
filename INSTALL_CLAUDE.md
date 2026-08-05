@@ -133,6 +133,19 @@ sparkup's **`spark_shared_dir`**, whose repo default is `/srv/spark` and which a
 its untracked `host_vars`. Write `$SPARKS_SHARED_DIR` in this repo, never a literal: baking one
 project's name into a framework meant to serve several is the mistake this section exists to prevent.
 
+**The box says where those paths are; sparks does not guess.** sparkup's `sparks` role writes
+`/etc/sparks/box.toml`, and `sparks run` reads it for the shared directory, the textfile directory
+and the Prometheus URL. Without that file the command **refuses to start**, exiting **78**
+(`EX_CONFIG`, distinct so a queue can tell a misconfigured box from a crashed job). Explicit
+`--shared-dir` and `--url` still override it, which is how the framework stays usable on a laptop or
+a box sparkup does not manage.
+
+This replaced two guesses, both of which lost data quietly. `--shared-dir` used to default to
+`/srv/spark`, which is *this repo's* default and not the box's — the box overrides it — so omitting
+the flag recorded runs into a directory nobody reads. And the textfile directory used to fall back to
+`$SPARKS_SHARED_DIR/index` when node_exporter's own was missing, which nothing scrapes. Both looked
+like success. A run that cannot be recorded properly now refuses to start instead.
+
 `make deploy` reads three values, defaults in the Makefile, overrides in an untracked `local.mk`
 (copy `local.mk.example`). That is the same tracked-defaults plus untracked-identity split sparkup
 uses, and for the same reason.
@@ -173,12 +186,17 @@ Slice 3: the queue. A spool directory under `$SPARKS_SHARED_DIR`, one systemd se
 so exclusivity is structural, and a textfile exporter. Exclusivity is what makes marginal energy
 attribution mean anything.
 
-**The alerts are a specification, not a live rule set.** `alerts/sparks.yml` is valid — `promtool
-check rules` passes and `tests/test_alerts.py` holds every expression to the same "a metric something
-emits or scrapes" rule the dashboards get — but nothing loads it. sparkup's Prometheus config has no
-`rule_files:`, there is no Alertmanager, and `make deploy` does not ship the file, so no rule here
-can fire until someone wires it up. Read it as the intended alerts, and mind the `CAVEAT` comments on
-the ones that depend on config that does not exist yet (`SparksTextfileError`'s `job` label, for one).
+**The alerts are evaluated but not routed.** `alerts/sparks.yml` is loaded on a provisioned box:
+sparkup's `sparks` role vendors it, validates it with `promtool` from the pinned Prometheus image,
+and installs it into a `rule_files:` directory. Their state shows in Prometheus's `/rules` and is
+queryable as `ALERTS{alertname="..."}`. There is still **no Alertmanager**, so nothing pages, emails
+or notifies — "firing" means a series says so and somebody has to look.
+
+Two consequences worth keeping in mind. The file the box loads is sparkup's **copy**, so editing
+`alerts/sparks.yml` here changes nothing until it is copied to `roles/sparks/files/sparks.yml` and
+the play is re-run; provisioning deliberately does not reach a git remote. And the `CAVEAT` comments
+still apply to what the rules *mean*: `SparksRunIndexEmpty` cannot tell a fresh box that has never
+run anything from a box whose index broke, so do not treat it as a page even once routing exists.
 
 **The overview table must come from the textfile collector, not remote-write.** A `.prom` file in
 `/var/lib/node_exporter/textfile` is re-scraped every 15s for as long as it exists, so those series
@@ -284,15 +302,17 @@ minutes and that is the honest behaviour.
 - **`final_loss` is always absent**, so the overview column is empty. The supervisor has no channel
   to learn the child's last loss; the child would have to write it into the run directory on the way
   out.
-- **`total_joules` has no cross-check.** The GPU pair catches a counter reset through
-  `sources_agree`, but a `pkg` reset or a failed read yields `0.0`, which is indistinguishable from a
-  real zero and from a box with no sensors. There is no representation for "unknown", so `absent()`
-  cannot help either.
-- **The index lands in `SPARKS_TEXTFILE_DIR`, or node_exporter's default when that directory
-  exists, and falls back to `<shared>/index` otherwise.** The fallback is never scraped. On a real
-  box confirm the file is where node_exporter reads it, or `count(sparks_run_info)` stays empty. The
-  `SparksRunIndexEmpty` rule in `alerts/sparks.yml` would catch that, but nothing loads that file: it
-  is a specification, not a live alert (see "What is not built yet").
+- **`total_joules` still has no cross-check**, though it can now say so. The GPU pair catches a
+  counter reset through `gpu_sources`; a `pkg` reset or a failed read has nothing to compare against.
+  It is at least no longer reported as `0.0`: an unmeasurable endpoint yields `null`, so a real zero
+  and an unknown are distinguishable and `absent()` works. What is missing is a second whole-box
+  source to disagree with.
+- **The index lands in `SPARKS_TEXTFILE_DIR`, or the `textfile_dir` the box declared in
+  `/etc/sparks/box.toml`.** There is no fallback any more: `sparks run` checks that directory is
+  writable before starting anything and refuses with exit 78 if it is not, because the old fallback
+  (`<shared>/index`) was never scraped and left `count(sparks_run_info)` empty while looking healthy.
+  A library caller that bypasses the CLI still only gets a logged warning, since a failed index must
+  not fail a training run that otherwise succeeded.
 
 ## Energy under real load, which corrects the design research
 

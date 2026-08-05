@@ -7,12 +7,11 @@ child is reaped as the end of the run.
 """
 
 import logging
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from sparks import energy, index, shared, summary
+from sparks import box, energy, index, shared, summary
 from sparks.emit import RunMetrics
 from sparks.energy import (
     SOURCES_DISAGREE,
@@ -206,33 +205,21 @@ def _supervisor_metrics(run_id: str, name: str, url: str | None) -> RunMetrics |
 
 
 def _rebuild(shared_dir: Path) -> None:
-    """Refresh the run index. Never raises: a corrupt summary somewhere else
-    must not surface as this run having failed."""
-    target = textfile_dir(shared_dir) / index.FILENAME
+    """Refresh the run index. Never raises: a corrupt summary somewhere else, or
+    a box with no textfile directory to publish into, must not surface as this
+    run having failed.
+
+    The CLI has already refused to start on an unprovisioned box, so reaching
+    the warning below means either a library caller that never asked for a
+    contract, or provisioning that changed mid-run.
+    """
     try:
+        target = box.textfile_dir() / index.FILENAME
         shared.make_dir(target.parent)
         written = index.rebuild(shared_dir / "runs", target)
         LOG.info("sparks: %d runs in %s", written, target)
     except Exception as e:  # deliberately broad: the run itself still succeeded
         LOG.warning("sparks: could not rebuild the run index: %s", e)
-
-
-def textfile_dir(shared_dir: Path) -> Path:
-    """Where node_exporter reads .prom files from.
-
-    Overridable because it is a property of the box, not of this repo, and the
-    default is node_exporter's own. Writing the index anywhere else means it is
-    never scraped and `count(sparks_run_info)` stays empty. The
-    SparksRunIndexEmpty rule in alerts/sparks.yml would catch that, but nothing
-    loads that file yet: it is a specification, not a live alert (see its
-    header). The autouse fixture in tests/conftest.py overrides this so the unit
-    suite never rewrites the box's real index.
-    """
-    override = os.environ.get("SPARKS_TEXTFILE_DIR")
-    if override:
-        return Path(override)
-    default = Path("/var/lib/node_exporter/textfile")
-    return default if default.is_dir() else shared_dir / "index"
 
 
 def _record_failed_launch(
