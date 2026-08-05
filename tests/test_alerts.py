@@ -11,15 +11,17 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from sparks.metrics import METRICS
+from tests.check_dashboard import allowed as dashboard_allowed
 from tests.check_dashboard import metric_names
 
 ROOT = Path(__file__).resolve().parents[1]
 ALERTS = sorted((ROOT / "alerts").glob("*.yml"))
 
-# node_exporter and Prometheus internals the rules legitimately query, none of
-# which sparks emits. `promhttp_` is Prometheus's own handler metrics.
-ALERT_PREFIXES = ("node_", "up", "scrape_", "promhttp_")
+# Reuse the dashboard checker's allowlist rather than restating it: the two had
+# drifted, and this copy was the looser one, so a metric the dashboards would
+# have rejected passed here. The rules need exactly one prefix the dashboards
+# do not, Prometheus's own handler metrics, which no panel plots.
+ALERT_PREFIXES = ("promhttp_",)
 
 EXPR = re.compile(r"^\s*expr:\s*(.+?)\s*$", re.MULTILINE)
 PROMTOOL = shutil.which("promtool")
@@ -33,7 +35,7 @@ def exprs() -> list[str]:
 
 
 def allowed(name: str) -> bool:
-    return name in METRICS or name.startswith(ALERT_PREFIXES)
+    return dashboard_allowed(name) or name.startswith(ALERT_PREFIXES)
 
 
 def test_there_is_at_least_one_rule_to_check() -> None:

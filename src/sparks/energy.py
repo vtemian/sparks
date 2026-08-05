@@ -16,10 +16,16 @@ The idle baseline is the one thing sampled rather than counted, at 1 Hz and
 in-process rather than read back from Prometheus: at a 60 s window the 15 s
 scrape integral was measured up to 7% wrong.
 
-Everything here reads sysfs directly and every accessor degrades to 0.0 rather
+Everything here reads sysfs directly and every accessor degrades to None rather
 than raising. This package is developed on macOS, where none of these paths
 exist, and `spbm_enabled` is false on boxes that did not opt in. A missing
 sensor is a degraded reading; it is never a reason for a training run to fail.
+
+None rather than 0.0, because the two are different claims: 0 J says the run
+drew nothing, which is false, and it is false in the direction that flatters
+whatever configuration happened to run on the sensorless box. Unknown energy is
+carried as None all the way to the index, which omits the sample, so a run that
+was not measured has no row rather than a row of zeroes.
 """
 
 import importlib
@@ -88,11 +94,13 @@ it may catch one tick from one source and two from the other. UNVERIFIED: the
 real floor is set by the slowest counter's tick and must be measured once by
 reading energy4_input at 10 Hz for 20 s and timing the steps."""
 
-MAX_PLAUSIBLE_WATTS = 4000.0
-"""A dead power sensor reports the u32 sentinel, 4294967295 uW = 4295 W. Anything
-at or above this ceiling is that sentinel, not a reading, and is dropped rather
-than allowed to poison a mean. Applied to power only; an energy accumulator
-legitimately grows without bound."""
+U32_SENTINEL = 4294967295.0
+"""What a dead sensor reports, in raw micro units, being u32 max. Matched
+exactly rather than through a watts ceiling: the previous guard dropped anything
+at or above 4000 W, which is under what a large multi-GPU node genuinely draws,
+so it discarded real readings as implausible. Checked before the divide, so it
+means the same thing for a power channel and an energy accumulator, and no
+legitimate value is ever refused for merely being large."""
 
 SOURCES_AGREE = "agree"
 SOURCES_DISAGREE = "disagree"
@@ -119,12 +127,15 @@ class Baseline:
 
 @dataclass(frozen=True)
 class EnergyReading:
-    total_joules: float
-    gpu_nvml_joules: float
-    gpu_firmware_joules: float
+    total_joules: float | None
+    gpu_nvml_joules: float | None
+    gpu_firmware_joules: float | None
     idle_watts: float
     gpu_idle_watts: float
     seconds: float
+    """The three counters are None when the box has no such sensor, or when
+    either end of their delta could not be read. A run whose energy was not
+    measured records no energy, rather than recording that it drew nothing."""
 
     @property
     def marginal_joules(self) -> float | None:
@@ -137,6 +148,8 @@ class EnergyReading:
         "Unknown" in Prometheus is an omitted sample, which render() already
         drops, so a contaminated run simply has no marginal row rather than a
         misleading zero."""
+        if self.total_joules is None:
+            return None  # the run's own energy was never measured
         if self.idle_watts <= 0:
             return None  # no baseline was measured
         if self.gpu_idle_watts > BUSY_GPU_WATTS:
@@ -157,7 +170,7 @@ class EnergyReading:
         a run only one source measured, is `unmeasured` rather than a false
         `disagree`."""
         nvml, firmware = self.gpu_nvml_joules, self.gpu_firmware_joules
-        if nvml <= 0 or firmware <= 0:
+        if nvml is None or firmware is None or nvml <= 0 or firmware <= 0:
             return SOURCES_UNMEASURED
         if self.seconds < MIN_COUNTER_WINDOW_SECONDS:
             return SOURCES_UNMEASURED
@@ -193,29 +206,30 @@ class Sampler:
         as a counter delta, rather than integrating the power gauge."""
         return self.total_energy is not None
 
-    def total_watts(self) -> float:
-        """Instantaneous whole-box draw."""
-        return _coalesce(_read_micro(self.total_power, MAX_PLAUSIBLE_WATTS))
+    def total_watts(self) -> float | None:
+        """Instantaneous whole-box draw, or None where it cannot be read."""
+        return _read_micro(self.total_power)
 
-    def total_joules(self) -> float:
+    def total_joules(self) -> float | None:
         """Whole-box energy counter. Read as a delta across the run."""
-        return _coalesce(_read_micro(self.total_energy))
+        return _read_micro(self.total_energy)
 
-    def gpu_firmware_joules(self) -> float:
+    def gpu_firmware_joules(self) -> float | None:
         """The GPU rail's energy counter. Read as a delta across the run."""
-        return _coalesce(_read_micro(self.gpu_energy))
+        return _read_micro(self.gpu_energy)
 
-    def gpu_nvml_joules(self) -> float:
+    def gpu_nvml_joules(self) -> float | None:
         """The GPU domain's energy counter, which NVML reports in millijoules.
 
         It resets on driver reload, which is why `EnergyReading` cross-checks it
         against the firmware counter rather than trusting a positive delta."""
         if self.nvml is None:
-            return 0.0
+            return None
         try:
-            return self.nvml() / 1000.0
+            value = self.nvml() / 1000.0
         except Exception:  # NVML's own error type, and a reload invalidates the
-            return 0.0  # handle mid-run; either way the reading is degraded.
+            return None  # handle mid-run; either way the reading is degraded.
+        return value if math.isfinite(value) else None
 
     def baseline(self, seconds: float) -> Baseline:
         """Idle power over `seconds`, whole-box and GPU-rail, before the run.
@@ -235,9 +249,12 @@ class Sampler:
             box0, gpu0 = self.total_joules(), self.gpu_firmware_joules()
             time.sleep(seconds)
             box1, gpu1 = self.total_joules(), self.gpu_firmware_joules()
+            # An endpoint that could not be read leaves the rail at 0 W, which
+            # is how "no baseline" is spelled to marginal_joules: it then
+            # declines to subtract rather than subtracting a fabricated number.
             return Baseline(
-                max(0.0, box1 - box0) / seconds,
-                max(0.0, gpu1 - gpu0) / seconds,
+                _watts(delta(box0, box1), seconds),
+                _watts(delta(gpu0, gpu1), seconds),
             )
         # No accumulator: integrate the power gauge. The GPU rail has no gauge
         # here, so its idle draw is unknown and reported as zero.
@@ -256,7 +273,7 @@ class Sampler:
         samples: list[float] = []
         deadline = time.monotonic() + seconds
         while (remaining := deadline - time.monotonic()) > 0:
-            value = _read_micro(self.total_power, MAX_PLAUSIBLE_WATTS)
+            value = _read_micro(self.total_power)
             if value is not None:
                 samples.append(value)
             time.sleep(min(SAMPLE_INTERVAL, remaining))
@@ -298,15 +315,32 @@ def _read(path: Path) -> str | None:
         return None
 
 
-def _coalesce(value: float | None) -> float:
-    """A degraded sensor reads zero to the arithmetic that consumes it, which is
-    what keeps a missing sensor a degraded reading rather than a failed run."""
-    return value if value is not None else 0.0
+def _watts(joules: float | None, seconds: float) -> float:
+    """A counter delta as average power, or 0 W when the delta is unknown.
+
+    The Baseline stays a plain float because 0 W already means "no baseline
+    worth subtracting" everywhere downstream; introducing a second spelling of
+    absent would give marginal_joules two None branches that behave alike."""
+    return 0.0 if joules is None else joules / seconds
 
 
-def _read_micro(path: Path | None, ceiling: float | None = None) -> float | None:
+def delta(start: float | None, end: float | None) -> float | None:
+    """How far a counter advanced, or None if either endpoint was not read.
+
+    Coalescing a failed read to 0.0 is the trap this exists to avoid: a glitched
+    START read makes the delta the entire accumulator, which on this box is
+    ~5 GJ reported as one run's energy. Neither endpoint is optional, because
+    the difference is only meaningful when both were measured. A backwards
+    delta is a counter reset mid-window, which is also not a measurement.
+    """
+    if start is None or end is None or end < start:
+        return None
+    return end - start
+
+
+def _read_micro(path: Path | None) -> float | None:
     """A sysfs sensor in base units, or None if it is missing, unparseable,
-    non-finite, or above `ceiling`.
+    non-finite, or the dead-sensor sentinel.
 
     None rather than 0.0 so a caller sampling a stream can drop the bad reading
     instead of averaging a zero into it. `float("nan")` and `float("inf")` parse
@@ -319,14 +353,12 @@ def _read_micro(path: Path | None, ceiling: float | None = None) -> float | None
     if raw is None:
         return None
     try:
-        value = float(raw) / MICRO
+        micro = float(raw)
     except ValueError:
         return None
-    if not math.isfinite(value):
+    if not math.isfinite(micro) or micro == U32_SENTINEL:
         return None
-    if ceiling is not None and value >= ceiling:
-        return None
-    return value
+    return micro / MICRO
 
 
 def _nvml_counter() -> Callable[[], float] | None:

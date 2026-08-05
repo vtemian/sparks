@@ -15,17 +15,26 @@ from sparks.energy import (
 )
 
 
-def a_reading(**over: float) -> EnergyReading:
-    fields: dict[str, float] = {
-        "total_joules": 1000.0,
-        "gpu_nvml_joules": 300.0,
-        "gpu_firmware_joules": 367.0,
-        "idle_watts": 13.0,
-        "gpu_idle_watts": 3.8,
-        "seconds": 50.0,
-    }
-    fields.update(over)
-    return EnergyReading(**fields)
+def a_reading(
+    total_joules: float | None = 1000.0,
+    gpu_nvml_joules: float | None = 300.0,
+    gpu_firmware_joules: float | None = 367.0,
+    idle_watts: float = 13.0,
+    gpu_idle_watts: float = 3.8,
+    seconds: float = 50.0,
+) -> EnergyReading:
+    """A plausible reading from this box, with one field overridden per test.
+
+    The three counters are optional because an unmeasured run records None for
+    them; the baseline and window are not, since 0 already spells "absent"."""
+    return EnergyReading(
+        total_joules=total_joules,
+        gpu_nvml_joules=gpu_nvml_joules,
+        gpu_firmware_joules=gpu_firmware_joules,
+        idle_watts=idle_watts,
+        gpu_idle_watts=gpu_idle_watts,
+        seconds=seconds,
+    )
 
 
 def fake_chip(root: Path, index: int, name: str, **channels: tuple[str, str]) -> Path:
@@ -143,12 +152,14 @@ def test_a_sampler_without_nvml_degrades_rather_than_raising() -> None:
     assert s.baseline(seconds=0.0).idle_watts == 0.0
 
 
-def test_every_accessor_on_a_sensorless_box_reads_zero() -> None:
+def test_every_accessor_on_a_sensorless_box_reads_unknown() -> None:
+    # None, not 0.0. A zero here is a measurement that says the box drew no
+    # power, which is false; the honest answer is that nothing was measured.
     s = Sampler(nvml=None, hwmon=None)
-    assert s.total_watts() == 0.0
-    assert s.total_joules() == 0.0
-    assert s.gpu_firmware_joules() == 0.0
-    assert s.gpu_nvml_joules() == 0.0
+    assert s.total_watts() is None
+    assert s.total_joules() is None
+    assert s.gpu_firmware_joules() is None
+    assert s.gpu_nvml_joules() is None
 
 
 def test_the_chip_is_found_by_name_among_its_neighbours(tmp_path: Path) -> None:
@@ -202,11 +213,15 @@ def test_a_real_total_counter_wins_over_the_package_one(tmp_path: Path) -> None:
     assert Sampler.detect(root=tmp_path).total_joules() == pytest.approx(6000.0)
 
 
-def test_a_box_without_the_chip_reads_zero_rather_than_raising(tmp_path: Path) -> None:
+def test_a_box_without_the_chip_reads_unknown_rather_than_raising(
+    tmp_path: Path,
+) -> None:
     fake_chip(tmp_path, 0, "coretemp", temp1=("Package id 0", "42000"))
     s = Sampler.detect(root=tmp_path)
-    assert s.total_watts() == 0.0
-    assert s.gpu_firmware_joules() == 0.0
+    assert s.total_watts() is None
+    assert s.gpu_firmware_joules() is None
+    # The baseline stays a float: 0 W of idle is how "no baseline" is spelled
+    # to the marginal subtraction, which then declines to subtract at all.
     assert s.baseline(seconds=60.0).idle_watts == 0.0
 
 
@@ -214,20 +229,20 @@ def test_a_missing_hwmon_directory_is_not_an_error(tmp_path: Path) -> None:
     # macOS, where /sys does not exist at all.
     s = Sampler.detect(root=tmp_path / "nothing here")
     assert s.hwmon is None
-    assert s.total_watts() == 0.0
+    assert s.total_watts() is None
 
 
 def test_a_labelled_channel_with_no_input_file_is_skipped(tmp_path: Path) -> None:
     chip = fake_chip(tmp_path, 0, "spbm", power1=("sys_total", "13060000"))
     (chip / "power1_input").unlink()
-    assert Sampler.detect(root=tmp_path).total_watts() == 0.0
+    assert Sampler.detect(root=tmp_path).total_watts() is None
 
 
-def test_an_unreadable_sensor_value_reads_zero(tmp_path: Path) -> None:
+def test_an_unreadable_sensor_value_reads_unknown(tmp_path: Path) -> None:
     # A sensor that has gone away mid-run returns an error string, not a number.
     chip = spbm(tmp_path)
     (chip / "power5_input").write_text("N/A\n")
-    assert Sampler.detect(root=tmp_path).total_watts() == 0.0
+    assert Sampler.detect(root=tmp_path).total_watts() is None
 
 
 def test_nvml_reports_millijoules(tmp_path: Path) -> None:
@@ -236,12 +251,18 @@ def test_nvml_reports_millijoules(tmp_path: Path) -> None:
     assert s.gpu_nvml_joules() == pytest.approx(10.024)
 
 
-def test_an_nvml_call_that_fails_mid_run_reads_zero() -> None:
+def test_an_nvml_call_that_fails_mid_run_reads_unknown() -> None:
     # A driver reload invalidates the handle, and a training run must survive it.
     def reloaded() -> float:
         raise RuntimeError("NVML_ERROR_UNINITIALIZED")
 
-    assert Sampler(nvml=reloaded, hwmon=None).gpu_nvml_joules() == 0.0
+    assert Sampler(nvml=reloaded, hwmon=None).gpu_nvml_joules() is None
+
+
+def test_an_nvml_counter_returning_a_non_finite_value_reads_unknown() -> None:
+    # NaN parses and propagates silently all the way into json.dumps, where it
+    # produces a token every strict parser rejects.
+    assert Sampler(nvml=lambda: float("nan"), hwmon=None).gpu_nvml_joules() is None
 
 
 def test_the_gauge_baseline_reads_more_than_once(tmp_path: Path) -> None:
@@ -323,4 +344,51 @@ def test_an_implausible_power_reading_is_dropped(tmp_path: Path) -> None:
     # The u32 sentinel a dead sensor reports is not a 4295 W draw.
     chip = spbm(tmp_path)
     (chip / "power5_input").write_text("4294967295\n")
-    assert Sampler.detect(root=tmp_path).total_watts() == 0.0
+    assert Sampler.detect(root=tmp_path).total_watts() is None
+
+
+def test_a_five_kilowatt_draw_is_a_real_reading_not_a_sentinel(tmp_path: Path) -> None:
+    # The old guard was a 4000 W ceiling, which is under what a large multi-GPU
+    # node genuinely draws, so a real reading was thrown away as implausible.
+    # Only the exact u32 sentinel means "dead sensor"; every finite value below
+    # it is a measurement, however large.
+    chip = spbm(tmp_path)
+    (chip / "power5_input").write_text("5000000000\n")  # 5000 W, a real draw
+    assert Sampler.detect(root=tmp_path).total_watts() == pytest.approx(5000.0)
+
+
+def test_a_glitched_start_read_makes_the_baseline_unknown_not_enormous(
+    tmp_path: Path,
+) -> None:
+    # The hazard behind coalescing a failed read to 0.0: if the START of a
+    # counter delta reads as zero, the delta becomes the whole accumulator. Here
+    # that would be 5000013000 uJ over 0.6 s, reporting ~8.3 MW of idle draw and
+    # making every marginal figure derived from it garbage. An endpoint that
+    # could not be read means the delta is unknown, so the baseline is absent.
+    chip = spbm(tmp_path)
+    box = chip / "energy1_input"
+    box.write_text("N/A\n")  # unreadable at the start of the window
+
+    def recover() -> None:
+        time.sleep(0.3)
+        box.write_text("5000013000\n")
+
+    writer = threading.Thread(target=recover)
+    writer.start()
+    try:
+        base = Sampler.detect(root=tmp_path).baseline(seconds=0.6)
+    finally:
+        writer.join()
+    assert base.idle_watts == 0.0
+
+
+def test_marginal_is_unknown_when_the_total_was_never_measured() -> None:
+    # A sensorless box used to record total_joules=0.0, which reads as "this run
+    # drew nothing" rather than "nothing was measured". With the total unknown
+    # there is no subtraction to do.
+    assert a_reading(total_joules=None).marginal_joules is None
+
+
+def test_a_gpu_source_that_was_not_read_is_unmeasured_not_disagreement() -> None:
+    assert a_reading(gpu_nvml_joules=None).gpu_sources == SOURCES_UNMEASURED
+    assert a_reading(gpu_firmware_joules=None).gpu_sources == SOURCES_UNMEASURED

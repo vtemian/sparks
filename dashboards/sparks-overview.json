@@ -138,7 +138,7 @@
       "id": 3,
       "type": "stat",
       "title": "Total energy",
-      "description": "Every recorded run's total draw, idle included. This is the headline number because it is always measured; marginal energy above idle is per-run in the table below, left blank when it could not be measured rather than counted as a misleading zero.",
+      "description": "Every recorded run's total draw, idle included. Reads 'No data' rather than 0 when no run measured its energy: a box with no power sensors records unknown, not zero, and a zero here would be a measurement claiming the runs drew nothing. Marginal energy above idle is per-run in the table below, blank where the baseline could not carry the subtraction.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -174,7 +174,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(sparks_run_energy_joules) / 3600 or vector(0)",
+          "expr": "sum(sparks_run_energy_joules) / 3600",
           "instant": true
         }
       ]
@@ -183,7 +183,7 @@
       "id": 4,
       "type": "stat",
       "title": "Total cost",
-      "description": "Total watt-hours times the tariff, on the same always-measured basis as the energy tile. Decoration at these magnitudes; the watt-hours are the number worth reading.",
+      "description": "Total watt-hours times the tariff, on the same basis as the energy tile, and blank for the same reason when nothing was measured. Decoration at these magnitudes; the watt-hours are the number worth reading.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -219,7 +219,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(sparks_run_energy_joules) / 3600000 * $tariff or vector(0)",
+          "expr": "sum(sparks_run_energy_joules) / 3600000 * $tariff",
           "instant": true
         }
       ]
