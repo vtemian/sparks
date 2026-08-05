@@ -1,5 +1,13 @@
 # Alerts for the failures nothing else reports.
 #
+# STATUS: this file is a SPECIFICATION, not a live alert set. Nothing loads it.
+# sparkup's Prometheus config has no `rule_files:`, no `alerting:` block and no
+# Alertmanager, and `make deploy` does not ship it. `promtool check rules`
+# passes, so the file is valid; it is simply inert until it is wired into
+# sparkup's prometheus.yml.j2 (add a rule_files entry) and an Alertmanager
+# exists. Until then, treat every rule below as documentation of a known silent
+# failure, and do not describe any of them as "firing" anywhere.
+#
 # sparkup's INSTALL_CLAUDE.md says a non-world-readable .prom fails silently.
 # That is wrong: it sets node_textfile_scrape_error 1. The genuinely silent
 # failures are below, and the first one is the reason this file exists.
@@ -9,7 +17,11 @@ groups:
       - alert: SparksRunIndexEmpty
         # An empty or headers-only .prom reports scrape_error 0, a FRESH mtime,
         # and zero series. Total data loss with every health signal green.
-        # Nothing in node_exporter reports it; this is the only defence.
+        # Nothing in node_exporter reports it; this rule is the only defence.
+        #
+        # CAVEAT: absent() also fires on a fresh box that has simply never
+        # completed a run, which is indistinguishable from the box being down.
+        # Do not page on this without a "box has run before" precondition.
         expr: absent(sparks_run_info)
         for: 15m
         annotations:
@@ -19,6 +31,10 @@ groups:
         # Catches unparseable, unreadable, timestamped, or missing-newline
         # files. Note there is no `file` label, so this says something broke
         # without saying what.
+        #
+        # CAVEAT: job="node_textfile" only exists on sparkup's unmerged branch.
+        # Against today's sparkup main there is no such job, so this rule is
+        # permanently silent there. It is coupled to that branch landing.
         expr: node_textfile_scrape_error{job="node_textfile"} > 0
         for: 15m
         annotations:
@@ -28,7 +44,11 @@ groups:
         # A duplicate series within one file, or across two files with matching
         # HELP, is dropped by the gatherer with scrape_error still 0. This
         # counter is the only place it surfaces.
-        expr: rate(promhttp_metric_handler_errors_total{cause="gathering"}[15m]) > 0
-        for: 15m
+        #
+        # increase(...) > 0 with NO `for`, not rate(...) > 0 with `for: 15m`:
+        # a single error keeps rate() positive for exactly 15 minutes, so the
+        # pending window expires as the condition does and the alert never
+        # fires. increase() over the window catches the one error outright.
+        expr: increase(promhttp_metric_handler_errors_total{cause="gathering"}[15m]) > 0
         annotations:
           summary: "node_exporter is dropping duplicate series"

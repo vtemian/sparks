@@ -49,8 +49,7 @@ check: lint typecheck test dashboard
 # the wire format and the receiver's opinion of it, and a fake would only ever
 # confirm our own assumptions.
 live: harness-up
-	uv run pytest -m live
-	$(MAKE) harness-down
+	@uv run pytest -m live; status=$$?; $(MAKE) harness-down; exit $$status
 
 harness-up:
 	./tests/harness-up.sh

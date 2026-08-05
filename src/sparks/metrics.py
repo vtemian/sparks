@@ -39,11 +39,13 @@ METRICS: dict[str, str] = {
     # The permanent run index, written to the node_exporter textfile collector
     # rather than pushed. A .prom file is re-scraped for as long as it exists,
     # so these never age out of retention the way pushed series do.
-    "sparks_run_info": "1, carrying a completed run's identity as labels",
+    "sparks_run_info": "1, identity + energy_sources of a completed run, as labels",
     "sparks_run_start_timestamp_seconds": "unix seconds the run started",
     "sparks_run_duration_seconds": "wall-clock duration",
+    "sparks_run_energy_window_seconds": "window the energy counters bracketed",
     "sparks_run_energy_joules": "total energy drawn over the run",
-    "sparks_run_marginal_energy_joules": "energy above the measured idle baseline",
+    "sparks_run_marginal_energy_joules": "energy above idle, absent when unknown",
+    "sparks_run_idle_watts": "idle baseline power, 0 when none was measured",
     "sparks_run_gpu_nvml_energy_joules": "GPU energy per NVML",
     "sparks_run_gpu_firmware_energy_joules": "GPU energy per the firmware counter",
     "sparks_run_final_loss": "final training loss, absent when the run produced none",

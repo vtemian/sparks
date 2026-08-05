@@ -47,3 +47,15 @@ def test_samples_for_one_series_batch_into_a_single_entry() -> None:
     assert len(out) == 1
     assert out[0]["values"] == [1.0, 2.0]
     assert out[0]["timestamps"] == [1000, 2000]
+
+
+def test_drain_sorts_out_of_order_input() -> None:
+    # time.time() is not monotonic and log() interleaves from two threads, so a
+    # later add can carry an earlier timestamp. Prometheus rejects out-of-order
+    # samples, so the sort in drain() is load-bearing, not cosmetic.
+    b = Buffer()
+    b.add(S, 2.0, 2000)
+    b.add(S, 1.0, 1000)
+    out = b.drain()
+    assert out[0]["timestamps"] == [1000, 2000]
+    assert out[0]["values"] == [1.0, 2.0]

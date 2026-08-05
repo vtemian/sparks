@@ -5,6 +5,7 @@ would only ever confirm our own assumptions.
     make live
 """
 
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,7 @@ import pytest
 import requests
 
 from sparks import launcher
-from sparks.emit import RunMetrics
+from sparks.emit import FLUSH_SECONDS, RunMetrics
 from sparks.run import new_run_id
 
 URL = "http://127.0.0.1:19091"
@@ -121,7 +122,9 @@ def test_the_receiver_dropped_nothing_silently() -> None:
     dropped = query("prometheus_api_remote_write_invalid_labels_samples_total")
     assert not dropped or float(dropped[0]["value"][1]) == 0.0, dropped
 
-    ooo = query("prometheus_tsdb_out_of_order_samples_total")
+    # sum(): on 3.13.2 this counter has two series, type="float" and
+    # type="histogram", so reading [0] is a coin flip over which one is checked.
+    ooo = query("sum(prometheus_tsdb_out_of_order_samples_total)")
     assert not ooo or float(ooo[0]["value"][1]) == 0.0, ooo
 
 
@@ -159,7 +162,62 @@ def test_a_crashed_run_still_lands_its_whole_record(tmp_path: Path) -> None:
     # And nothing was silently dropped on the way in.
     dropped = query("prometheus_api_remote_write_invalid_labels_samples_total")
     assert not dropped or float(dropped[0]["value"][1]) == 0.0
-    ooo = query("prometheus_tsdb_out_of_order_samples_total")
+    ooo = query("sum(prometheus_tsdb_out_of_order_samples_total)")
     assert not ooo or float(ooo[0]["value"][1]) == 0.0, (
         "an out-of-order sample was accepted-and-counted; a second writer is racing"
     )
+
+
+def test_the_heartbeat_advances_while_the_run_lives() -> None:
+    # Every unit test uses autostart=False and every other live test finishes
+    # inside the 5m lookback, so a frozen heartbeat is indistinguishable from a
+    # live one and mutation E7 (never calling _beat) survives them all. Waiting
+    # past two flush cycles and asserting the timestamp moved is what notices.
+    run_id = new_run_id("live-beat", "test")
+    m = RunMetrics(run_id=run_id, url=URL, info={"run_name": "live-beat"})
+    m.begin()
+    metric = f'training_run_heartbeat_timestamp_seconds{{run_id="{run_id}"}}'
+    first = float(wait_for(metric)[0]["value"][1])
+    time.sleep(FLUSH_SECONDS * 2 + 1.0)
+    try:
+        later = float(query(metric)[0]["value"][1])
+    finally:
+        m.end("finished")
+    assert later > first, "the heartbeat froze; _beat is not running each cycle"
+
+
+def test_a_child_that_emits_lands_alongside_the_supervisor_lifecycle(
+    tmp_path: Path,
+) -> None:
+    # The whole disjoint-series apparatus exists for two real writers on one
+    # run_id: the supervisor owns the lifecycle, the child owns everything else.
+    # No live test drove a real child against a real Prometheus until this one.
+    child = [
+        sys.executable,
+        "-c",
+        "import time\n"
+        "from sparks.emit import from_env\n"
+        "m = from_env(arm='real')\n"
+        "assert m is not None\n"
+        "with m:\n"
+        "    m.log(loss=0.25)\n"
+        "    time.sleep(0.5)\n",
+    ]
+    result = launcher.launch(
+        child, name="live-child", shared_dir=tmp_path, url=URL, baseline_seconds=0.0
+    )
+    assert result.status == "finished"
+
+    # The child's own series landed, carrying the label it set.
+    loss = wait_for(f'training_loss{{run_id="{result.run_id}"}}')
+    assert loss[0]["metric"]["arm"] == "real"
+    assert float(loss[0]["value"][1]) == pytest.approx(0.25)
+
+    # And all four of the supervisor's lifecycle series landed for the same run.
+    for metric in (
+        "training_run_info",
+        "training_run_start_timestamp_seconds",
+        "training_run_end_timestamp_seconds",
+        "training_run_status",
+    ):
+        assert wait_for(f'{metric}{{run_id="{result.run_id}"}}')

@@ -12,6 +12,7 @@ defaulted field is worse than a TypeError at the one call site that writes it.
 
 import contextlib
 import json
+import math
 import os
 import tempfile
 from collections.abc import Callable
@@ -46,15 +47,23 @@ class Energy:
     Both GPU sources are kept. NVML and the firmware rail counter disagree by a
     stable ~22.5% because they measure at different boundaries, so a single
     "GPU energy" number is meaningless without saying which one it is, and
-    `sources_agree` is false when their ratio says one of them reset mid-run.
+    `gpu_sources` records whether their ratio still says both are trustworthy.
+
+    `marginal_joules` is None, never 0.0, when the baseline could not carry the
+    subtraction; the window and baseline seconds are persisted so the record
+    reproduces its own arithmetic, and `idle_gpu_watts` is kept so the busy-GPU
+    threshold can be recalibrated from records rather than guessed again.
     """
 
     total_joules: float
-    marginal_joules: float
+    marginal_joules: float | None
     gpu_nvml_joules: float
     gpu_firmware_joules: float
     idle_watts: float
-    sources_agree: bool
+    idle_gpu_watts: float
+    window_seconds: float
+    baseline_seconds: float
+    gpu_sources: str
 
 
 @dataclass(frozen=True)
@@ -103,9 +112,16 @@ class Summary:
         return self.status in STATUSES
 
     def to_dict(self) -> dict[str, Any]:
+        # Sanitise non-finite floats at this boundary rather than passing
+        # allow_nan=False to json.dumps: the dumps raises, launch() does not
+        # wrap the save, and the result is a run that completed and then crashed
+        # the wrapper writing its own record. Losing one number beats the file.
         data = asdict(self)
-        if self.final_loss is None:
-            del data["final_loss"]
+        if self.final_loss is None or not math.isfinite(self.final_loss):
+            data.pop("final_loss", None)
+        marginal = data["energy"]["marginal_joules"]
+        if marginal is not None and not math.isfinite(marginal):
+            data["energy"]["marginal_joules"] = None
         return data
 
     @classmethod

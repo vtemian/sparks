@@ -4,7 +4,28 @@ from pathlib import Path
 
 import pytest
 
-from sparks.energy import EnergyReading, Sampler, watt_hours
+from sparks.energy import (
+    BUSY_GPU_WATTS,
+    SOURCES_AGREE,
+    SOURCES_DISAGREE,
+    SOURCES_UNMEASURED,
+    EnergyReading,
+    Sampler,
+    watt_hours,
+)
+
+
+def a_reading(**over: float) -> EnergyReading:
+    fields: dict[str, float] = {
+        "total_joules": 1000.0,
+        "gpu_nvml_joules": 300.0,
+        "gpu_firmware_joules": 367.0,
+        "idle_watts": 13.0,
+        "gpu_idle_watts": 3.8,
+        "seconds": 50.0,
+    }
+    fields.update(over)
+    return EnergyReading(**fields)
 
 
 def fake_chip(root: Path, index: int, name: str, **channels: tuple[str, str]) -> Path:
@@ -46,66 +67,80 @@ def test_a_reading_reports_both_gpu_sources_separately() -> None:
     # NVML and the firmware counter disagree by a stable ~22.5% because they
     # measure at different boundaries. One unlabelled number is a trap: the
     # gpu/total ratio here is 0.30 by NVML and 0.37 by the firmware.
-    r = EnergyReading(
-        total_joules=1000.0,
-        gpu_nvml_joules=300.0,
-        gpu_firmware_joules=367.0,
-        idle_watts=13.0,
-        seconds=50.0,
-    )
+    r = a_reading()
     assert r.gpu_nvml_joules != r.gpu_firmware_joules
     assert r.marginal_joules == pytest.approx(1000.0 - 13.0 * 50.0)
 
 
-def test_marginal_energy_never_goes_negative() -> None:
-    # A run quieter than the baseline is measurement noise, not free energy.
-    r = EnergyReading(
-        total_joules=100.0,
-        gpu_nvml_joules=0.0,
-        gpu_firmware_joules=0.0,
-        idle_watts=13.0,
-        seconds=100.0,
-    )
+def test_marginal_is_unknown_when_the_run_came_in_far_under_its_baseline() -> None:
+    # Not 0.0: a run more than 10% under its own baseline means the neighbour
+    # stopped mid-run, so the baseline describes a box that no longer exists.
+    r = a_reading(total_joules=100.0, idle_watts=13.0, seconds=100.0)
+    assert r.marginal_joules is None
+
+
+def test_marginal_clamps_to_zero_just_under_the_baseline() -> None:
+    # Within 10% under is measurement noise, and is reported as zero, not None.
+    r = a_reading(total_joules=13.0 * 100.0 * 0.95, idle_watts=13.0, seconds=100.0)
     assert r.marginal_joules == 0.0
+
+
+def test_marginal_is_unknown_with_no_baseline() -> None:
+    # A sensorless box measured no idle power; marginal cannot be computed.
+    r = a_reading(idle_watts=0.0)
+    assert r.marginal_joules is None
+
+
+def test_marginal_is_unknown_when_the_gpu_rail_was_already_busy() -> None:
+    # The defining case: a neighbour's job puts the GPU rail in the tens of
+    # watts during the baseline, so the baseline is theirs, and clamping the
+    # marginal to 0.0 told users a contended run cost nothing.
+    r = a_reading(gpu_idle_watts=BUSY_GPU_WATTS + 1.0)
+    assert r.marginal_joules is None
 
 
 def test_the_two_gpu_sources_are_cross_checked() -> None:
     # The measured ratio is ~1.22. A large departure means one counter reset,
     # which is the failure D2's backwards-delta guard cannot catch.
-    ok = EnergyReading(
-        total_joules=1.0,
-        gpu_nvml_joules=1000.0,
-        gpu_firmware_joules=1220.0,
-        idle_watts=0.0,
-        seconds=1.0,
-    )
-    assert ok.sources_agree
-    bad = EnergyReading(
-        total_joules=1.0,
-        gpu_nvml_joules=1000.0,
-        gpu_firmware_joules=5000.0,
-        idle_watts=0.0,
-        seconds=1.0,
-    )
-    assert not bad.sources_agree
+    ok = a_reading(gpu_nvml_joules=1000.0, gpu_firmware_joules=1220.0, seconds=10.0)
+    assert ok.gpu_sources == SOURCES_AGREE
+    bad = a_reading(gpu_nvml_joules=1000.0, gpu_firmware_joules=5000.0, seconds=10.0)
+    assert bad.gpu_sources == SOURCES_DISAGREE
 
 
-def test_a_reading_with_no_gpu_data_at_all_is_not_a_disagreement() -> None:
-    # A box without the sensors reports zeros, and two zeros are consistent.
-    r = EnergyReading(
-        total_joules=0.0,
-        gpu_nvml_joules=0.0,
-        gpu_firmware_joules=0.0,
-        idle_watts=0.0,
-        seconds=1.0,
+def test_the_tolerance_is_relative_not_absolute() -> None:
+    # The ratio moves only ~2% across every regime, so a firmware reset that
+    # shifts it 25% must be caught; an absolute +/-0.5 would not fire until 41%.
+    drifted = a_reading(
+        gpu_nvml_joules=1000.0, gpu_firmware_joules=1220.0 * 1.25, seconds=10.0
     )
-    assert r.sources_agree
+    assert drifted.gpu_sources == SOURCES_DISAGREE
+
+
+def test_nvml_absent_is_unmeasured_not_a_disagreement() -> None:
+    # A driver without nvmlDeviceGetTotalEnergyConsumption reads 0.0 for NVML,
+    # which the old boolean called a disagreement on every single run.
+    r = a_reading(gpu_nvml_joules=0.0, gpu_firmware_joules=800.0, seconds=10.0)
+    assert r.gpu_sources == SOURCES_UNMEASURED
+
+
+def test_no_gpu_data_at_all_is_unmeasured_not_agreement() -> None:
+    # Two zeros are not "the sources agree"; nothing was measured.
+    r = a_reading(gpu_nvml_joules=0.0, gpu_firmware_joules=0.0, seconds=10.0)
+    assert r.gpu_sources == SOURCES_UNMEASURED
+
+
+def test_a_window_too_short_cannot_cross_check_the_sources() -> None:
+    # Counter update granularity, not quantisation, breaks a short window: it
+    # may catch one tick from one source and two from the other.
+    r = a_reading(gpu_nvml_joules=1000.0, gpu_firmware_joules=1220.0, seconds=0.5)
+    assert r.gpu_sources == SOURCES_UNMEASURED
 
 
 def test_a_sampler_without_nvml_degrades_rather_than_raising() -> None:
     # Development happens on macOS, where there is no NVML and no hwmon.
     s = Sampler(nvml=None, hwmon=None)
-    assert s.baseline_watts(seconds=0.0) == 0.0
+    assert s.baseline(seconds=0.0).idle_watts == 0.0
 
 
 def test_every_accessor_on_a_sensorless_box_reads_zero() -> None:
@@ -172,7 +207,7 @@ def test_a_box_without_the_chip_reads_zero_rather_than_raising(tmp_path: Path) -
     s = Sampler.detect(root=tmp_path)
     assert s.total_watts() == 0.0
     assert s.gpu_firmware_joules() == 0.0
-    assert s.baseline_watts(seconds=60.0) == 0.0
+    assert s.baseline(seconds=60.0).idle_watts == 0.0
 
 
 def test_a_missing_hwmon_directory_is_not_an_error(tmp_path: Path) -> None:
@@ -209,7 +244,9 @@ def test_an_nvml_call_that_fails_mid_run_reads_zero() -> None:
     assert Sampler(nvml=reloaded, hwmon=None).gpu_nvml_joules() == 0.0
 
 
-def test_the_baseline_is_the_mean_of_the_samples(tmp_path: Path) -> None:
+def test_the_gauge_baseline_reads_more_than_once(tmp_path: Path) -> None:
+    # A power-only chip has no energy accumulator, so the baseline falls back to
+    # integrating the power gauge at 1 Hz.
     chip = fake_chip(tmp_path, 0, "spbm", power1=("sys_total", "10000000"))
     sensor = chip / "power1_input"
 
@@ -220,21 +257,70 @@ def test_the_baseline_is_the_mean_of_the_samples(tmp_path: Path) -> None:
     writer = threading.Thread(target=step_up)
     writer.start()
     try:
-        watts = Sampler.detect(root=tmp_path).baseline_watts(seconds=1.2)
+        watts = Sampler.detect(root=tmp_path).baseline(seconds=1.2).idle_watts
     finally:
         writer.join()
     # Samples land at t=0 and t=1.0, either side of the step at t=0.5, so a
-    # mean strictly between the two is proof it read more than once.
+    # value strictly between the two is proof it read more than once.
     assert 10.0 < watts < 20.0
 
 
-def test_a_baseline_of_one_sample_is_that_sample(tmp_path: Path) -> None:
-    spbm(tmp_path)
-    assert Sampler.detect(root=tmp_path).baseline_watts(0.1) == pytest.approx(13.06)
+def test_the_gauge_baseline_uses_the_median_so_a_sentinel_cannot_skew_it(
+    tmp_path: Path,
+) -> None:
+    # A dead sensor reports the u32 sentinel; the mean of many good samples and
+    # one sentinel is wildly wrong, the median is not, and the sentinel is
+    # dropped outright before it even reaches the median.
+    chip = fake_chip(tmp_path, 0, "spbm", power1=("sys_total", "13060000"))
+    sensor = chip / "power1_input"
+
+    def spike() -> None:
+        time.sleep(0.4)
+        sensor.write_text("4294967295\n")  # the u32 sentinel, ~4295 W
+
+    writer = threading.Thread(target=spike)
+    writer.start()
+    try:
+        watts = Sampler.detect(root=tmp_path).baseline(seconds=1.2).idle_watts
+    finally:
+        writer.join()
+    assert watts == pytest.approx(13.06)
+
+
+def test_the_counter_baseline_is_the_delta_over_the_window(tmp_path: Path) -> None:
+    # With an energy accumulator, the baseline is a counter delta divided by its
+    # window, which is the exact average power. Advance the counter mid-window.
+    chip = spbm(tmp_path)
+    box = chip / "energy1_input"
+    gpu = chip / "energy4_input"
+
+    def burn() -> None:
+        time.sleep(0.3)
+        box.write_text("5000013000\n")  # +13000 uJ over the start value
+        gpu.write_text("802864000\n")  # +4000 uJ
+
+    writer = threading.Thread(target=burn)
+    writer.start()
+    try:
+        base = Sampler.detect(root=tmp_path).baseline(seconds=0.6)
+    finally:
+        writer.join()
+    # 13000 uJ = 0.013 J over 0.6 s ~ 0.0217 W; 4000 uJ ~ 0.0067 W.
+    assert base.idle_watts == pytest.approx(0.013 / 0.6)
+    assert base.gpu_watts == pytest.approx(0.004 / 0.6)
 
 
 def test_a_zero_length_baseline_reads_zero_rather_than_dividing_by_zero(
     tmp_path: Path,
 ) -> None:
     spbm(tmp_path)
-    assert Sampler.detect(root=tmp_path).baseline_watts(0.0) == 0.0
+    base = Sampler.detect(root=tmp_path).baseline(0.0)
+    assert base.idle_watts == 0.0
+    assert base.gpu_watts == 0.0
+
+
+def test_an_implausible_power_reading_is_dropped(tmp_path: Path) -> None:
+    # The u32 sentinel a dead sensor reports is not a 4295 W draw.
+    chip = spbm(tmp_path)
+    (chip / "power5_input").write_text("4294967295\n")
+    assert Sampler.detect(root=tmp_path).total_watts() == 0.0

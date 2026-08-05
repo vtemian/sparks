@@ -68,6 +68,11 @@ NUMERIC: tuple[Numeric, ...] = (
         lambda s: s.duration_seconds,
     ),
     Numeric(
+        "sparks_run_energy_window_seconds",
+        "Window the energy counters bracketed, wider than the run's duration.",
+        lambda s: s.energy.window_seconds,
+    ),
+    Numeric(
         "sparks_run_energy_joules",
         "Total energy drawn over the run.",
         lambda s: s.energy.total_joules,
@@ -76,6 +81,13 @@ NUMERIC: tuple[Numeric, ...] = (
         "sparks_run_marginal_energy_joules",
         "Energy above idle, attributable to the run.",
         lambda s: s.energy.marginal_joules,
+    ),
+    # Published unconditionally, even at 0.0, so a blank marginal column has a
+    # visible cause: an idle_watts of 0 says no baseline was measured.
+    Numeric(
+        "sparks_run_idle_watts",
+        "Idle baseline power measured before the run.",
+        lambda s: s.energy.idle_watts,
     ),
     # Both GPU sources, as separate families rather than one family split by a
     # `source` label: they disagree by a stable ~22.5% because they measure at
@@ -152,6 +164,7 @@ def render(runs: Iterable[summary.Summary]) -> str:
                     "user": r.user,
                     "run_name": r.run_name,
                     "status": r.status,
+                    "energy_sources": r.energy.gpu_sources,
                 },
                 1.0,
             )

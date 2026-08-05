@@ -14,7 +14,12 @@ from pathlib import Path
 
 from sparks import index, shared, summary
 from sparks.emit import RunMetrics
-from sparks.energy import EnergyReading, Sampler
+from sparks.energy import (
+    SOURCES_DISAGREE,
+    SOURCES_UNMEASURED,
+    EnergyReading,
+    Sampler,
+)
 from sparks.process import Supervisor
 from sparks.run import current_user, git_sha
 
@@ -42,11 +47,16 @@ def launch(
     shared_dir: Path,
     url: str | None,
     baseline_seconds: float = BASELINE_SECONDS,
+    sampler: Sampler | None = None,
 ) -> Launched:
     """Run `command` as a training run and leave a permanent record of it.
 
     `url` is the Prometheus to push to, or None to record to disk only, which
     is what the unit tests use and what a box without monitoring gets.
+
+    `sampler` is injectable so a test can drive real energy arithmetic against a
+    fake sysfs tree: on a development machine `Sampler.detect()` reads zeros and
+    every energy assertion is 0.0 == 0.0, which let three mutations survive.
     """
     # Sanitise the durable copies at this one boundary. The child is still
     # exec'd with the ORIGINAL argv below, which round-trips through execve
@@ -60,12 +70,15 @@ def launch(
     # chmod inside heals a tree left group-unreadable by an earlier umask.
     run_id, run_dir = shared.reserve_run_dir(shared_dir / "runs", name, user)
 
-    sampler = Sampler.detect()
-    # Before anything expensive. A 1 Hz sampling loop alone was measured
-    # inflating an idle reading by 6%, so the launcher must not pay for its own
-    # startup out of the run's marginal energy.
-    idle_watts = sampler.baseline_watts(baseline_seconds)
-    energy_read_at = time.time()
+    if sampler is None:
+        sampler = Sampler.detect()
+    # Before anything expensive, and read as a counter delta from the same
+    # counters the run is measured against. The GPU rail during this window is
+    # what tells a quiet box from a contended one whose baseline is not ours.
+    base = sampler.baseline(baseline_seconds)
+    # Monotonic, not time.time(): NTP can step the wall clock mid-run, the exact
+    # hazard duration_seconds already avoids. The window brackets the whole run.
+    energy_read_at = time.monotonic()
     energy_start = sampler.total_joules()
     gpu_nvml_start = sampler.gpu_nvml_joules()
     gpu_firmware_start = sampler.gpu_firmware_joules()
@@ -106,14 +119,20 @@ def launch(
         # instead would bill that cleanup to the run's marginal energy: on a
         # 1.5s run with 5s of cleanup, at 13W, that is 65J of pure idle reported
         # as marginal, which is more than 100% wrong.
-        measured_seconds = max(completed.duration_seconds, time.time() - energy_read_at)
+        # Monotonic, and the max() is now dead code: the window opened before
+        # the child and closes after it is reaped, so it always brackets the
+        # duration. Kept as a cheap guard against a misbehaving clock.
+        measured_seconds = max(
+            completed.duration_seconds, time.monotonic() - energy_read_at
+        )
         reading = EnergyReading(
             total_joules=max(0.0, sampler.total_joules() - energy_start),
             gpu_nvml_joules=max(0.0, sampler.gpu_nvml_joules() - gpu_nvml_start),
             gpu_firmware_joules=max(
                 0.0, sampler.gpu_firmware_joules() - gpu_firmware_start
             ),
-            idle_watts=idle_watts,
+            idle_watts=base.idle_watts,
+            gpu_idle_watts=base.gpu_watts,
             seconds=measured_seconds,
         )
 
@@ -136,12 +155,15 @@ def launch(
                 gpu_nvml_joules=reading.gpu_nvml_joules,
                 gpu_firmware_joules=reading.gpu_firmware_joules,
                 idle_watts=reading.idle_watts,
-                sources_agree=reading.sources_agree,
+                idle_gpu_watts=reading.gpu_idle_watts,
+                window_seconds=reading.seconds,
+                baseline_seconds=baseline_seconds,
+                gpu_sources=reading.gpu_sources,
             ),
         )
         summary.save(record, run_dir)
 
-        if not reading.sources_agree:
+        if reading.gpu_sources == SOURCES_DISAGREE:
             # The two GPU counters are out of their usual ~1.22 relationship,
             # which means one reset mid-run. The energy figure is not
             # trustworthy, and saying so is the point of measuring twice.
@@ -196,8 +218,11 @@ def textfile_dir(shared_dir: Path) -> Path:
 
     Overridable because it is a property of the box, not of this repo, and the
     default is node_exporter's own. Writing the index anywhere else means it is
-    never scraped, `count(sparks_run_info)` stays empty and the
-    SparksRunIndexEmpty alert fires forever.
+    never scraped and `count(sparks_run_info)` stays empty. The
+    SparksRunIndexEmpty rule in alerts/sparks.yml would catch that, but nothing
+    loads that file yet: it is a specification, not a live alert (see its
+    header). The autouse fixture in tests/conftest.py overrides this so the unit
+    suite never rewrites the box's real index.
     """
     override = os.environ.get("SPARKS_TEXTFILE_DIR")
     if override:
@@ -229,7 +254,19 @@ def _record_failed_launch(
             exit_code=127,
             signal=None,
             escalated_to_sigkill=False,
-            energy=summary.Energy(0.0, 0.0, 0.0, 0.0, 0.0, True),
+            # Nothing was measured, so marginal is unknown (None, not 0.0) and
+            # the sources are unmeasured (not "agree", the old hard-coded lie).
+            energy=summary.Energy(
+                total_joules=0.0,
+                marginal_joules=None,
+                gpu_nvml_joules=0.0,
+                gpu_firmware_joules=0.0,
+                idle_watts=0.0,
+                idle_gpu_watts=0.0,
+                window_seconds=0.0,
+                baseline_seconds=0.0,
+                gpu_sources=SOURCES_UNMEASURED,
+            ),
         ),
         run_dir,
     )

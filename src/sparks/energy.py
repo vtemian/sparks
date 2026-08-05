@@ -23,11 +23,12 @@ sensor is a degraded reading; it is never a reason for a training run to fail.
 """
 
 import importlib
+import math
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from statistics import fmean
+from statistics import median
 from typing import Self
 
 HWMON = Path("/sys/class/hwmon")
@@ -60,11 +61,60 @@ which is why it reads ~22.5% above NVML."""
 
 SOURCE_RATIO = 1.22
 """Measured firmware/NVML ratio for GPU energy. Used only as a sanity bound."""
-RATIO_TOLERANCE = 0.5
+
+RATIO_TOLERANCE = 0.15
+"""RELATIVE, not absolute. The ratio moves only 2.1% across every regime ever
+observed (1.198, 1.225, 1.223, 1.195), so an absolute +/-0.5 was 41% of the
+ratio and caught a firmware reset only after it had eaten 41% of the run. 15% is
+still 7x the observed spread."""
+
+BUSY_GPU_WATTS = 10.0
+"""Above this, the GPU rail was already working before the run started, so the
+baseline is somebody else's job and marginal energy cannot be attributed to this
+run. The rail idles at 3.82 W on this box and draws 73.7 W saturating; 10 W is
+2.6x idle. UNVERIFIED on any other box: it is calibrated to THIS hardware, which
+is why every summary.json now records idle_gpu_watts so the next revision of this
+number comes from records rather than a second guess."""
+
+UNDER_BASELINE_FRACTION = 0.9
+"""A run whose total came in more than ~10% under its own baseline means the
+neighbour stopped mid-run, so the baseline describes a box that no longer exists
+and the subtraction is meaningless. marginal is then unknown, not zero."""
+
+MIN_COUNTER_WINDOW_SECONDS = 2.0
+"""Below this the two GPU counters cannot be cross-checked: counter update
+granularity, not millijoule quantisation, is what breaks a short window, because
+it may catch one tick from one source and two from the other. UNVERIFIED: the
+real floor is set by the slowest counter's tick and must be measured once by
+reading energy4_input at 10 Hz for 20 s and timing the steps."""
+
+MAX_PLAUSIBLE_WATTS = 4000.0
+"""A dead power sensor reports the u32 sentinel, 4294967295 uW = 4295 W. Anything
+at or above this ceiling is that sentinel, not a reading, and is dropped rather
+than allowed to poison a mean. Applied to power only; an energy accumulator
+legitimately grows without bound."""
+
+SOURCES_AGREE = "agree"
+SOURCES_DISAGREE = "disagree"
+SOURCES_UNMEASURED = "unmeasured"
+"""Three states, because the old boolean was wrong in both directions: it read
+`disagree` on every run of a box whose driver lacks the NVML counter (a false
+alarm), and `agree` on a sensorless box where nothing was measured at all."""
 
 
 def watt_hours(joules: float) -> float:
     return joules / 3600.0
+
+
+@dataclass(frozen=True)
+class Baseline:
+    """Idle power sampled before the run, whole-box and GPU-rail separately.
+
+    The GPU rail is what tells a quiet box from a contended one: idle it is a
+    few watts, and a neighbour's job puts it in the tens."""
+
+    idle_watts: float
+    gpu_watts: float
 
 
 @dataclass(frozen=True)
@@ -73,26 +123,47 @@ class EnergyReading:
     gpu_nvml_joules: float
     gpu_firmware_joules: float
     idle_watts: float
+    gpu_idle_watts: float
     seconds: float
 
     @property
-    def marginal_joules(self) -> float:
-        """Energy attributable to the run: total minus what the box would have
-        drawn anyway. Clamped at zero, because a run quieter than its own
-        baseline is measurement noise rather than free energy."""
-        return max(0.0, self.total_joules - self.idle_watts * self.seconds)
+    def marginal_joules(self) -> float | None:
+        """Energy attributable to the run, or None when the baseline cannot
+        carry the subtraction.
+
+        None, never 0.0: 0.0 conflates "drew nothing above idle" with "the
+        baseline belongs to the colleague's job", and the second is common
+        enough that clamping to zero told users a contended run cost nothing.
+        "Unknown" in Prometheus is an omitted sample, which render() already
+        drops, so a contaminated run simply has no marginal row rather than a
+        misleading zero."""
+        if self.idle_watts <= 0:
+            return None  # no baseline was measured
+        if self.gpu_idle_watts > BUSY_GPU_WATTS:
+            return None  # the GPU rail was already busy: someone else's job
+        baseline_joules = self.idle_watts * self.seconds
+        if self.total_joules < baseline_joules * UNDER_BASELINE_FRACTION:
+            return None  # the neighbour stopped mid-run; the baseline is stale
+        # Within 10% under is measurement noise, not free energy: clamp to zero.
+        return max(0.0, self.total_joules - baseline_joules)
 
     @property
-    def sources_agree(self) -> bool:
-        """Whether the two GPU counters are in their usual relationship.
+    def gpu_sources(self) -> str:
+        """Which of the three states the two GPU counters are in.
 
-        False means one of them reset mid-run. This catches the case D2's
-        backwards-delta guard misses: a driver reload that re-accumulates past
-        the start value gives a wrong but positive delta."""
-        if self.gpu_nvml_joules <= 0:
-            return self.gpu_firmware_joules <= 0
-        ratio = self.gpu_firmware_joules / self.gpu_nvml_joules
-        return abs(ratio - SOURCE_RATIO) <= RATIO_TOLERANCE
+        `disagree` means one reset mid-run, which D2's backwards-delta guard
+        cannot catch because a reload that re-accumulates past the start value
+        gives a wrong but positive delta. A window too short to cross-check, or
+        a run only one source measured, is `unmeasured` rather than a false
+        `disagree`."""
+        nvml, firmware = self.gpu_nvml_joules, self.gpu_firmware_joules
+        if nvml <= 0 or firmware <= 0:
+            return SOURCES_UNMEASURED
+        if self.seconds < MIN_COUNTER_WINDOW_SECONDS:
+            return SOURCES_UNMEASURED
+        ratio = firmware / nvml
+        agree = abs(ratio / SOURCE_RATIO - 1.0) <= RATIO_TOLERANCE
+        return SOURCES_AGREE if agree else SOURCES_DISAGREE
 
 
 class Sampler:
@@ -116,17 +187,23 @@ class Sampler:
         """A sampler wired to whatever this box actually offers."""
         return cls(nvml=_nvml_counter(), hwmon=_spbm_chip(root))
 
+    @property
+    def has_energy_counter(self) -> bool:
+        """Whether a whole-box energy accumulator exists to read a baseline from
+        as a counter delta, rather than integrating the power gauge."""
+        return self.total_energy is not None
+
     def total_watts(self) -> float:
         """Instantaneous whole-box draw."""
-        return _read_micro(self.total_power)
+        return _coalesce(_read_micro(self.total_power, MAX_PLAUSIBLE_WATTS))
 
     def total_joules(self) -> float:
         """Whole-box energy counter. Read as a delta across the run."""
-        return _read_micro(self.total_energy)
+        return _coalesce(_read_micro(self.total_energy))
 
     def gpu_firmware_joules(self) -> float:
         """The GPU rail's energy counter. Read as a delta across the run."""
-        return _read_micro(self.gpu_energy)
+        return _coalesce(_read_micro(self.gpu_energy))
 
     def gpu_nvml_joules(self) -> float:
         """The GPU domain's energy counter, which NVML reports in millijoules.
@@ -140,25 +217,50 @@ class Sampler:
         except Exception:  # NVML's own error type, and a reload invalidates the
             return 0.0  # handle mid-run; either way the reading is degraded.
 
-    def baseline_watts(self, seconds: float) -> float:
-        """Mean whole-box draw over `seconds`, sampled at 1 Hz.
+    def baseline(self, seconds: float) -> Baseline:
+        """Idle power over `seconds`, whole-box and GPU-rail, before the run.
 
-        Sampled in-process rather than read back from Prometheus because at a
-        60 s window the 15 s scrape integral was measured up to 7% wrong:
-        `sys_total` carries ~1.9 W of jitter and only 4-5 scrapes land in the
-        window.
+        Read from the SAME counters the run is measured against, as a delta
+        across the window: a counter delta divided by its window IS the average
+        power, exactly, with none of the gauge's short-window integral error.
+        The gauge loop remains the fallback for a box that exposes power but no
+        accumulator.
 
-        The loop costs about 0.8 W while it runs, which is 6% of the idle
-        figure it is measuring, so call it before doing anything else expensive
-        and never during the run it is the baseline for."""
+        Call it before anything else expensive and never during the run it is
+        the baseline for: even the fallback loop costs ~0.8 W while it runs.
+        """
+        if seconds <= 0:
+            return Baseline(0.0, 0.0)
+        if self.has_energy_counter:
+            box0, gpu0 = self.total_joules(), self.gpu_firmware_joules()
+            time.sleep(seconds)
+            box1, gpu1 = self.total_joules(), self.gpu_firmware_joules()
+            return Baseline(
+                max(0.0, box1 - box0) / seconds,
+                max(0.0, gpu1 - gpu0) / seconds,
+            )
+        # No accumulator: integrate the power gauge. The GPU rail has no gauge
+        # here, so its idle draw is unknown and reported as zero.
+        return Baseline(self._gauge_watts(seconds), 0.0)
+
+    def _gauge_watts(self, seconds: float) -> float:
+        """Median whole-box draw over `seconds`, sampled at 1 Hz.
+
+        Median, not mean: a single u32-sentinel sample (4295 W) drags the mean
+        of 59 real 13 W samples to 84 W but leaves the median at 13 W. Bad
+        samples are dropped outright by `_read_micro` returning None, and the
+        median guards against any that slip a plausible-looking value through.
+        """
         if self.total_power is None:
             return 0.0
         samples: list[float] = []
         deadline = time.monotonic() + seconds
         while (remaining := deadline - time.monotonic()) > 0:
-            samples.append(_read_micro(self.total_power))
+            value = _read_micro(self.total_power, MAX_PLAUSIBLE_WATTS)
+            if value is not None:
+                samples.append(value)
             time.sleep(min(SAMPLE_INTERVAL, remaining))
-        return fmean(samples) if samples else 0.0
+        return median(samples) if samples else 0.0
 
 
 def _spbm_chip(root: Path = HWMON) -> Path | None:
@@ -196,17 +298,35 @@ def _read(path: Path) -> str | None:
         return None
 
 
-def _read_micro(path: Path | None) -> float:
-    """A sysfs sensor in base units, or 0.0 if it is missing or unparseable."""
+def _coalesce(value: float | None) -> float:
+    """A degraded sensor reads zero to the arithmetic that consumes it, which is
+    what keeps a missing sensor a degraded reading rather than a failed run."""
+    return value if value is not None else 0.0
+
+
+def _read_micro(path: Path | None, ceiling: float | None = None) -> float | None:
+    """A sysfs sensor in base units, or None if it is missing, unparseable,
+    non-finite, or above `ceiling`.
+
+    None rather than 0.0 so a caller sampling a stream can drop the bad reading
+    instead of averaging a zero into it. `float("nan")` and `float("inf")` parse
+    without raising, which is how a bare NaN token would otherwise reach
+    json.dumps and produce a file every strict parser rejects.
+    """
     if path is None:
-        return 0.0
+        return None
     raw = _read(path)
     if raw is None:
-        return 0.0
+        return None
     try:
-        return float(raw) / MICRO
+        value = float(raw) / MICRO
     except ValueError:
-        return 0.0
+        return None
+    if not math.isfinite(value):
+        return None
+    if ceiling is not None and value >= ceiling:
+        return None
+    return value
 
 
 def _nvml_counter() -> Callable[[], float] | None:

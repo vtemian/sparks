@@ -1,4 +1,6 @@
 import re
+import subprocess
+from pathlib import Path
 
 from sparks.run import current_user, git_sha, new_run_id
 
@@ -56,6 +58,20 @@ def test_current_user_returns_something() -> None:
     assert current_user()
 
 
-def test_git_sha_is_short_or_unknown() -> None:
-    sha = git_sha()
-    assert sha == "unknown" or re.match(r"^[0-9a-f]{7,12}$", sha)
+def test_git_sha_matches_git_inside_a_checkout() -> None:
+    # `sha == "unknown" or re.match(...)` passes against a permanently broken
+    # implementation that always returns "unknown". Inside a checkout it must
+    # equal what git itself reports.
+    expected = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        cwd=Path(__file__).resolve().parent,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert git_sha() == expected
+
+
+def test_git_sha_is_unknown_outside_a_checkout(tmp_path: Path) -> None:
+    # Launched from a tarball there is no .git, and a run must not fail for it.
+    assert git_sha(repo=tmp_path) == "unknown"

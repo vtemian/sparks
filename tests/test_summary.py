@@ -21,7 +21,10 @@ ENERGY = Energy(
     gpu_nvml_joules=543.0,
     gpu_firmware_joules=663.0,
     idle_watts=13.0,
-    sources_agree=True,
+    idle_gpu_watts=3.8,
+    window_seconds=52.0,
+    baseline_seconds=60.0,
+    gpu_sources="agree",
 )
 
 
@@ -72,6 +75,37 @@ def test_a_run_without_a_final_loss_omits_the_key_entirely(tmp_path: Path) -> No
     data = json.loads(path.read_text())
     assert "final_loss" not in data
     assert load(path).final_loss is None
+
+
+def test_a_non_finite_final_loss_is_dropped_not_written_as_nan(
+    tmp_path: Path,
+) -> None:
+    # A diverged run's NaN reaching json.dumps produces a file every strict
+    # parser rejects; allow_nan=False would instead crash the wrapper writing
+    # its own record, so it is sanitised at the boundary. Losing the number
+    # beats losing the file.
+    path = save(a_summary(final_loss=float("nan")), tmp_path / "r")
+    data = json.loads(path.read_text())  # strict json.loads rejects a NaN token
+    assert "final_loss" not in data
+    assert load(path).final_loss is None
+
+
+def test_an_unknown_marginal_round_trips_as_null(tmp_path: Path) -> None:
+    # marginal is None, never 0.0, when the baseline could not carry the
+    # subtraction, and that distinction must survive the durable record.
+    energy = Energy(
+        total_joules=400.0,
+        marginal_joules=None,
+        gpu_nvml_joules=0.0,
+        gpu_firmware_joules=0.0,
+        idle_watts=0.0,
+        idle_gpu_watts=0.0,
+        window_seconds=14.0,
+        baseline_seconds=60.0,
+        gpu_sources="unmeasured",
+    )
+    path = save(a_summary(energy=energy), tmp_path / "r")
+    assert load(path).energy.marginal_joules is None
 
 
 def test_a_genuine_exit_137_is_distinguishable_from_a_sigkill() -> None:

@@ -29,7 +29,10 @@ SECOND = {
         gpu_nvml_joules=100.0,
         gpu_firmware_joules=122.0,
         idle_watts=13.0,
-        sources_agree=True,
+        idle_gpu_watts=3.8,
+        window_seconds=14.0,
+        baseline_seconds=60.0,
+        gpu_sources="agree",
     ),
 }
 
@@ -45,9 +48,9 @@ EXPECTED = (
             "# HELP sparks_run_info Identity of a completed training run. Always 1.",
             "# TYPE sparks_run_info gauge",
             'sparks_run_info{run_id="run-20260805-1420-e0",user="vlad"'
-            ',run_name="e0",status="finished"} 1',
+            ',run_name="e0",status="finished",energy_sources="agree"} 1',
             'sparks_run_info{run_id="run-20260805-1500-e1",user="ana"'
-            ',run_name="e1",status="crashed"} 1',
+            ',run_name="e1",status="crashed",energy_sources="agree"} 1',
             "# HELP sparks_run_start_timestamp_seconds Unix time the run started.",
             "# TYPE sparks_run_start_timestamp_seconds gauge",
             'sparks_run_start_timestamp_seconds{run_id="run-20260805-1420-e0"}'
@@ -58,6 +61,11 @@ EXPECTED = (
             "# TYPE sparks_run_duration_seconds gauge",
             'sparks_run_duration_seconds{run_id="run-20260805-1420-e0"} 48.02',
             'sparks_run_duration_seconds{run_id="run-20260805-1500-e1"} 12.5',
+            "# HELP sparks_run_energy_window_seconds Window the energy counters"
+            " bracketed, wider than the run's duration.",
+            "# TYPE sparks_run_energy_window_seconds gauge",
+            'sparks_run_energy_window_seconds{run_id="run-20260805-1420-e0"} 52',
+            'sparks_run_energy_window_seconds{run_id="run-20260805-1500-e1"} 14',
             "# HELP sparks_run_energy_joules Total energy drawn over the run.",
             "# TYPE sparks_run_energy_joules gauge",
             'sparks_run_energy_joules{run_id="run-20260805-1420-e0"} 1810',
@@ -67,6 +75,10 @@ EXPECTED = (
             "# TYPE sparks_run_marginal_energy_joules gauge",
             'sparks_run_marginal_energy_joules{run_id="run-20260805-1420-e0"} 1186',
             'sparks_run_marginal_energy_joules{run_id="run-20260805-1500-e1"} 200',
+            "# HELP sparks_run_idle_watts Idle baseline power measured before the run.",
+            "# TYPE sparks_run_idle_watts gauge",
+            'sparks_run_idle_watts{run_id="run-20260805-1420-e0"} 13',
+            'sparks_run_idle_watts{run_id="run-20260805-1500-e1"} 13',
             "# HELP sparks_run_gpu_nvml_energy_joules GPU energy as NVML measures it.",
             "# TYPE sparks_run_gpu_nvml_energy_joules gauge",
             'sparks_run_gpu_nvml_energy_joules{run_id="run-20260805-1420-e0"} 543',

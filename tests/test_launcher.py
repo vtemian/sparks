@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from sparks import summary
+from sparks.energy import Sampler
 from sparks.launcher import launch
 
 
@@ -81,9 +82,55 @@ def test_energy_is_recorded_even_with_no_sensors(tmp_path: Path) -> None:
     e = read_summary(tmp_path / "runs" / result.run_id)["energy"]
     assert isinstance(e, dict)
     assert e["total_joules"] == 0.0
-    assert e["marginal_joules"] == 0.0
     assert e["idle_watts"] == 0.0
-    assert e["sources_agree"] is True
+    # No baseline was measured, so marginal is unknown (None), never 0.0, and
+    # the sources are unmeasured rather than the old hard-coded "agree".
+    assert e["marginal_joules"] is None
+    assert e["gpu_sources"] == "unmeasured"
+
+
+def test_energy_deltas_land_in_the_right_fields_with_an_injected_sampler(
+    tmp_path: Path,
+) -> None:
+    # On a dev machine Sampler.detect() reads zeros and every energy assertion
+    # is 0.0 == 0.0, which let three mutations survive: swapping the two GPU
+    # sources, recording the raw counter instead of the delta, and not sampling
+    # at all. The fake sysfs tree is real files and the child advances the
+    # counters, exactly as happens on the box. Three distinct deltas make any
+    # value in the wrong field visible.
+    chip = tmp_path / "hwmon0"
+    chip.mkdir()
+    (chip / "name").write_text("spbm\n")
+    (chip / "energy1_label").write_text("pkg\n")
+    (chip / "energy1_input").write_text("1000000000\n")  # 1000.000 J
+    (chip / "energy4_label").write_text("gpu\n")
+    (chip / "energy4_input").write_text("500000000\n")  # 500.000 J
+    nvml_file = tmp_path / "nvml_mj"
+    nvml_file.write_text("200000\n")  # 200.000 J, reported in mJ
+
+    sampler = Sampler(nvml=lambda: float(nvml_file.read_text()), hwmon=chip)
+    child = [
+        "sh",
+        "-c",
+        f"echo 1000009000 > {chip / 'energy1_input'}; "  # +0.009 J total
+        f"echo 500003000 > {chip / 'energy4_input'}; "  # +0.003 J firmware
+        f"echo 205000 > {nvml_file}",  # +5.000 J nvml
+    ]
+    result = launch(
+        child,
+        name="nrg",
+        shared_dir=tmp_path,
+        url=None,
+        baseline_seconds=0.0,
+        sampler=sampler,
+    )
+    e = read_summary(tmp_path / "runs" / result.run_id)["energy"]
+    assert isinstance(e, dict)
+    assert e["total_joules"] == pytest.approx(0.009)
+    assert e["gpu_firmware_joules"] == pytest.approx(0.003)
+    assert e["gpu_nvml_joules"] == pytest.approx(5.0)
+    assert e["baseline_seconds"] == 0.0
+    assert float(e["window_seconds"]) >= 0.0
 
 
 def test_duration_is_the_monotonic_delta_not_the_wall_clock_pair(
@@ -128,7 +175,17 @@ def test_a_cancelled_run_is_not_recorded_as_finished(tmp_path: Path) -> None:
         exit_code=outcome.exit_code,
         signal=outcome.signal_name,
         escalated_to_sigkill=False,
-        energy=summary.Energy(0.0, 0.0, 0.0, 0.0, 0.0, True),
+        energy=summary.Energy(
+            total_joules=0.0,
+            marginal_joules=None,
+            gpu_nvml_joules=0.0,
+            gpu_firmware_joules=0.0,
+            idle_watts=0.0,
+            idle_gpu_watts=0.0,
+            window_seconds=0.0,
+            baseline_seconds=0.0,
+            gpu_sources="unmeasured",
+        ),
     )
     summary.save(record, tmp_path)
     back = json.loads((tmp_path / "summary.json").read_text())
