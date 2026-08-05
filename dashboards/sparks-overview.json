@@ -138,7 +138,7 @@
       "id": 3,
       "type": "stat",
       "title": "Total energy",
-      "description": "Marginal: energy above the measured idle baseline, because the box draws power whether or not you train.",
+      "description": "Every recorded run's total draw, idle included. This is the headline number because it is always measured; marginal energy above idle is per-run in the table below, left blank when it could not be measured rather than counted as a misleading zero.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -174,7 +174,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(sparks_run_marginal_energy_joules) / 3600 or vector(0)",
+          "expr": "sum(sparks_run_energy_joules) / 3600 or vector(0)",
           "instant": true
         }
       ]
@@ -183,7 +183,7 @@
       "id": 4,
       "type": "stat",
       "title": "Total cost",
-      "description": "Marginal watt-hours times the tariff. Decoration at these magnitudes; the watt-hours are the number worth reading.",
+      "description": "Total watt-hours times the tariff, on the same always-measured basis as the energy tile. Decoration at these magnitudes; the watt-hours are the number worth reading.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -219,7 +219,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(sparks_run_marginal_energy_joules) / 3600000 * $tariff or vector(0)",
+          "expr": "sum(sparks_run_energy_joules) / 3600000 * $tariff or vector(0)",
           "instant": true
         }
       ]

@@ -173,6 +173,13 @@ Slice 3: the queue. A spool directory under `$SPARKS_SHARED_DIR`, one systemd se
 so exclusivity is structural, and a textfile exporter. Exclusivity is what makes marginal energy
 attribution mean anything.
 
+**The alerts are a specification, not a live rule set.** `alerts/sparks.yml` is valid — `promtool
+check rules` passes and `tests/test_alerts.py` holds every expression to the same "a metric something
+emits or scrapes" rule the dashboards get — but nothing loads it. sparkup's Prometheus config has no
+`rule_files:`, there is no Alertmanager, and `make deploy` does not ship the file, so no rule here
+can fire until someone wires it up. Read it as the intended alerts, and mind the `CAVEAT` comments on
+the ones that depend on config that does not exist yet (`SparksTextfileError`'s `job` label, for one).
+
 **The overview table must come from the textfile collector, not remote-write.** A `.prom` file in
 `/var/lib/node_exporter/textfile` is re-scraped every 15s for as long as it exists, so those series
 never go stale and never age out, and the files on disk stay the source of truth even if the TSDB is
@@ -283,8 +290,9 @@ minutes and that is the honest behaviour.
   cannot help either.
 - **The index lands in `SPARKS_TEXTFILE_DIR`, or node_exporter's default when that directory
   exists, and falls back to `<shared>/index` otherwise.** The fallback is never scraped. On a real
-  box confirm the file is where node_exporter reads it, or `count(sparks_run_info)` stays empty and
-  `SparksRunIndexEmpty` fires forever.
+  box confirm the file is where node_exporter reads it, or `count(sparks_run_info)` stays empty. The
+  `SparksRunIndexEmpty` rule in `alerts/sparks.yml` would catch that, but nothing loads that file: it
+  is a specification, not a live alert (see "What is not built yet").
 
 ## Energy under real load, which corrects the design research
 
