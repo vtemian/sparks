@@ -22,15 +22,22 @@
   "templating": {
     "list": [
       {
-        "type": "constant",
+        "type": "textbox",
         "name": "tariff",
         "label": "Tariff per kWh",
-        "description": "Currency per kWh. A variable, not a hardcoded number: it changes, and a variable means no dashboard rebuild. At these magnitudes the currency column is decoration; watt-hours per run between configs is the comparison that earns its place.",
+        "description": "Currency per kWh, as an editable textbox so it can be changed inline and driven from the URL (?var-tariff=). A constant renders as a bare chip with no input and ignores the URL param, which defeats the point of it being a variable. At these magnitudes the currency column is decoration; watt-hours per run between configs is the comparison that earns its place.",
         "query": "1.3",
         "current": {
           "text": "1.3",
           "value": "1.3"
         },
+        "options": [
+          {
+            "text": "1.3",
+            "value": "1.3",
+            "selected": true
+          }
+        ],
         "hide": 0,
         "skipUrlSync": false
       }
@@ -77,7 +84,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count(sparks_run_info)",
+          "expr": "count(sparks_run_info) or vector(0)",
           "instant": true
         }
       ]
@@ -122,7 +129,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count(sparks_run_info{status!=\"finished\"}) or vector(0)",
+          "expr": "count(sparks_run_info{status!~\"finished|running\"}) or vector(0)",
           "instant": true
         }
       ]
@@ -139,7 +146,7 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 6,
+        "x": 12,
         "y": 0
       },
       "fieldConfig": {
@@ -167,7 +174,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(sparks_run_marginal_energy_joules) / 3600",
+          "expr": "sum(sparks_run_marginal_energy_joules) / 3600 or vector(0)",
           "instant": true
         }
       ]
@@ -212,7 +219,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(sparks_run_marginal_energy_joules) / 3600000 * $tariff",
+          "expr": "sum(sparks_run_marginal_energy_joules) / 3600000 * $tariff or vector(0)",
           "instant": true
         }
       ]
@@ -252,6 +259,22 @@
               {
                 "id": "unit",
                 "value": "dateTimeAsIso"
+              },
+              {
+                "id": "custom.width",
+                "value": 180
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Ended"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
               }
             ]
           },
@@ -268,6 +291,10 @@
               {
                 "id": "decimals",
                 "value": 0
+              },
+              {
+                "id": "custom.width",
+                "value": 90
               }
             ]
           },
@@ -280,6 +307,10 @@
               {
                 "id": "decimals",
                 "value": 2
+              },
+              {
+                "id": "custom.width",
+                "value": 90
               }
             ]
           },
@@ -292,6 +323,10 @@
               {
                 "id": "decimals",
                 "value": 2
+              },
+              {
+                "id": "custom.width",
+                "value": 110
               }
             ]
           },
@@ -304,6 +339,10 @@
               {
                 "id": "decimals",
                 "value": 3
+              },
+              {
+                "id": "custom.width",
+                "value": 90
               }
             ]
           },
@@ -316,6 +355,34 @@
               {
                 "id": "decimals",
                 "value": 4
+              },
+              {
+                "id": "custom.width",
+                "value": 100
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "user"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 110
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "status"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 100
               }
             ]
           },
@@ -330,7 +397,7 @@
                 "value": [
                   {
                     "title": "Open this run",
-                    "url": "/d/training-runs/training-runs?var-run_id=${__data.fields[\"run_id\"]}&from=${__data.fields[\"Started\"]}&to=now",
+                    "url": "/d/training-runs/training-runs?var-run_id=${__data.fields[\"run_id\"]}&from=${__data.fields[\"Started\"].numeric}&to=${__data.fields[\"Ended\"].numeric}",
                     "targetBlank": false
                   }
                 ]
@@ -434,6 +501,17 @@
           "format": "table",
           "instant": true,
           "legendFormat": "__auto"
+        },
+        {
+          "refId": "H",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (run_id) ((sparks_run_start_timestamp_seconds + sparks_run_duration_seconds)) * 1000",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "__auto"
         }
       ],
       "transformations": [
@@ -463,7 +541,8 @@
               "Value #D": "Wh",
               "Value #E": "Marginal Wh",
               "Value #F": "Cost",
-              "Value #G": "Final loss"
+              "Value #G": "Final loss",
+              "Value #H": "Ended"
             }
           }
         }

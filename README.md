@@ -38,8 +38,8 @@ make deploy                              # SPARKS_HOST defaults to spark.local
 make deploy SPARKS_HOST=you@spark.local  # if your SSH login differs
 ```
 
-Pushes the tree, installs it into the training venv, and hands Grafana the dashboard. Grafana picks
-that up within 10 seconds; no restart, no root.
+Pushes the tree, installs it into the training venv, and hands Grafana both dashboards. Grafana picks
+them up within 10 seconds; no restart, no root.
 
 ## Develop
 

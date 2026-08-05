@@ -109,9 +109,15 @@ the match group` and the panel goes **fully red** rather than degrading. Termina
   "identifier followed by something" regex misses the metric inside
   `max by (...) (training_run_info)`, which is the shape every joined panel uses, so it silently
   skips the interesting half. Two tests pin this.
-- **`sort: 8` in the dashboard variable is Natural DESC** and is real, though the Grafana web docs
-  list no numeric sort values at all. It is verified from `VariableSort` in `types.gen.ts` at
-  v13.1.1. Alphabetical would put `run-9` above `run-10`.
+- **The dashboard variable uses `sort: 4` (numerical DESC), not `sort: 8`.** An earlier note here
+  claimed `sort: 8` was Natural DESC, "verified from `VariableSort` in `types.gen.ts` at v13.1.1".
+  That was read rather than run, and it is wrong. Observed in a real Grafana 13.1.1 testing every
+  value 0-8: sort values **5, 6, 7 and 8 are silently ignored** (byte-identical to `sort: 0`, raw
+  datasource order). The `@grafana/scenes` `sortVariableValues` switch does have arms for 5-8, which
+  is what the earlier agent read, but they never fire at runtime. `sort: 8` therefore auto-selected
+  the oldest run in the window, which with the default `now-3h` had already scrolled out of range,
+  leaving every training panel "No data". Use **`sort: 4`**: it keys on the leading number, so it
+  auto-selects the newest run and also puts `run-10` above `run-9`. Do not "restore" `sort: 8`.
 - **Panels match with `=~`, never `=`.** A multi-select variable interpolates to `(a|b)`, so `=`
   silently matches nothing the moment a second run is ticked.
 - **The info join wraps its right side in `max by (...)`.** Two `training_run_info` series sharing a
