@@ -1,23 +1,51 @@
 """Naming a run, and the metadata that identifies it."""
 
+import getpass
+import os
 import re
 import subprocess
 import time
 from pathlib import Path
 
 
-def new_run_id(name: str, when: float | None = None) -> str:
-    """`run-YYYYmmdd-HHMM-<name>`, so runs sort chronologically as strings.
+def new_run_id(
+    name: str, user: str, when: float | None = None, attempt: int = 0
+) -> str:
+    """`run-YYYYmmdd-HHMMSS-<user>-<name>`, chronological as a string.
 
-    That matters because the Grafana variable sorts them as strings and picks
-    the first, which is how the newest run ends up selected on load."""
-    stamp = time.strftime("%Y%m%d-%H%M", time.localtime(when or time.time()))
-    return f"run-{stamp}-{slug(name)}"
+    The username is what makes a cross-user collision structurally impossible
+    rather than merely unlikely, and usernames are unique on a box. Seconds
+    close the same-user window to one second. The attempt suffix is the
+    tie-break for one person launching the same name twice in one second, and
+    `shared.reserve_run_dir` is what decides it, atomically.
+
+    `when=0.0` is a real instant, not "unset": `when or time.time()` would have
+    silently ignored the epoch.
+    """
+    moment = time.time() if when is None else when
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(moment))
+    tie = f"-{attempt + 1}" if attempt else ""
+    return f"run-{stamp}-{slug(user, 'unknown')}-{slug(name, 'run')}{tie}"
 
 
-def slug(name: str) -> str:
-    """A label-value-safe form: a run id ends up in a PromQL regex."""
-    return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", name.lower())).strip("-")
+def slug(name: str, fallback: str = "") -> str:
+    """A label-value-safe form: a run id ends up in a PromQL regex.
+
+    A `--name` of `""`, `"///"` or `"🎉"` slugs to empty; the fallback keeps the
+    id from ending in a bare `-`."""
+    return (
+        re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", name.lower())).strip("-")
+        or fallback
+    )
+
+
+def current_user() -> str:
+    """Who to ask about a run. Never raises: getpass consults the password
+    database and then the environment, and both can be absent in a container."""
+    try:
+        return getpass.getuser()
+    except Exception:  # deliberately broad: a missing account is not a failure
+        return os.environ.get("USER", "unknown")
 
 
 def git_sha(repo: Path | None = None) -> str:

@@ -19,6 +19,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Self
 
+from sparks.shared import clean
+
 FILENAME = "summary.json"
 
 STATUSES = frozenset({"finished", "crashed", "cancelled", "killed", "oom"})
@@ -108,10 +110,14 @@ class Summary:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Self:
+        # Clean run_name and user on the way back in, not just on the way out:
+        # this is the line that unfreezes a box whose index is already poisoned
+        # by a summary written before the boundary sanitised inputs, without
+        # anyone hand-editing files. Both ride the index as label values.
         return cls(
             run_id=data["run_id"],
-            run_name=data["run_name"],
-            user=data["user"],
+            run_name=clean(data["run_name"], ""),
+            user=clean(data["user"], ""),
             git_sha=data["git_sha"],
             command=list(data["command"]),
             started_unix=data["started_unix"],

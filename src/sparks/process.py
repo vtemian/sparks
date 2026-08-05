@@ -31,6 +31,8 @@ from pathlib import Path
 from types import FrameType
 from typing import IO, Any, BinaryIO, cast
 
+from sparks.shared import FILE_MODE
+
 LOG = logging.getLogger("sparks")
 
 GRACE_SECONDS = 30.0
@@ -209,6 +211,11 @@ class Supervisor:
         started_wall, started_mono = time.time(), time.monotonic()
         oom_before = oom_kills(self.cgroup)
         log = self.log_path.open("wb")
+        # "wb" lands 0600 under umask 077, so the colleague whose GPU this run
+        # is hogging cannot read its log. chmod is never masked; suppress the
+        # EPERM that a directory another user owns would raise.
+        with contextlib.suppress(OSError):
+            os.chmod(self.log_path, FILE_MODE)
         reader: io.BufferedReader | None = None
         tee: threading.Thread | None = None
         try:

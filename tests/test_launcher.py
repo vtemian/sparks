@@ -8,6 +8,8 @@ import json
 import signal
 from pathlib import Path
 
+import pytest
+
 from sparks import summary
 from sparks.launcher import launch
 
@@ -146,3 +148,66 @@ def test_a_command_that_does_not_exist_still_leaves_a_record(
     s = read_summary(tmp_path / "runs" / result.run_id)
     assert s["status"] == "crashed"
     assert result.wrapper_exit != 0
+
+
+def test_a_non_utf8_name_neither_poisons_the_index_nor_crashes(
+    tmp_path: Path,
+) -> None:
+    # argv is surrogate-escaped; a lone surrogate persisted raw makes every
+    # later rebuild raise UnicodeEncodeError and freezes the shared index.
+    poisoned = b"e0\xff".decode("utf-8", "surrogateescape")
+    result = launch(["true"], name=poisoned, shared_dir=tmp_path, url=None)
+    s = read_summary(tmp_path / "runs" / result.run_id)
+    assert s["run_name"] == "e0\ufffd"
+    # The whole record round-trips through UTF-8, and the rebuilt index does too.
+    index_text = (tmp_path / "index" / "sparks_runs.prom").read_text(encoding="utf-8")
+    assert result.run_id in index_text
+    assert index_text.endswith("\n")
+
+
+def test_a_non_utf8_command_does_not_crash_the_failed_launch_path(
+    tmp_path: Path,
+) -> None:
+    # FileNotFoundError's message carries the bad byte straight from argv, so
+    # error.txt's write_text used to raise inside launch()'s except and escape.
+    bad = b"./nonexistent-\xff".decode("utf-8", "surrogateescape")
+    result = launch([bad], name="typo", shared_dir=tmp_path, url=None)
+    assert result.status == "crashed"
+    s = read_summary(tmp_path / "runs" / result.run_id)
+    assert s["status"] == "crashed"
+    # error.txt was written and is valid UTF-8.
+    (tmp_path / "runs" / result.run_id / "error.txt").read_text(encoding="utf-8")
+
+
+def test_the_record_is_not_lost_when_saving_the_summary_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The child ran to completion; a PermissionError while saving must still
+    # call metrics.end(status) and must not lie about the child's exit code,
+    # or a LIFECYCLE-exempt training_run_info sits on the dashboard forever.
+    import sparks.launcher as launcher_mod
+
+    ended: list[str] = []
+
+    class FakeMetrics:
+        def begin(self) -> None: ...
+        def end(self, status: str) -> None:
+            ended.append(status)
+
+    monkeypatch.setattr(
+        launcher_mod, "_supervisor_metrics", lambda *a, **k: FakeMetrics()
+    )
+
+    def boom(record: object, run_dir: Path) -> Path:
+        raise PermissionError("disk full / not yours")
+
+    monkeypatch.setattr(summary, "save", boom)
+
+    result = launch(
+        ["sh", "-c", "exit 3"], name="save-fail", shared_dir=tmp_path, url="x"
+    )
+    # The status is faithful and the exit code is the child's, not the saver's.
+    assert result.status == "crashed"
+    assert result.wrapper_exit == 3
+    # metrics.end was called with the real status despite the save blowing up.
+    assert ended == ["crashed"]

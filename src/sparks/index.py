@@ -33,7 +33,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from sparks import summary
+from sparks import shared, summary
 
 LOG = logging.getLogger("sparks")
 
@@ -103,9 +103,17 @@ Prometheus naming guidance is base units. Divide by 3600 in the panel."""
 
 def rebuild(runs_dir: Path, target: Path) -> int:
     """Rewrite `target` from every terminal run under `runs_dir`, and return how
-    many runs the index now holds."""
-    runs = [run for run in load_all(runs_dir) if run.is_terminal]
-    summary.write_atomically(target, lambda: render(runs))
+    many runs the index now holds.
+
+    `load_all` and the write are locked *together*: `write_atomically` makes the
+    write atomic but not the read-modify-write around it, and the read window
+    grows with history (0.9ms at 10 runs, 363ms at 5000), so two runs finishing
+    within it drop each other's rows. The lock is on the index directory rather
+    than a lock file, which under umask 077 the other user could never open.
+    """
+    with shared.exclusive(target.parent):
+        runs = [run for run in load_all(runs_dir) if run.is_terminal]
+        summary.write_atomically(target, lambda: render(runs))
     return len(runs)
 
 

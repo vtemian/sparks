@@ -1,5 +1,8 @@
+from pathlib import Path
+
 import pytest
 
+from sparks import cli
 from sparks.cli import build_parser, deep_link
 
 
@@ -46,3 +49,25 @@ def test_the_shared_dir_defaults_to_sparkups_default() -> None:
     # /srv/spark is sparkup's repo default. A box that overrode spark_shared_dir
     # in host_vars passes --shared-dir, and no one project's name is baked in.
     assert build_parser().parse_args(["run", "--", "true"]).shared_dir == "/srv/spark"
+
+
+def test_a_crashed_child_makes_the_cli_exit_nonzero(tmp_path: Path) -> None:
+    # A queue or a shell && reads $?. Returning 0 for a crashed run is the
+    # wrapper lying to its caller, and the whole suite passed with it because
+    # nothing ever called main() for a `run`.
+    code = cli.main(
+        [
+            "--url",
+            "",
+            "run",
+            "--shared-dir",
+            str(tmp_path),
+            "--baseline-seconds",
+            "0",
+            "--",
+            "sh",
+            "-c",
+            "exit 3",
+        ]
+    )
+    assert code == 3

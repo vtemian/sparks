@@ -6,18 +6,17 @@ the wall clock as close to the child as possible, and treat the moment the
 child is reaped as the end of the run.
 """
 
-import getpass
 import logging
 import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from sparks import index, summary
+from sparks import index, shared, summary
 from sparks.emit import RunMetrics
 from sparks.energy import EnergyReading, Sampler
 from sparks.process import Supervisor
-from sparks.run import git_sha, new_run_id
+from sparks.run import current_user, git_sha
 
 LOG = logging.getLogger("sparks")
 
@@ -49,9 +48,17 @@ def launch(
     `url` is the Prometheus to push to, or None to record to disk only, which
     is what the unit tests use and what a box without monitoring gets.
     """
-    run_id = new_run_id(name)
-    run_dir = shared_dir / "runs" / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
+    # Sanitise the durable copies at this one boundary. The child is still
+    # exec'd with the ORIGINAL argv below, which round-trips through execve
+    # correctly; only what we persist and push is cleaned, so a non-UTF-8
+    # --name can neither poison the shared index nor crash the wrapper.
+    user = shared.clean(current_user())
+    name = shared.clean(name, "run")
+    command_record = [shared.clean(arg, "", limit=4000) for arg in command]
+
+    # mkdir raising EEXIST is the only atomic uniqueness guarantee, and the
+    # chmod inside heals a tree left group-unreadable by an earlier umask.
+    run_id, run_dir = shared.reserve_run_dir(shared_dir / "runs", name, user)
 
     sampler = Sampler.detect()
     # Before anything expensive. A 1 Hz sampling loop alone was measured
@@ -80,69 +87,80 @@ def launch(
         # never staled: a permanent phantom run on the dashboard that never
         # ends and never gets a status.
         LOG.error("sparks: could not run %s: %s", command, e)
-        _record_failed_launch(run_dir, run_id, name, command, str(e))
+        _record_failed_launch(run_dir, run_id, name, user, command_record, str(e))
         if metrics is not None:
             metrics.end("crashed")
         _rebuild(shared_dir)
         return Launched(run_id, "crashed", 127, run_dir)
 
-    # The counters bracket a wider window than the child ran for: the end read
-    # happens after the group sweep and the tee drain, which the plan measured
-    # at up to 10s. Subtracting the idle baseline over the child's duration
-    # instead would bill that cleanup to the run's marginal energy: on a 1.5s
-    # run with 5s of cleanup, at 13W, that is 65J of pure idle reported as
-    # marginal, which is more than 100% wrong.
-    measured_seconds = max(completed.duration_seconds, time.time() - energy_read_at)
-    reading = EnergyReading(
-        total_joules=max(0.0, sampler.total_joules() - energy_start),
-        gpu_nvml_joules=max(0.0, sampler.gpu_nvml_joules() - gpu_nvml_start),
-        gpu_firmware_joules=max(
-            0.0, sampler.gpu_firmware_joules() - gpu_firmware_start
-        ),
-        idle_watts=idle_watts,
-        seconds=measured_seconds,
-    )
-
-    record = summary.Summary(
-        run_id=run_id,
-        run_name=name,
-        user=_user(),
-        git_sha=git_sha(),
-        command=list(command),
-        started_unix=completed.started_unix,
-        ended_unix=completed.ended_unix,
-        duration_seconds=completed.duration_seconds,
-        status=completed.outcome.status,
-        exit_code=completed.outcome.exit_code,
-        signal=completed.outcome.signal_name,
-        escalated_to_sigkill=completed.outcome.escalated_to_sigkill,
-        energy=summary.Energy(
-            total_joules=reading.total_joules,
-            marginal_joules=reading.marginal_joules,
-            gpu_nvml_joules=reading.gpu_nvml_joules,
-            gpu_firmware_joules=reading.gpu_firmware_joules,
-            idle_watts=reading.idle_watts,
-            sources_agree=reading.sources_agree,
-        ),
-    )
-    summary.save(record, run_dir)
-
-    if metrics is not None:
-        metrics.end(record.status)
-
-    if not reading.sources_agree:
-        # The two GPU counters are out of their usual ~1.22 relationship, which
-        # means one of them reset mid-run. The energy figure for this run is
-        # not trustworthy, and saying so is the whole point of measuring twice.
-        LOG.warning(
-            "sparks: GPU energy sources disagree (nvml %.0fJ, firmware %.0fJ); "
-            "one counter probably reset mid-run",
-            reading.gpu_nvml_joules,
-            reading.gpu_firmware_joules,
+    # The child is reaped. From here to the end everything runs under one
+    # try/finally so that the record cannot be lost: a full disk, a quota, or
+    # the other user owning the directory must not stop metrics.end(status)
+    # firing, or training_run_info (LIFECYCLE-exempt from stale marking) sits on
+    # the dashboard forever with no end and no status.
+    status = completed.outcome.status
+    try:
+        # The counters bracket a wider window than the child ran for: the end
+        # read happens after the group sweep and the tee drain, measured at up
+        # to 10s. Subtracting the idle baseline over the child's duration
+        # instead would bill that cleanup to the run's marginal energy: on a
+        # 1.5s run with 5s of cleanup, at 13W, that is 65J of pure idle reported
+        # as marginal, which is more than 100% wrong.
+        measured_seconds = max(completed.duration_seconds, time.time() - energy_read_at)
+        reading = EnergyReading(
+            total_joules=max(0.0, sampler.total_joules() - energy_start),
+            gpu_nvml_joules=max(0.0, sampler.gpu_nvml_joules() - gpu_nvml_start),
+            gpu_firmware_joules=max(
+                0.0, sampler.gpu_firmware_joules() - gpu_firmware_start
+            ),
+            idle_watts=idle_watts,
+            seconds=measured_seconds,
         )
 
-    _rebuild(shared_dir)
-    return Launched(run_id, record.status, completed.outcome.wrapper_exit, run_dir)
+        record = summary.Summary(
+            run_id=run_id,
+            run_name=name,
+            user=user,
+            git_sha=git_sha(),
+            command=command_record,
+            started_unix=completed.started_unix,
+            ended_unix=completed.ended_unix,
+            duration_seconds=completed.duration_seconds,
+            status=status,
+            exit_code=completed.outcome.exit_code,
+            signal=completed.outcome.signal_name,
+            escalated_to_sigkill=completed.outcome.escalated_to_sigkill,
+            energy=summary.Energy(
+                total_joules=reading.total_joules,
+                marginal_joules=reading.marginal_joules,
+                gpu_nvml_joules=reading.gpu_nvml_joules,
+                gpu_firmware_joules=reading.gpu_firmware_joules,
+                idle_watts=reading.idle_watts,
+                sources_agree=reading.sources_agree,
+            ),
+        )
+        summary.save(record, run_dir)
+
+        if not reading.sources_agree:
+            # The two GPU counters are out of their usual ~1.22 relationship,
+            # which means one reset mid-run. The energy figure is not
+            # trustworthy, and saying so is the point of measuring twice.
+            LOG.warning(
+                "sparks: GPU energy sources disagree (nvml %.0fJ, firmware "
+                "%.0fJ); one counter probably reset mid-run",
+                reading.gpu_nvml_joules,
+                reading.gpu_firmware_joules,
+            )
+    except Exception as e:
+        # The child completed and its exit code is faithful; losing the record
+        # must neither strand a phantom on the dashboard nor lie about $?.
+        LOG.error("sparks: could not record %s: %s", run_id, e)
+    finally:
+        if metrics is not None:
+            metrics.end(status)
+        _rebuild(shared_dir)
+
+    return Launched(run_id, status, completed.outcome.wrapper_exit, run_dir)
 
 
 def _supervisor_metrics(run_id: str, name: str, url: str | None) -> RunMetrics | None:
@@ -161,21 +179,12 @@ def _supervisor_metrics(run_id: str, name: str, url: str | None) -> RunMetrics |
     )
 
 
-def _user() -> str:
-    """Who to ask about this run. Never raises: getpass consults the password
-    database and then the environment, and both can be absent in a container."""
-    try:
-        return getpass.getuser()
-    except Exception:  # deliberately broad: a missing account is not a failure
-        return os.environ.get("USER", "unknown")
-
-
 def _rebuild(shared_dir: Path) -> None:
     """Refresh the run index. Never raises: a corrupt summary somewhere else
     must not surface as this run having failed."""
     target = textfile_dir(shared_dir) / index.FILENAME
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
+        shared.make_dir(target.parent)
         written = index.rebuild(shared_dir / "runs", target)
         LOG.info("sparks: %d runs in %s", written, target)
     except Exception as e:  # deliberately broad: the run itself still succeeded
@@ -198,14 +207,19 @@ def textfile_dir(shared_dir: Path) -> Path:
 
 
 def _record_failed_launch(
-    run_dir: Path, run_id: str, name: str, command: list[str], error: str
+    run_dir: Path,
+    run_id: str,
+    name: str,
+    user: str,
+    command: list[str],
+    error: str,
 ) -> None:
     now = time.time()
     summary.save(
         summary.Summary(
             run_id=run_id,
             run_name=name,
-            user=_user(),
+            user=user,
             git_sha=git_sha(),
             command=list(command),
             started_unix=now,
@@ -219,4 +233,7 @@ def _record_failed_launch(
         ),
         run_dir,
     )
-    (run_dir / "error.txt").write_text(error + "\n")
+    # FileNotFoundError's message carries the bad byte straight from argv, so
+    # write_text(error) would raise UnicodeEncodeError inside launch()'s except
+    # and escape with a traceback. clean() is the same one-boundary fix.
+    (run_dir / "error.txt").write_text(shared.clean(error, "", limit=4000) + "\n")

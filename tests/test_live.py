@@ -39,7 +39,7 @@ def wait_for(expr: str, seconds: float = 20.0) -> list[dict[str, Any]]:
 
 
 def test_a_run_is_visible_end_to_end() -> None:
-    run_id = new_run_id("live")
+    run_id = new_run_id("live", "test")
     m = RunMetrics(
         run_id=run_id,
         url=URL,
@@ -81,7 +81,7 @@ def test_a_finished_run_stops_dead_rather_than_flatlining() -> None:
     # The stale markers. Without them a finished run holds its last value for
     # the full 5 minute lookback window, so the graph lies about what is
     # currently happening.
-    run_id = new_run_id("live-stale")
+    run_id = new_run_id("live-stale", "test")
     m = RunMetrics(run_id=run_id, url=URL, info={"run_name": "live-stale"})
     m.begin()
     m.log(loss=0.5)
@@ -101,7 +101,7 @@ def test_a_finished_run_stops_dead_rather_than_flatlining() -> None:
 
 
 def test_the_dashboard_variable_query_returns_the_run() -> None:
-    run_id = new_run_id("live-var")
+    run_id = new_run_id("live-var", "test")
     m = RunMetrics(run_id=run_id, url=URL, info={"run_name": "live-var"})
     m.begin()
     wait_for(f'training_run_info{{run_id="{run_id}"}}')

@@ -12,7 +12,7 @@ import random
 import time
 
 from sparks.emit import RunMetrics
-from sparks.run import git_sha, new_run_id
+from sparks.run import current_user, git_sha, new_run_id
 
 STEPS_PER_EPOCH = 8
 EPOCHS = 40
@@ -42,7 +42,7 @@ def run(
     was tuned against.
     """
     total = epochs * STEPS_PER_EPOCH
-    run_id = new_run_id(name)
+    run_id = new_run_id(name, current_user())
     metrics = RunMetrics(
         run_id=run_id,
         url=url,
