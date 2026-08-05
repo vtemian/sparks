@@ -1,4 +1,4 @@
-.PHONY: sync fmt lint typecheck test dashboard check live harness-up harness-down deploy
+.PHONY: sync fmt lint typecheck test dashboard check live on-box harness-up harness-down deploy
 
 # Your box's values, untracked, same split sparkup uses between tracked
 # defaults and an untracked host file. Copy local.mk.example to local.mk.
@@ -50,6 +50,14 @@ check: lint typecheck test dashboard
 # confirm our own assumptions.
 live: harness-up
 	@uv run pytest -m live; status=$$?; $(MAKE) harness-down; exit $$status
+
+# The checks that only mean something on the real box: the 2775 migration, the
+# tier-1 acceptance matrix across three umasks and two accounts, and the energy
+# constants that were calibrated on one machine and guessed for every other.
+# Run it ON the box, not from here. ARGS passes --other-user, --url or
+# --fix-permissions through: make on-box ARGS="--other-user alice".
+on-box:
+	uv run python tests/on_box.py --shared-dir $(SPARKS_SHARED_DIR) $(ARGS)
 
 harness-up:
 	./tests/harness-up.sh
