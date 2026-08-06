@@ -21,7 +21,7 @@ def a_job(queue: Path, name: str = "e0", user: str = "vlad") -> spool.Entry:
 
 def test_job_requires_an_image() -> None:
     with pytest.raises(TypeError):
-        spool.Job(
+        spool.Job(  # type: ignore[call-arg]
             job_id="job-1",
             name="n",
             user="u",

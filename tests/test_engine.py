@@ -71,7 +71,8 @@ class TestTheContainerCommand:
             entry, "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
         )
         assert f"{entry.data_dir}:/data:ro" in argv
-        assert ("--env", "SPARKS_DATA=/data") in list(zip(argv, argv[1:]))
+        assert "SPARKS_DATA=/data" in argv
+        assert argv[argv.index("SPARKS_DATA=/data") - 1] == "--env"
 
     def test_the_command_is_passed_after_the_image_so_flags_are_inert(
         self, tmp_path: Path, docker: engine.Docker
@@ -144,16 +145,15 @@ class TestTheWholeCommand:
             uid=1001,
             gid=1002,
         )
-        assert argv[0] == "sparks"
-        assert "run" in argv
+        assert argv[0] == "sparks-run"
+        assert "run" not in argv[: argv.index("--")]
         assert argv[argv.index("--") + 1 : argv.index("--") + 3] == ["docker", "run"]
 
-    def test_global_flags_come_before_the_subcommand(
+    def test_url_comes_before_name(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
-        """argparse rejects a global flag placed after a subcommand, and the
-        rejection surfaces as the job failing with exit 2 and no explanation
-        anywhere a person would look. Found by running one."""
+        """sparks-run has no subcommand; --url still precedes the rest so a
+        stale compose or hand-built argv that put it after --name is caught."""
         argv = docker.argv(
             an_entry(tmp_path),
             "sha256:abc",
@@ -162,7 +162,7 @@ class TestTheWholeCommand:
             uid=1001,
             gid=1002,
         )
-        assert argv.index("--url") < argv.index("run")
+        assert argv.index("--url") < argv.index("--name")
 
     def test_the_container_is_named_after_the_job_once(
         self, tmp_path: Path, docker: engine.Docker

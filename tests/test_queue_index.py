@@ -6,7 +6,6 @@ from pathlib import Path
 from sparks import index, spool
 from tests import promtool
 
-
 IMAGE = "spark.local:5000/demo:1"
 
 

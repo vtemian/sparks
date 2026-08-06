@@ -56,7 +56,9 @@ def test_registry_url_is_loaded(
         'registry_url = "http://spark.local:5000"\n'
     )
     monkeypatch.setenv("SPARKS_BOX_CONFIG", str(path))
-    assert box.load().registry_url == "http://spark.local:5000"
+    loaded = box.load()
+    assert loaded is not None
+    assert loaded.registry_url == "http://spark.local:5000"
 
 
 def test_a_missing_contract_reads_as_an_unprovisioned_box(tmp_path: Path) -> None:

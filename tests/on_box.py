@@ -402,13 +402,12 @@ def _promtool(report: Report, target: Path) -> None:
 def _exit_code(report: Report, shared_dir: Path) -> None:
     """A queue or a shell && reads $?. The whole suite once passed while the
     wrapper returned 0 for a crashed run."""
-    from sparks import cli
+    from sparks import run_main
 
-    code = cli.main(
+    code = run_main.main(
         [
             "--url",
             "",
-            "run",
             "--shared-dir",
             str(shared_dir),
             "--baseline-seconds",
@@ -472,10 +471,9 @@ def _second_account(report: Report, shared_dir: Path, other_user: str | None) ->
             other_user,
             sys.executable,
             "-m",
-            "sparks.cli",
+            "sparks.run_main",
             "--url",
             "",
-            "run",
             "--shared-dir",
             str(shared_dir),
             "--baseline-seconds",
