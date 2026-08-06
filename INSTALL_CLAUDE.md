@@ -8,16 +8,17 @@ This repo's facts, decisions and traps, for an agent working in it. Humans want
 gets system metrics into Prometheus, and its `INSTALL_CLAUDE.md` says explicitly that it does not
 own training runs. Do not push work across that line in either direction.
 
-**Three entry points, not one.**
+**Two products: client and server.**
 
-| Script | Where | Role |
+| Install | Binary | Role |
 |---|---|---|
-| `sparks` | laptop | client: build/push image, upload `--data`, enqueue, queue/cancel/abort/remove |
-| `sparks-runner` | box (queue container) | drain the spool: pull image, start job, honour cancel/abort |
-| `sparks-run` | box, nested by the runner | training wrapper: metrics lifecycle, energy, run directory |
+| Laptop venv | `sparks` | client: build/push image, upload `--data`, enqueue, queue/cancel/abort/remove |
+| Queue image | `fire` | server: drain the spool, pull image, start job, honour cancel/abort |
 
-There is no laptop `sparks run` and no `sparks demo`. Images are built on the laptop and pushed to
-the box registry; the runner only pulls. Job data is one folder via `--data`, mounted at `/data`
+Supervision of each training container is private: `python -m sparks.fire.supervise` inside the
+image (called by `fire`), not a console script on PATH. There is no `sparks-run`, `sparks-runner`,
+laptop `sparks run`, or `sparks demo`. Images are built on the laptop and pushed to the box
+registry; `fire` only pulls. Job data is one folder via `--data`, mounted at `/data`
 (`$SPARKS_DATA`) in the container — training code must read that path. The box does **not** build
 from a shipped `context/` directory.
 
@@ -113,7 +114,7 @@ rather than degrading. Terminal state lives on `training_run_end_timestamp_secon
 - **`--data` is required; train against `/data` or `$SPARKS_DATA`.** The client uploads that folder
   into the job and the runner mounts it read-only at `/data`. A script that hard-codes a laptop
   corpus path will fail on the box even though submit succeeded.
-- **The box never builds a job image.** `job.image` is required; `sparks-runner` pulls it. Shipping
+- **The box never builds a job image.** `job.image` is required; `fire` pulls it. Shipping
   project `context/` for `docker build` on the box is gone. To change code, rebuild and submit from
   a laptop (or pass `--image` to reuse a tag already in the registry).
 - **`# noqa: BLE001` fails `ruff check` here.** `BLE` is not in the `select` list, so `RUF100` flags
@@ -153,10 +154,10 @@ project's name into a framework meant to serve several is the mistake this secti
 
 **The box says where those paths are; sparks does not guess.** sparkup's `sparks` role writes
 `/etc/sparks/box.toml` with the shared directory, textfile directory, Prometheus URL, Grafana URL
-and `registry_url`. `sparks-run` and `sparks-runner` read it on the box; without that file (or with
-a promised path missing) they **refuse to start**, exiting **78** (`EX_CONFIG`, distinct so a queue
-can tell a misconfigured box from a crashed job). Explicit `--shared-dir` and `--url` still
-override it for tests and non-sparkup machines.
+and `registry_url`. `fire` and `python -m sparks.fire.supervise` read it on the box; without that
+file (or with a promised path missing) they **refuse to start**, exiting **78** (`EX_CONFIG`,
+distinct so a queue can tell a misconfigured box from a crashed job). Explicit `--shared-dir` and
+`--url` still override it for tests and non-sparkup machines.
 
 Laptops never load the contract locally for the happy path: they set `SPARKS_HOST` (or `--host`)
 and the client talks to the box over ssh, reading `registry_url` from the remote contract when it
@@ -205,7 +206,7 @@ written before `image` was required are skipped by `entries()` rather than faile
 
 ## What is still open
 
-The queue, the laptop client, and `sparks-run` under the runner are in. Still missing relative to
+The queue, the laptop client, and private supervision under `fire` are in. Still missing relative to
 earlier slice notes: Grafana annotations and snapshots (need a Grafana service account token —
 anonymous **Viewer** cannot POST), and the overview-table / energy caveats listed under
 "Deferred" below.
@@ -282,9 +283,9 @@ the scraped half needs sparkup's exporter defaults, which is its checker's job, 
 
 ## The supervisor and the child write disjoint series, enforced in code
 
-`sparks-run` is the supervisor (nested by the queue runner around each job container) and holds a
-`RunMetrics` with `lifecycle=True`; the training child gets its own via `emit.from_env(...)`, which
-sets `lifecycle=False`. They must never write the same series. Two writers choose timestamps
+`python -m sparks.fire.supervise` is the supervisor (nested by `fire` around each job container) and
+holds a `RunMetrics` with `lifecycle=True`; the training child gets its own via `emit.from_env(...)`,
+which sets `lifecycle=False`. They must never write the same series. Two writers choose timestamps
 independently, and remote-write 1.0 rejects an out-of-order sample by rolling back the **entire
 request**, so the batch carrying the loss simply never lands.
 
@@ -333,11 +334,11 @@ minutes and that is the honest behaviour.
   and an unknown are distinguishable and `absent()` works. What is missing is a second whole-box
   source to disagree with.
 - **The index lands in `SPARKS_TEXTFILE_DIR`, or the `textfile_dir` the box declared in
-  `/etc/sparks/box.toml`.** There is no fallback any more: `sparks-run` checks that directory is
-  writable before starting anything and refuses with exit 78 if it is not, because the old fallback
-  (`<shared>/index`) was never scraped and left `count(sparks_run_info)` empty while looking healthy.
-  A library caller that bypasses the CLI still only gets a logged warning, since a failed index must
-  not fail a training run that otherwise succeeded.
+  `/etc/sparks/box.toml`.** There is no fallback any more: `sparks.fire.supervise` checks that
+  directory is writable before starting anything and refuses with exit 78 if it is not, because the
+  old fallback (`<shared>/index`) was never scraped and left `count(sparks_run_info)` empty while
+  looking healthy. A library caller that bypasses the CLI still only gets a logged warning, since a
+  failed index must not fail a training run that otherwise succeeded.
 
 ## Energy under real load, which corrects the design research
 
@@ -387,5 +388,6 @@ are both 0.
 
 The index writes `0644`, ends with a newline, and passes `promtool check metrics`.
 
-**`sparks-run` takes `--url` / `--shared-dir` as its own flags** (it is a separate entry point, not a
-`sparks` subcommand). The laptop client is only `sparks submit|queue|cancel|abort|retry|remove`.
+**`python -m sparks.fire.supervise` takes `--url` / `--shared-dir` as its own flags** (private
+module invoked by `fire`, not a `sparks` subcommand or product binary). The laptop client is only
+`sparks submit|queue|cancel|abort|retry|remove`.

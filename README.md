@@ -7,13 +7,14 @@ remote-write receiver, Grafana on `http://spark.local`, a local image registry, 
 runner. sparkup's `sparks` role writes `/etc/sparks/box.toml` (shared directory, textfile
 directory, Prometheus URL, `registry_url`), and its registry role is what jobs push to.
 
-## Submit a job
+## Client (laptop)
 
 From a laptop with Docker and ssh:
 
 ```sh
-export SPARKS_HOST=spark.local   # or you@spark.local
-sparks submit --data ./corpus --name e0 -- python train.py
+export SPARKS_HOST=vlad@spark.local
+sparks submit --data ./corpus --name e0 -- python train.py --data /data
+sparks queue
 ```
 
 The client builds the image from the current directory (or `--context`), pushes it to the box
@@ -37,8 +38,11 @@ sparks abort <job>      # stop one whether or not it has started
 sparks remove <job>     # delete a finished job
 ```
 
-`sparks` is the laptop client. On the box, `sparks-runner` drains the queue and nests
-`sparks-run` around each training container — those are not laptop commands.
+## Server (box)
+
+The queue container runs `fire` (image ENTRYPOINT). It pulls the job image,
+mounts `--data` at `/data`, and supervises the run. You do not install or invoke
+a separate wrap binary.
 
 ## Instrument a run
 
