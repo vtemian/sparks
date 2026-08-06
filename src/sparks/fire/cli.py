@@ -1,7 +1,8 @@
-"""fire — the queue daemon.
+"""fire — queue daemon and control verbs.
 
-The queue container's entry point. Flags are the main argparse surface (no
-subcommand), so compose can pass `--url … --shared-dir …` directly.
+Without a leading verb, flags are the main argparse surface so compose can
+pass `--url … --shared-dir …` directly. Leading tokens in ctl.VERBS are the
+SSH-RPC control surface (queue, cancel, abort, …).
 """
 
 import argparse
@@ -10,7 +11,7 @@ import sys
 from pathlib import Path
 
 from sparks import box, spool
-from sparks.fire import engine, runner
+from sparks.fire import ctl, engine, runner
 
 LOG = logging.getLogger("sparks")
 
@@ -50,11 +51,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    args = build_parser().parse_args(argv)
+    given = list(argv if argv is not None else sys.argv[1:])
+    if given and not given[0].startswith("-") and given[0] in ctl.VERBS:
+        return ctl.ctl_main(given)
+    args = build_parser().parse_args(given)
     try:
         return cmd_runner(args)
     except (box.NotProvisioned, box.Malformed) as e:
-        print(f"sparks: {e}", file=sys.stderr)
+        print(f"fire: {e}", file=sys.stderr)
         return EX_CONFIG
 
 
