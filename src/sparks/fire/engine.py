@@ -103,10 +103,10 @@ class Process:
     def finish(self) -> None:
         """Release what the job leaves behind.
 
-        `--rm` removes the container when `docker run` exits normally, so this
-        is for the case where the client died without it: the container then
-        outlives its supervisor and keeps the GPU. That is the same class of
-        problem as the orphaned workers `process.py` sweeps for, one level up.
+        contain removes the container in its own `finally`, so this is for the
+        case where the client died without it: the container then outlives its
+        supervisor and keeps the GPU. That is the same class of problem as the
+        orphaned workers `process.py` sweeps for, one level up.
         """
         with contextlib.suppress(OSError, ValueError):
             self._log.close()
@@ -140,8 +140,8 @@ class Docker:
     def pull(self, image: str, log_path: Path) -> None:
         """Pull a registry image so a missing or broken ref fails the job here.
 
-        Without this, `docker run` is what discovers the problem, and the
-        launch log is a worse place to look than a dedicated pull failure.
+        Without this, contain is what discovers the problem, and the launch
+        log is a worse place to look than a dedicated pull failure.
         """
         deadline = time.monotonic() + PULL_TIMEOUT_SECONDS
         try:
@@ -170,8 +170,8 @@ class Docker:
         gid = entry.path.stat().st_gid
         cidfile = entry.path / spool.CID_FILE
         run_id_file = entry.path / spool.RUN_ID_FILE
-        # docker refuses to start if the cidfile already exists, which on a
-        # retried or resumed job it would.
+        # Clear stale control files from a retried or resumed job so readers
+        # never see a previous container id or run id.
         for stale in (cidfile, run_id_file):
             stale.unlink(missing_ok=True)
         argv = self.argv(entry, image, cidfile, run_id_file, uid, gid)
@@ -296,6 +296,9 @@ class Docker:
             str(entry.data_dir),
             "--workdir",
             str(self.shared_dir),
+            # End of contain's own options: a job image that looks like a flag
+            # must not be parsed as one.
+            "--",
             image,
             *entry.job.command,
         ]

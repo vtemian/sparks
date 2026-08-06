@@ -13,7 +13,7 @@ import pytest
 
 import sparks.dock as dock
 from sparks import spool
-from sparks.fire import engine
+from sparks.fire import contain, engine
 from sparks.fire.runner import PullFailed
 
 
@@ -129,6 +129,21 @@ class TestTheContainerCommand:
             an_entry(tmp_path), "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
         )
         assert "host.docker.internal" not in " ".join(argv)
+
+    def test_flag_like_image_cannot_override_contain_options(
+        self, tmp_path: Path, docker: engine.Docker
+    ) -> None:
+        """`--` before the image keeps argparse from treating it as a flag."""
+        entry = an_entry(tmp_path, ["/", "real/img", "sh"])
+        argv = docker.container_argv(
+            entry, "--shared-dir", tmp_path / "cid", uid=1001, gid=1002
+        )
+        assert "--" in argv
+        assert argv[argv.index("--") + 1] == "--shared-dir"
+        args = contain.parse_args(argv[3:])
+        assert args.shared_dir == Path("/srv/spark")
+        assert args.image == "--shared-dir"
+        assert args.command == ["/", "real/img", "sh"]
 
 
 class TestTheWholeCommand:
