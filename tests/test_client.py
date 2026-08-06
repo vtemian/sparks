@@ -225,6 +225,27 @@ class TestListing:
 
 
 class TestReachingTheBox:
+    def test_the_box_decides_who_submitted_not_this_laptop(self) -> None:
+        """Ownership of the files decides who may abort a job, and over ssh that
+        is the account on the box. Naming this laptop's account made one person
+        show up as two: the queue said `whitemonk`, the run said `vlad`."""
+        argv = client.commit_argv("/q/job-1", "e0", ["true"], "abc", False, None)
+        assert "--user" not in argv
+
+    def test_the_command_survives_the_separator(self) -> None:
+        """Everything after `--` is the job's, and flags in it must reach the
+        job rather than being read by the commit itself."""
+        argv = client.commit_argv(
+            "/q/job-1",
+            "e0",
+            ["python", "-m", "train", "--lr", "3e-4"],
+            "abc",
+            True,
+            None,
+        )
+        assert argv[argv.index("--") + 1 :] == ["python", "-m", "train", "--lr", "3e-4"]
+        assert "--git-dirty" in argv[: argv.index("--")]
+
     def test_the_host_flag_beats_the_environment(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

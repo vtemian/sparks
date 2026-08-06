@@ -8,11 +8,6 @@ This repo's facts, decisions and traps, for an agent working in it. Humans want
 and its `INSTALL_CLAUDE.md` says explicitly that it does not own training runs. Do not push work
 across that line in either direction.
 
-[docs/training-observability.md](docs/training-observability.md) is the original design research.
-It used to live in sparkup and was deleted there ("docs: drop the training-observability handoff")
-because it specifies this project. **Three of its claims are wrong; they are corrected
-below and in the plan. Read those corrections before implementing anything from it.**
-
 ---
 
 ## Verified against a real Prometheus
@@ -69,30 +64,32 @@ everything else is the live view that should stop when the run does.
 No unit test caught this, and no unit test could have: it only appears when a real receiver is asked
 what it actually holds. `tests/test_live.py` is not optional coverage.
 
-## Three corrections to `docs/training-observability.md`
+## Design decisions that supersede the original handoff
 
-**1. C1's `PrometheusCallback(TrainerCallback)` has nothing to attach to.** The loop it was written
-for is hand written, having rejected HuggingFace `Trainer` over four measured problems with it under
-a PEFT wrapper. Hence `RunMetrics` with `begin()`/`log()`/`end()`. A `TrainerCallback` adapter is a
-20-line shim if some project ever wants one; do not invert this.
+The sparkup-era design research is gone from this tree. Three of its claims were wrong and still
+shape the code; do not reintroduce them.
 
-The doc also says the structure is copied from Axolotl. Axolotl's `OpenTelemetryMetricsCallback` is
-a **scrape exporter, not a push client**: no batching, no flush interval, and **no labels at all**,
-so two runs on one host produce indistinguishable series. The batching design here follows k6's
-`internal/output/prometheusrw/` instead: 5s push interval, buffer plus periodic flusher, millisecond
-truncation with a seen-set, stale markers on shutdown. Exactly one thing is copied from Axolotl:
-wrapping every push in a broad `try/except` that only logs.
+**1. No `PrometheusCallback(TrainerCallback)`.** The loop this was built for is hand written, having
+rejected HuggingFace `Trainer` over four measured problems with it under a PEFT wrapper. Hence
+`RunMetrics` with `begin()`/`log()`/`end()`. A `TrainerCallback` adapter is a 20-line shim if some
+project ever wants one; do not invert this.
+
+Axolotl's `OpenTelemetryMetricsCallback` is a **scrape exporter, not a push client**: no batching,
+no flush interval, and **no labels at all**, so two runs on one host produce indistinguishable
+series. The batching design here follows k6's `internal/output/prometheusrw/` instead: 5s push
+interval, buffer plus periodic flusher, millisecond truncation with a seen-set, stale markers on
+shutdown. Exactly one thing is copied from Axolotl: wrapping every push in a broad `try/except`
+that only logs.
 
 **2. `node_hwmon_energy_input_joule_total` does not exist.** The series is
-`node_hwmon_energy_joule_total`. Confirmed live: 4 counters, `pkg`, `cpu_e`, `cpu_p`, `gpu`. The
-doc's D2 PromQL returns nothing as written. Same class of bug as sparkup's commit `9d731f8` ("Fix
-the power metric name"), made again for energy.
+`node_hwmon_energy_joule_total`. Confirmed live: 4 counters, `pkg`, `cpu_e`, `cpu_p`, `gpu`. Same
+class of bug as sparkup's commit `9d731f8` ("Fix the power metric name"), made again for energy.
 
-**3. `status` must never be a label on `training_run_info`.** The doc specifies it and then flips it
-at `on_train_end`. Changing a label on an info metric creates a **second series**, pushed series are
-never automatically staled, and the join every panel uses then fails with `found duplicate series for
-the match group` and the panel goes **fully red** rather than degrading. Terminal state lives on
-`training_run_end_timestamp_seconds` and `training_run_status`.
+**3. `status` must never be a label on `training_run_info`.** Changing a label on an info metric
+creates a **second series**, pushed series are never automatically staled, and the join every panel
+uses then fails with `found duplicate series for the match group` and the panel goes **fully red**
+rather than degrading. Terminal state lives on `training_run_end_timestamp_seconds` and
+`training_run_status`.
 
 ## Traps
 

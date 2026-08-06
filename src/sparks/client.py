@@ -360,21 +360,31 @@ def submit_remote(
             f"could not copy the project to {host}: "
             f"{done.stderr.decode(errors='replace').strip()}"
         )
-    commit = [
-        "commit",
-        reserved,
-        "--name",
-        name,
-        "--user",
-        local_user(),
-        "--git-sha",
-        sha,
-    ]
+    return remote_capture(host, commit_argv(reserved, name, command, sha, dirty, image))
+
+
+def commit_argv(
+    reserved: str,
+    name: str,
+    command: list[str],
+    sha: str,
+    dirty: bool,
+    image: str | None,
+) -> list[str]:
+    """The third step of a remote submit, as a pure function.
+
+    Note what is NOT here: `--user`. Whoever ssh'd in owns the job's files, and
+    ownership is what decides who may abort it; the account on this laptop
+    decides nothing and is frequently a different name. Passing it made the
+    queue list a job as `whitemonk` while the run underneath said `vlad` - one
+    person showing up as two, in the record that says who did what.
+    """
+    argv = ["commit", reserved, "--name", name, "--git-sha", sha]
     if dirty:
-        commit.append("--git-dirty")
+        argv.append("--git-dirty")
     if image:
-        commit += ["--image", image]
-    return remote_capture(host, [*commit, "--", *command])
+        argv += ["--image", image]
+    return [*argv, "--", *command]
 
 
 def local_user() -> str:
