@@ -44,6 +44,38 @@ groups:
         annotations:
           summary: "node_exporter could not read a textfile collector file"
 
+      - alert: SparksQueueRunnerStuck
+        # The queue's own silent failure, and the reason it publishes a
+        # heartbeat at all: the container is up, `docker ps` is green, and jobs
+        # are simply never started. Nothing else on the box can tell the
+        # difference between a runner that is idle and one that has wedged --
+        # both look like a queue with work in it and nothing running.
+        #
+        # The heartbeat is written on EVERY pass, including passes that find
+        # nothing to do and passes taken while a job runs, so it advancing is a
+        # statement about the runner rather than about the workload.
+        #
+        # 10m against a poll of 5s is a wide margin on purpose: a converge that
+        # recreates the container is a legitimate gap, and this must not fire
+        # every time the box is provisioned.
+        expr: time() - sparks_queue_runner_heartbeat_timestamp_seconds > 600
+        for: 5m
+        annotations:
+          summary: "The queue runner has stopped taking passes"
+
+      - alert: SparksQueueBacklog
+        # Not an error, and deliberately not urgent: a queue with work in it is
+        # a queue doing its job. This is here for the case it is easy to miss --
+        # work piling up behind something that is never going to finish.
+        #
+        # Paired with the rule above rather than replacing it: a stuck runner
+        # with an empty queue is still broken, and a deep queue with a healthy
+        # runner is fine.
+        expr: sparks_queue_depth{state="queued"} > 5
+        for: 6h
+        annotations:
+          summary: "Jobs have been waiting a long time"
+
       - alert: SparksDuplicateSeries
         # A duplicate series within one file, or across two files with matching
         # HELP, is dropped by the gatherer with scrape_error still 0. This

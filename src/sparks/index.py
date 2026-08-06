@@ -29,11 +29,16 @@ nonsense, and a `_total` suffix would invite exactly that.
 
 import logging
 import math
+from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sparks import shared, summary
+
+if TYPE_CHECKING:  # only for the annotation; spool imports nothing from here
+    from sparks import spool
 
 LOG = logging.getLogger("sparks")
 
@@ -42,6 +47,25 @@ FILENAME = "sparks_runs.prom"
 
 INFO = "sparks_run_info"
 INFO_HELP = "Identity of a completed training run. Always 1."
+
+QUEUE_FILENAME = "sparks_queue.prom"
+"""The live queue, beside the permanent run index and deliberately not in it."""
+
+QUEUE_INFO = "sparks_queue_job_info"
+QUEUE_INFO_HELP = "Identity and state of a job in the queue. Always 1."
+QUEUE_DEPTH = "sparks_queue_depth"
+QUEUE_DEPTH_HELP = "Jobs in each state."
+QUEUE_SUBMITTED = "sparks_queue_job_submitted_timestamp_seconds"
+QUEUE_SUBMITTED_HELP = "Unix time the job was submitted."
+QUEUE_STARTED = "sparks_queue_job_started_timestamp_seconds"
+QUEUE_STARTED_HELP = "Unix time the job's container started, absent until it does."
+QUEUE_HEARTBEAT = "sparks_queue_runner_heartbeat_timestamp_seconds"
+QUEUE_HEARTBEAT_HELP = "Unix time the runner last completed a pass over the queue."
+
+LIVE_STATES = ("queued", "building", "running")
+"""Always published, even at zero. Spelled out rather than imported from spool
+to keep this module's dependency one-way: spool is about the filesystem, this is
+about the text format, and the run index half of this file predates both."""
 
 
 @dataclass(frozen=True)
@@ -182,11 +206,85 @@ def render(runs: Iterable[summary.Summary]) -> str:
     return "".join(f"{line}\n" for line in lines)
 
 
+def render_queue(entries: Iterable["spool.Entry"], heartbeat: float) -> str:
+    """The queue as it stands right now.
+
+    Unlike the run index this is a *live* view that is rewritten every tick, so
+    a job appears and disappears from it. That is the opposite of the run index,
+    whose whole point is that rows never go away, and the two are separate files
+    for exactly that reason: mixing a churning series into the permanent one
+    would put both on the same retention.
+
+    `heartbeat` is written unconditionally, including on an empty queue. It is
+    the only thing that can distinguish a box with nothing to do from a runner
+    that died, and those need different people looking at them.
+    """
+    jobs = list(entries)
+    lines: list[str] = []
+    if jobs:
+        lines += _family(QUEUE_INFO, QUEUE_INFO_HELP)
+        lines += [
+            _sample(
+                QUEUE_INFO,
+                {
+                    "job_id": e.job.job_id,
+                    "name": e.job.name,
+                    "user": e.job.user,
+                    "state": e.state.state,
+                    # Present and empty rather than omitted before a build:
+                    # changing the label SET between scrapes creates a second
+                    # series, and every join against the first then breaks.
+                    "image": e.state.image or "",
+                    "run_id": e.state.run_id or "",
+                },
+                1.0,
+            )
+            for e in jobs
+        ]
+    lines += _family(QUEUE_DEPTH, QUEUE_DEPTH_HELP)
+    counted = Counter(e.state.state for e in jobs)
+    # The live states always, so an alert can say "queued > 0 and running == 0"
+    # without `or vector(0)` in the one situation the expression exists for.
+    for state in (*LIVE_STATES, *sorted(set(counted) - set(LIVE_STATES))):
+        lines += [_sample(QUEUE_DEPTH, {"state": state}, counted[state])]
+    stamps: tuple[tuple[str, str, Callable[[spool.Entry], float | None]], ...] = (
+        (QUEUE_SUBMITTED, QUEUE_SUBMITTED_HELP, lambda e: e.job.submitted_unix),
+        (QUEUE_STARTED, QUEUE_STARTED_HELP, lambda e: e.state.started_unix),
+    )
+    for name, help_text, when in stamps:
+        stamped = [(e.job.job_id, when(e)) for e in jobs]
+        present = [(job_id, v) for job_id, v in stamped if v is not None]
+        if not present:
+            continue
+        lines += _family(name, help_text)
+        lines += [_sample(name, {"job_id": job_id}, v) for job_id, v in present]
+    lines += _family(QUEUE_HEARTBEAT, QUEUE_HEARTBEAT_HELP)
+    lines += [_sample(QUEUE_HEARTBEAT, {}, heartbeat)]
+    return "".join(f"{line}\n" for line in lines)
+
+
+def publish_queue(
+    entries: Iterable["spool.Entry"], target: Path, heartbeat: float
+) -> None:
+    """Rewrite the queue's `.prom` file.
+
+    No lock, unlike `rebuild`: there is exactly one runner and it is the only
+    writer of this file, so the read-modify-write hazard the run index has does
+    not exist here. The write is still atomic, because node_exporter reads it
+    concurrently.
+    """
+    summary.write_atomically(target, lambda: render_queue(entries, heartbeat))
+
+
 def _family(name: str, help_text: str) -> list[str]:
     return [f"# HELP {name} {help_text}", f"# TYPE {name} gauge"]
 
 
 def _sample(name: str, labels: dict[str, str], value: float) -> str:
+    """A sample line. Empty braces are omitted rather than written as `{}`,
+    which not every parser in the chain accepts."""
+    if not labels:
+        return f"{name} {_number(value)}"
     pairs = ",".join(f'{key}="{_escape(v)}"' for key, v in labels.items())
     return f"{name}{{{pairs}}} {_number(value)}"
 

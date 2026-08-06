@@ -9,15 +9,24 @@ from pathlib import Path
 
 
 def new_run_id(
-    name: str, user: str, when: float | None = None, attempt: int = 0
+    name: str,
+    user: str,
+    when: float | None = None,
+    attempt: int = 0,
+    prefix: str = "run",
 ) -> str:
-    """`run-YYYYmmdd-HHMMSS-<user>-<name>`, chronological as a string.
+    """`<prefix>-YYYYmmdd-HHMMSS-<user>-<name>`, chronological as a string.
 
     The username is what makes a cross-user collision structurally impossible
     rather than merely unlikely, and usernames are unique on a box. Seconds
     close the same-user window to one second. The attempt suffix is the
     tie-break for one person launching the same name twice in one second, and
-    `shared.reserve_run_dir` is what decides it, atomically.
+    `shared.reserve_dir` is what decides it, atomically.
+
+    `prefix` distinguishes a queued job from the run it eventually produces.
+    They are deliberately the same shape: the pair is read side by side in the
+    queue listing, and a different scheme for each would make that harder to
+    scan for no gain.
 
     `when=0.0` is a real instant, not "unset": `when or time.time()` would have
     silently ignored the epoch.
@@ -25,7 +34,7 @@ def new_run_id(
     moment = time.time() if when is None else when
     stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(moment))
     tie = f"-{attempt + 1}" if attempt else ""
-    return f"run-{stamp}-{slug(user, 'unknown')}-{slug(name, 'run')}{tie}"
+    return f"{prefix}-{stamp}-{slug(user, 'unknown')}-{slug(name, 'run')}{tie}"
 
 
 def slug(name: str, fallback: str = "") -> str:

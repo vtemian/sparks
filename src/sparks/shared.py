@@ -32,7 +32,7 @@ MAX_TEXT = 256
 Free text (a command, an error) passes a larger explicit limit."""
 
 
-def make_dir(path: Path) -> Path:
+def make_dir(path: Path, mode: int = DIR_MODE) -> Path:
     """Create a directory both group members can always use.
 
     The chmod is separate from the mkdir because mkdir's mode is masked by the
@@ -43,37 +43,51 @@ def make_dir(path: Path) -> Path:
     `suppress(OSError)` on the chmod is load-bearing and measured: chmod on a
     directory another user owns is EPERM, and without the suppression the second
     user's run dies on a directory the first user created.
+
+    `mode` applies to `path` alone; parents created on the way get the default.
+    The one caller that passes something else is the queue root, which needs the
+    sticky bit and whose parents emphatically do not.
     """
     if not path.parent.is_dir():
         make_dir(path.parent)
     with contextlib.suppress(FileExistsError):
         path.mkdir()
     with contextlib.suppress(OSError):
-        os.chmod(path, DIR_MODE)
+        os.chmod(path, mode)
     return path
 
 
-def reserve_run_dir(runs_dir: Path, name: str, user: str) -> tuple[str, Path]:
-    """Claim a run id by creating its directory.
+def reserve_dir(
+    parent: Path,
+    name: str,
+    user: str,
+    prefix: str = "run",
+    when: float | None = None,
+) -> tuple[str, Path]:
+    """Claim an id by creating its directory.
 
     `mkdir` raising `FileExistsError` is the collision check, and it is the only
     *hard* uniqueness guarantee available: it is atomic, so two users starting
     in the same second get two distinct directories rather than one shared one.
     The attempt suffix breaks the tie for one person launching the same name
     twice in a second.
+
+    `prefix` is `run` for a run and `job` for a queued job. The two share this
+    function because they share the hazard: two accounts, one directory, one
+    second.
     """
-    make_dir(runs_dir)
+    make_dir(parent)
     for attempt in range(1000):
-        run_id = new_run_id(name, user, attempt=attempt)
-        run_dir = runs_dir / run_id
+        reserved = new_run_id(name, user, when=when, attempt=attempt, prefix=prefix)
+        directory = parent / reserved
         try:
-            run_dir.mkdir()
+            directory.mkdir()
         except FileExistsError:
             continue
         with contextlib.suppress(OSError):
-            os.chmod(run_dir, DIR_MODE)
-        return run_id, run_dir
-    raise RuntimeError(f"no free run id under {runs_dir} for {name!r}")
+            os.chmod(directory, DIR_MODE)
+        return reserved, directory
+    raise RuntimeError(f"no free {prefix} id under {parent} for {name!r}")
 
 
 @contextmanager

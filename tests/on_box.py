@@ -336,8 +336,8 @@ def _same_second_collision(report: Report, shared_dir: Path) -> None:
     """The only hard uniqueness guarantee is mkdir raising EEXIST. Two reserves
     in one second must produce two directories, not one shared one."""
     runs = shared_dir / "runs"
-    first_id, first = shared.reserve_run_dir(runs, "onbox-collide", "tester")
-    second_id, second = shared.reserve_run_dir(runs, "onbox-collide", "tester")
+    first_id, first = shared.reserve_dir(runs, "onbox-collide", "tester")
+    second_id, second = shared.reserve_dir(runs, "onbox-collide", "tester")
     report.expect(
         first != second and first_id != second_id,
         "two reserves in one second get two directories",

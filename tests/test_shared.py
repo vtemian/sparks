@@ -59,25 +59,25 @@ def test_make_dir_heals_a_tree_left_group_unreadable(tmp_path: Path) -> None:
     assert mode_of(d) == shared.DIR_MODE
 
 
-# -- reserve_run_dir ---------------------------------------------------------
+# -- reserve_dir -----------------------------------------------------------
 
 
-def test_reserve_run_dir_creates_a_2775_directory(tmp_path: Path) -> None:
-    run_id, run_dir = shared.reserve_run_dir(tmp_path / "runs", "e0", "alice")
+def test_reserve_dir_creates_a_2775_directory(tmp_path: Path) -> None:
+    run_id, run_dir = shared.reserve_dir(tmp_path / "runs", "e0", "alice")
     assert run_dir.is_dir()
     assert run_dir.name == run_id
     assert mode_of(run_dir) == shared.DIR_MODE
 
 
-def test_reserve_run_dir_disambiguates_a_same_second_collision(
+def test_reserve_dir_disambiguates_a_same_second_collision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Freeze the clock so both reservations produce the same base id; the
     # atomic mkdir is what forces two distinct directories.
     monkeypatch.setattr("sparks.run.time.time", lambda: 1754300000.0)
     runs = tmp_path / "runs"
-    first_id, first_dir = shared.reserve_run_dir(runs, "e0", "alice")
-    second_id, second_dir = shared.reserve_run_dir(runs, "e0", "alice")
+    first_id, first_dir = shared.reserve_dir(runs, "e0", "alice")
+    second_id, second_dir = shared.reserve_dir(runs, "e0", "alice")
     assert first_id != second_id
     assert first_dir.is_dir() and second_dir.is_dir()
     assert second_id.endswith("-2")

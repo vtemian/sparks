@@ -51,6 +51,15 @@ METRICS: dict[str, str] = {
     "sparks_run_gpu_nvml_energy_joules": "GPU energy per NVML",
     "sparks_run_gpu_firmware_energy_joules": "GPU energy per the firmware counter",
     "sparks_run_final_loss": "final training loss, absent when the run produced none",
+    # The live queue, rewritten every runner tick. Separate from the run index
+    # above because these series come and go and those never do.
+    "sparks_queue_job_info": "1, carrying a queued job's identity and state as labels",
+    "sparks_queue_depth": "jobs in each state, published at 0 for the live states",
+    "sparks_queue_job_submitted_timestamp_seconds": "unix seconds it was submitted",
+    "sparks_queue_job_started_timestamp_seconds": "unix seconds its container started",
+    "sparks_queue_runner_heartbeat_timestamp_seconds": (
+        "unix seconds the runner last completed a pass, the proof it is alive"
+    ),
 }
 
 LIFECYCLE = frozenset(

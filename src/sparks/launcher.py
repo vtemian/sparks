@@ -8,6 +8,7 @@ child is reaped as the end of the run.
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,6 +48,8 @@ def launch(
     url: str | None,
     baseline_seconds: float = BASELINE_SECONDS,
     sampler: Sampler | None = None,
+    on_reserved: Callable[[str, Path], None] | None = None,
+    sha: str | None = None,
 ) -> Launched:
     """Run `command` as a training run and leave a permanent record of it.
 
@@ -56,6 +59,18 @@ def launch(
     `sampler` is injectable so a test can drive real energy arithmetic against a
     fake sysfs tree: on a development machine `Sampler.detect()` reads zeros and
     every energy assertion is 0.0 == 0.0, which let three mutations survive.
+
+    `on_reserved` is called with the run id as soon as it exists, which is
+    before the baseline sampling and long before this returns. A supervisor of
+    this process cannot otherwise learn the id until the run is over - the id is
+    printed at the end - and "which run is this job" is a question worth
+    answering while it is still running.
+
+    `sha` overrides the commit recorded for the run. It exists because the
+    default - `git_sha()` of the working directory - is right for a person
+    running this in their checkout and WRONG for the queue, which runs it from
+    the framework's own directory and would otherwise record sparks' commit as
+    though it were the training code's.
     """
     # Sanitise the durable copies at this one boundary. The child is still
     # exec'd with the ORIGINAL argv below, which round-trips through execve
@@ -63,11 +78,19 @@ def launch(
     # --name can neither poison the shared index nor crash the wrapper.
     user = shared.clean(current_user())
     name = shared.clean(name, "run")
+    sha = git_sha() if sha is None else shared.clean(sha, "unknown")
     command_record = [shared.clean(arg, "", limit=4000) for arg in command]
 
     # mkdir raising EEXIST is the only atomic uniqueness guarantee, and the
     # chmod inside heals a tree left group-unreadable by an earlier umask.
-    run_id, run_dir = shared.reserve_run_dir(shared_dir / "runs", name, user)
+    run_id, run_dir = shared.reserve_dir(shared_dir / "runs", name, user)
+    if on_reserved is not None:
+        # Never allowed to sink the run: whoever wanted to be told has a worse
+        # view of the world if this fails, but the run itself is unaffected.
+        try:
+            on_reserved(run_id, run_dir)
+        except Exception as e:
+            LOG.warning("sparks: could not announce %s: %s", run_id, e)
 
     if sampler is None:
         sampler = Sampler.detect()
@@ -82,7 +105,7 @@ def launch(
     gpu_nvml_start = sampler.gpu_nvml_joules()
     gpu_firmware_start = sampler.gpu_firmware_joules()
 
-    metrics = _supervisor_metrics(run_id, name, url)
+    metrics = _supervisor_metrics(run_id, name, url, sha)
     if metrics is not None:
         metrics.begin()
 
@@ -99,7 +122,7 @@ def launch(
         # never staled: a permanent phantom run on the dashboard that never
         # ends and never gets a status.
         LOG.error("sparks: could not run %s: %s", command, e)
-        _record_failed_launch(run_dir, run_id, name, user, command_record, str(e))
+        _record_failed_launch(run_dir, run_id, name, user, command_record, str(e), sha)
         if metrics is not None:
             metrics.end("crashed")
         _rebuild(shared_dir)
@@ -143,7 +166,7 @@ def launch(
             run_id=run_id,
             run_name=name,
             user=user,
-            git_sha=git_sha(),
+            git_sha=sha,
             command=command_record,
             started_unix=completed.started_unix,
             ended_unix=completed.ended_unix,
@@ -188,7 +211,9 @@ def launch(
     return Launched(run_id, status, completed.outcome.wrapper_exit, run_dir)
 
 
-def _supervisor_metrics(run_id: str, name: str, url: str | None) -> RunMetrics | None:
+def _supervisor_metrics(
+    run_id: str, name: str, url: str | None, sha: str
+) -> RunMetrics | None:
     """The supervisor's emitter, which owns only metrics.LIFECYCLE.
 
     The child holds its own via `emit.from_env` and owns everything else. Two
@@ -200,7 +225,7 @@ def _supervisor_metrics(run_id: str, name: str, url: str | None) -> RunMetrics |
     return RunMetrics(
         run_id=run_id,
         url=url,
-        info={"run_name": name, "git_sha": git_sha()},
+        info={"run_name": name, "git_sha": sha},
     )
 
 
@@ -229,6 +254,7 @@ def _record_failed_launch(
     user: str,
     command: list[str],
     error: str,
+    sha: str,
 ) -> None:
     now = time.time()
     summary.save(
@@ -236,7 +262,7 @@ def _record_failed_launch(
             run_id=run_id,
             run_name=name,
             user=user,
-            git_sha=git_sha(),
+            git_sha=sha,
             command=list(command),
             started_unix=now,
             ended_unix=now,

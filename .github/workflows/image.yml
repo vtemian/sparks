@@ -1,0 +1,82 @@
+# Publish the queue runner image.
+#
+# The box pulls this by tag rather than building it, which keeps a laptop out
+# of the provisioning path: converging sparkup should not require the machine
+# doing the converging to have the source, a working toolchain, or the right
+# architecture.
+#
+# arm64 is not an afterthought here - the DGX Spark is aarch64, and amd64 is
+# built only so the image can be tried on a normal machine.
+
+name: image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - Dockerfile
+      - pyproject.toml
+      - uv.lock
+      - .github/workflows/image.yml
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Not on a pull request: a fork must not be able to push to the registry,
+      # and the build is worth running either way.
+      - name: Log in to the registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Work out the tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The image is only useful if the thing inside it runs. A tag that pushes
+      # a broken binary to the box is worse than a failed build.
+      - name: Check the image actually runs
+        if: github.event_name != 'pull_request'
+        run: |
+          docker run --rm "${REGISTRY}/${IMAGE}:sha-${GITHUB_SHA}" --help > /dev/null
+          docker run --rm --entrypoint docker "${REGISTRY}/${IMAGE}:sha-${GITHUB_SHA}" --version

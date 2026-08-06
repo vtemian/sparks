@@ -51,6 +51,17 @@ class Box:
     def runs_dir(self) -> Path:
         return self.shared_dir / "runs"
 
+    @property
+    def queue_dir(self) -> Path:
+        """Derived rather than declared, exactly like `runs_dir`.
+
+        Not a guess of the kind this module refuses to make: the box states
+        where its shared tree is, and this is a fixed place inside it. Adding a
+        field would make every box provisioned by an older sparkup read as
+        Malformed for no gain.
+        """
+        return self.shared_dir / "queue"
+
 
 def load(path: Path | None = None) -> Box | None:
     """The contract, or None when this box has none.
