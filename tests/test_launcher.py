@@ -5,12 +5,13 @@ ended, and a fake would only confirm our own assumptions.
 """
 
 import json
+import os
 import signal
 from pathlib import Path
 
 import pytest
 
-from sparks import summary
+from sparks import energy, summary
 from sparks.energy import Sampler
 from sparks.launcher import launch
 
@@ -138,6 +139,91 @@ def test_energy_deltas_land_in_the_right_fields_with_an_injected_sampler(
     assert e["gpu_nvml_joules"] == pytest.approx(5.0)
     assert e["baseline_seconds"] == 0.0
     assert float(e["window_seconds"]) >= 0.0
+
+
+class TestStoppedBeforeItStarted:
+    """The baseline is a minute long and the child does not exist yet.
+
+    `Supervisor` installs its signal handlers when it runs, so until then a
+    SIGTERM takes the default disposition and kills the wrapper outright. A job
+    aborted 25 seconds after starting did exactly that on the box: the run
+    directory was reserved, then left empty -- no summary, no index row, and
+    nothing to say why. The queue called it aborted; the run said nothing.
+    """
+
+    class StoppedMidBaseline(Sampler):
+        """Sends the signal from inside the baseline, where the abort landed."""
+
+        def __init__(self, signum: int) -> None:
+            super().__init__(nvml=lambda: 0.0, hwmon=None)
+            self.signum = signum
+
+        def baseline(self, seconds: float) -> energy.Baseline:
+            os.kill(os.getpid(), self.signum)
+            raise AssertionError("the signal should have interrupted the baseline")
+
+    def sampler_interrupted_by(self, signum: int) -> Sampler:
+        return self.StoppedMidBaseline(signum)
+
+    def test_the_run_is_recorded_as_cancelled(self, tmp_path: Path) -> None:
+        result = launch(
+            ["true"],
+            name="stopped",
+            shared_dir=tmp_path,
+            url=None,
+            baseline_seconds=60.0,
+            sampler=self.sampler_interrupted_by(signal.SIGTERM),
+        )
+        assert result.status == "cancelled"
+        recorded = read_summary(tmp_path / "runs" / result.run_id)
+        assert recorded["status"] == "cancelled"
+        assert recorded["signal"] == "SIGTERM"
+
+    def test_nothing_measured_is_reported_as_unknown_not_zero(
+        self, tmp_path: Path
+    ) -> None:
+        """A measured zero and an absent measurement are different claims."""
+        result = launch(
+            ["true"],
+            name="stopped",
+            shared_dir=tmp_path,
+            url=None,
+            baseline_seconds=60.0,
+            sampler=self.sampler_interrupted_by(signal.SIGTERM),
+        )
+        recorded = read_summary(tmp_path / "runs" / result.run_id)
+        e = recorded["energy"]
+        assert isinstance(e, dict)
+        assert e["total_joules"] is None
+        assert e["gpu_nvml_joules"] is None
+        # No exit code either: nothing ran, so there is no status to report.
+        assert recorded["exit_code"] is None
+
+    def test_ctrl_c_during_the_baseline_is_the_same_story(self, tmp_path: Path) -> None:
+        result = launch(
+            ["true"],
+            name="stopped",
+            shared_dir=tmp_path,
+            url=None,
+            baseline_seconds=60.0,
+            sampler=self.sampler_interrupted_by(signal.SIGINT),
+        )
+        assert read_summary(tmp_path / "runs" / result.run_id)["signal"] == "SIGINT"
+
+    def test_the_handlers_do_not_outlive_the_baseline(self, tmp_path: Path) -> None:
+        """`Supervisor` must install its own over a clean slate: its handler
+        forwards to the child and must never raise, which is the opposite of
+        what the baseline needs."""
+        before = signal.getsignal(signal.SIGTERM)
+        launch(
+            ["true"],
+            name="fine",
+            shared_dir=tmp_path,
+            url=None,
+            baseline_seconds=0.0,
+            sampler=Sampler(nvml=lambda: 0.0, hwmon=None),
+        )
+        assert signal.getsignal(signal.SIGTERM) is before
 
 
 def test_duration_is_the_monotonic_delta_not_the_wall_clock_pair(
