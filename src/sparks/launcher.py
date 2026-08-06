@@ -6,9 +6,11 @@ the wall clock as close to the child as possible, and treat the moment the
 child is reaped as the end of the run.
 """
 
+import contextlib
 import logging
+import signal
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -94,16 +96,44 @@ def launch(
 
     if sampler is None:
         sampler = Sampler.detect()
-    # Before anything expensive, and read as a counter delta from the same
-    # counters the run is measured against. The GPU rail during this window is
-    # what tells a quiet box from a contended one whose baseline is not ours.
-    base = sampler.baseline(baseline_seconds)
-    # Monotonic, not time.time(): NTP can step the wall clock mid-run, the exact
-    # hazard duration_seconds already avoids. The window brackets the whole run.
-    energy_read_at = time.monotonic()
-    energy_start = sampler.total_joules()
-    gpu_nvml_start = sampler.gpu_nvml_joules()
-    gpu_firmware_start = sampler.gpu_firmware_joules()
+    # The minute before the child exists is the one window this wrapper does not
+    # otherwise defend. `Supervisor` installs its handlers when it runs, so a
+    # SIGTERM arriving during the baseline takes the default disposition and
+    # kills the wrapper outright -- leaving a reserved run directory with no
+    # summary, no index row and no explanation. A queued job aborted 25 seconds
+    # after it started did exactly that on the box.
+    try:
+        with _interruptible():
+            # Before anything expensive, and read as a counter delta from the
+            # same counters the run is measured against. The GPU rail during
+            # this window is what tells a quiet box from a contended one whose
+            # baseline is not ours.
+            base = sampler.baseline(baseline_seconds)
+            # Monotonic, not time.time(): NTP can step the wall clock mid-run,
+            # the exact hazard duration_seconds already avoids. The window
+            # brackets the whole run.
+            energy_read_at = time.monotonic()
+            energy_start = sampler.total_joules()
+            gpu_nvml_start = sampler.gpu_nvml_joules()
+            gpu_firmware_start = sampler.gpu_firmware_joules()
+    except _Interrupted as e:
+        LOG.warning("sparks: %s before the run started; recording it stopped", e)
+        _record_failed_launch(
+            run_dir,
+            run_id,
+            name,
+            user,
+            command_record,
+            f"stopped during the {baseline_seconds:.0f}s baseline",
+            sha,
+            status="cancelled",
+            # Nothing ran, so there is no exit code to report. `cancelled` with
+            # the signal that caused it is the whole truth about this run.
+            exit_code=None,
+            signal_name=str(e),
+        )
+        _rebuild(shared_dir)
+        return Launched(run_id, "cancelled", 128 + e.signum, run_dir)
 
     metrics = _supervisor_metrics(run_id, name, url, sha)
     if metrics is not None:
@@ -247,6 +277,42 @@ def _rebuild(shared_dir: Path) -> None:
         LOG.warning("sparks: could not rebuild the run index: %s", e)
 
 
+class _Interrupted(Exception):
+    """A stop signal arrived before there was a child to forward it to."""
+
+    def __init__(self, signum: int) -> None:
+        self.signum = signum
+        super().__init__(signal.Signals(signum).name)
+
+
+@contextlib.contextmanager
+def _interruptible() -> Iterator[None]:
+    """Turn SIGINT and SIGTERM into an exception for the duration.
+
+    Raising from a handler is safe here and nowhere near `Supervisor`: there is
+    no child to orphan, nothing to reap, and the main thread is asleep in the
+    baseline. It is the opposite choice from `process.py`'s handler, which must
+    never raise, and the difference is exactly that one has a child and this
+    does not.
+
+    Handlers are restored on the way out, so `Supervisor` installs its own over
+    a clean slate.
+    """
+
+    def stop(signum: int, _frame: object) -> None:
+        raise _Interrupted(signum)
+
+    previous = {
+        signum: signal.signal(signum, stop)
+        for signum in (signal.SIGINT, signal.SIGTERM)
+    }
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
 def _record_failed_launch(
     run_dir: Path,
     run_id: str,
@@ -255,6 +321,9 @@ def _record_failed_launch(
     command: list[str],
     error: str,
     sha: str,
+    status: str = "crashed",
+    exit_code: int | None = 127,
+    signal_name: str | None = None,
 ) -> None:
     now = time.time()
     summary.save(
@@ -267,9 +336,9 @@ def _record_failed_launch(
             started_unix=now,
             ended_unix=now,
             duration_seconds=0.0,
-            status="crashed",
-            exit_code=127,
-            signal=None,
+            status=status,
+            exit_code=exit_code,
+            signal=signal_name,
             escalated_to_sigkill=False,
             # The command never ran, so nothing was measured: every counter is
             # unknown (None, not 0.0, which would claim a measured zero) and the
