@@ -6,17 +6,12 @@ from sparks import cli
 from sparks.cli import build_parser, deep_link
 
 
-def test_demo_takes_a_name_and_a_seed() -> None:
-    args = build_parser().parse_args(["demo", "--name", "e0", "--seed", "3"])
-    assert (args.name, args.seed) == ("e0", 3)
-
-
 def test_no_url_is_left_unset_rather_than_guessed() -> None:
     # It used to default to http://127.0.0.1:9090, which is a guess about the
     # box. The provisioned value comes from /etc/sparks/box.toml now, and unset
     # has to stay distinguishable from `--url ""`, which means "no telemetry".
-    assert build_parser().parse_args(["demo"]).url is None
-    assert build_parser().parse_args(["--url", "", "demo"]).url == ""
+    assert build_parser().parse_args(["run", "--", "true"]).url is None
+    assert build_parser().parse_args(["--url", "", "run", "--", "true"]).url == ""
 
 
 def test_the_deep_link_starts_a_minute_early() -> None:
@@ -70,13 +65,6 @@ def test_an_unprovisioned_box_refuses_to_run_a_job(
     assert "no-such-box.toml" in err
     assert "sparkup" in err
     assert "--shared-dir" in err
-
-
-def test_an_unprovisioned_box_refuses_the_demo_too(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    assert cli.main(["demo"]) == cli.EX_CONFIG
-    assert "not configured for sparks" in capsys.readouterr().err
 
 
 def test_explicit_paths_run_on_a_box_sparkup_does_not_manage(tmp_path: Path) -> None:

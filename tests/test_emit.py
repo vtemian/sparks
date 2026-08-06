@@ -215,8 +215,8 @@ def test_a_child_cannot_write_a_supervisor_series() -> None:
 
 
 def test_a_standalone_run_may_still_write_both_halves() -> None:
-    # `sparks demo` has no child and owns everything. The guard is asymmetric
-    # for exactly this reason; making it symmetric breaks the demo.
+    # A bare `RunMetrics` has no child and owns everything. The guard is
+    # asymmetric for exactly this reason; making it symmetric breaks that.
     m = make()
     m.begin()
     m.log(loss=0.5)

@@ -14,16 +14,7 @@ directory nothing reads. On a machine sparkup does not manage, say where things 
 sparks run --shared-dir /tmp/runs --url "" -- python train.py   # empty url: no telemetry
 ```
 
-## Watch a synthetic run
-
-```sh
-sparks demo --name acceptance
-```
-
-Prints a run id and a Grafana link. Loss, held-out loss, gradient norm and learning rate per
-parameter group, throughput, and the GPU row underneath.
-
-## Instrument a real one
+## Instrument a run
 
 ```python
 from sparks.emit import RunMetrics

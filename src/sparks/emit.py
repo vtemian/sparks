@@ -176,8 +176,8 @@ class RunMetrics:
         split is enforced here rather than by convention because the failure is
         silent: the batch that carried the loss simply never lands.
         """
-        # Asymmetric on purpose. A standalone run (`sparks demo`) has no child
-        # and legitimately owns both halves, so the supervisor side is not
+        # Asymmetric on purpose. A standalone `RunMetrics` has no child and
+        # legitimately owns both halves, so the supervisor side is not
         # constrained. The child is: the supervisor is definitely writing the
         # lifecycle series, so a child writing them too is a guaranteed
         # collision rather than a possible one.

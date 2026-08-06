@@ -93,8 +93,6 @@ rather than degrading. Terminal state lives on `training_run_end_timestamp_secon
 
 ## Traps
 
-- **`random.Random((seed, step))` raises.** A tuple is not a supported seed type. `demo.curve` mixes
-  the two into one int.
 - **`# noqa: BLE001` fails `ruff check` here.** `BLE` is not in the `select` list, so `RUF100` flags
   the directive as unused. The broad `except` clauses carry plain comments instead.
 - **`prometheus_remote_writer` ships no `py.typed`**, so its import carries
@@ -272,9 +270,9 @@ Two things came out of that and must not be undone:
 - **There is no `send_now`.** There is no safe moment for a second writer, so the API does not offer
   one. The only send path is the pump, plus `_mark_stale` after the pump has stopped.
 - **`_refuse_if_not_ours` is asymmetric on purpose.** A child may not write `LIFECYCLE` or
-  `training_run_active`. The supervisor side is deliberately unconstrained, because `sparks demo` is
-  a single process with no child that legitimately owns both halves; making the guard symmetric
-  breaks it.
+  `training_run_active`. The supervisor side is deliberately unconstrained, because a standalone
+  `RunMetrics` (no child emitter) legitimately owns both halves; making the guard symmetric breaks
+  that.
 
 `tests/test_live.py::test_a_crashed_run_still_lands_its_whole_record` is the regression test, and it
 is the only kind that could have caught this. Reintroducing the bug makes it fail with

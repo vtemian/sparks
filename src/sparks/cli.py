@@ -449,21 +449,16 @@ def _without_host(argv: list[str]) -> list[str]:
 
 
 class _Settings:
-    """The three box-shaped values this invocation needs, after the flags and the
-    contract have been reconciled."""
+    """The three box-shaped values `run` needs, after the flags and the contract
+    have been reconciled."""
 
-    def __init__(self, shared_dir: Path | None, url: str, grafana: str) -> None:
+    def __init__(self, shared_dir: Path, url: str, grafana: str) -> None:
+        self.shared_dir = shared_dir
         self.url = url
         self.grafana = grafana
-        self._shared_dir = shared_dir
-
-    @property
-    def shared_dir(self) -> Path:
-        assert self._shared_dir is not None, "only `run` asks, and it required it"
-        return self._shared_dir
 
 
-def _settings(args: argparse.Namespace, *, wants_shared: bool) -> _Settings:
+def _settings(args: argparse.Namespace) -> _Settings:
     """Flags win, then the contract. Nothing is guessed except the Grafana link.
 
     Raises rather than returning a partial answer: a run recorded into a
@@ -471,24 +466,21 @@ def _settings(args: argparse.Namespace, *, wants_shared: bool) -> _Settings:
     a default here is exactly how that happens.
     """
     contract = box.load()
-    # getattr: --shared-dir belongs to `run`, so the demo namespace lacks it.
-    given = getattr(args, "shared_dir", None)
-    shared = Path(given) if given else None
+    shared = Path(args.shared_dir) if args.shared_dir else None
     url = args.url
     if contract is None:
         missing = [
             n for n, v in (("--shared-dir", shared), ("--url", url)) if v is None
         ]
-        if wants_shared and missing:
+        if missing:
             raise box.NotProvisioned(_unprovisioned("run", missing))
-        if not wants_shared and url is None:
-            raise box.NotProvisioned(_unprovisioned("demo", ["--url"]))
     else:
         complaints = box.preflight(contract)
         if complaints:
             raise box.NotProvisioned(_mismatched(complaints))
         shared = shared or contract.shared_dir
         url = contract.prometheus_url if url is None else url
+    assert shared is not None  # unprovisioned path raised above when missing
     return _Settings(
         shared_dir=shared,
         url=url or "",
