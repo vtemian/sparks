@@ -3,7 +3,8 @@
 
 The nesting is deliberate and reads oddly the first time:
 
-    python -m sparks.fire.supervise -- docker run ... <image> <command>
+    python -m sparks.fire.supervise -- python -m sparks.fire.contain ...
+        <image> <command>
 
 Supervision stays OUTSIDE the training container so that a project's image does
 not have to contain sparks. The alternative - sparks as every image's entrypoint
@@ -128,13 +129,12 @@ class Docker:
     with the host-gateway form and passes the same one down."""
     supervise_module: str = "sparks.fire.supervise"
     gpus: str = "all"
-    """Passed to `docker run --gpus`, or empty to omit the flag entirely.
+    """Passed to contain as `--gpus`, or empty to omit GPU requests entirely.
 
     Omitting matters: on a daemon with no nvidia runtime `--gpus all` is not
     ignored, it is a hard error, so a box without a GPU could not run a job at
     all. That box is a real one - it is the laptop this was written on.
     """
-    docker_bin: str = "docker"
     extra_groups: list[int] = field(default_factory=list)
 
     def pull(self, image: str, log_path: Path) -> None:
@@ -272,7 +272,7 @@ class Docker:
     def container_argv(
         self, entry: spool.Entry, image: str, cidfile: Path, uid: int, gid: int
     ) -> list[str]:
-        """`docker run` for one job.
+        """`python -m sparks.fire.contain` for one job.
 
         Every mount and flag here is chosen by the queue. The job file says what
         image and what command, and nothing else: a job that could name its own
@@ -280,13 +280,9 @@ class Docker:
         thing this list is guarding.
         """
         return [
-            self.docker_bin,
-            "run",
-            "--rm",
-            # PID 1 in a container does not get default signal dispositions, so
-            # without an init a training script that installs no SIGTERM handler
-            # ignores the abort entirely and waits out the grace period.
-            "--init",
+            sys.executable,
+            "-m",
+            "sparks.fire.contain",
             "--name",
             f"{CONTAINER_PREFIX}-{entry.job.job_id}",
             "--cidfile",
@@ -294,29 +290,12 @@ class Docker:
             *(["--gpus", self.gpus] if self.gpus else []),
             "--user",
             f"{uid}:{gid}",
-            "--volume",
-            f"{self.shared_dir}:{self.shared_dir}",
-            "--volume",
-            f"{entry.data_dir}:/data:ro",
+            "--shared-dir",
+            str(self.shared_dir),
+            "--data-dir",
+            str(entry.data_dir),
             "--workdir",
             str(self.shared_dir),
-            # THE TRAP, the same one monitoring's compose file documents: inside
-            # a container `localhost` is the container, so a loopback Prometheus
-            # URL reaches nothing. On Linux this alias does not exist unless
-            # this line makes it.
-            "--add-host",
-            "host.docker.internal:host-gateway",
-            # Value-less form: forwards what the supervisor put in our
-            # environment, so the run id the container reports under is the one
-            # the wrapper reserved rather than a second one invented inside.
-            "--env",
-            "SPARKS_RUN_ID",
-            "--env",
-            "SPARKS_PROMETHEUS_URL",
-            "--env",
-            "PYTHONUNBUFFERED=1",
-            "--env",
-            "SPARKS_DATA=/data",
             image,
             *entry.job.command,
         ]

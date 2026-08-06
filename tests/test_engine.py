@@ -40,6 +40,15 @@ def an_entry(tmp_path: Path, command: list[str] | None = None) -> spool.Entry:
 
 
 class TestTheContainerCommand:
+    def test_it_invokes_contain_via_python_minus_m(
+        self, tmp_path: Path, docker: engine.Docker
+    ) -> None:
+        argv = docker.container_argv(
+            an_entry(tmp_path), "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
+        )
+        assert argv[:3] == [sys.executable, "-m", "sparks.fire.contain"]
+        assert "--cidfile" in argv
+
     def test_it_runs_as_the_submitter_not_as_root(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
@@ -53,36 +62,29 @@ class TestTheContainerCommand:
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
         """A job that could name a volume could mount / and be root. The only
-        mount is the one the queue picked."""
+        mount paths are the ones the queue picked."""
         entry = an_entry(tmp_path, ["--volume", "/:/host", "sh"])
         argv = docker.container_argv(
             entry, "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
         )
-        # Only the flags docker itself reads, which is everything before the
-        # image name. What comes after is the container's argv, and the test
-        # below proves the job's tokens land there.
         flags = argv[: argv.index("sha256:abc")]
-        volumes = [flags[i + 1] for i, a in enumerate(flags) if a == "--volume"]
-        assert volumes == [
-            "/srv/spark:/srv/spark",
-            f"{entry.data_dir}:/data:ro",
-        ]
+        assert "--volume" not in flags
+        assert argv[argv.index("--shared-dir") + 1] == "/srv/spark"
+        assert argv[argv.index("--data-dir") + 1] == str(entry.data_dir)
 
-    def test_job_data_is_mounted_read_only_at_slash_data(
+    def test_job_data_dir_is_passed_for_the_read_only_mount(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
         entry = an_entry(tmp_path)
         argv = docker.container_argv(
             entry, "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
         )
-        assert f"{entry.data_dir}:/data:ro" in argv
-        assert "SPARKS_DATA=/data" in argv
-        assert argv[argv.index("SPARKS_DATA=/data") - 1] == "--env"
+        assert argv[argv.index("--data-dir") + 1] == str(entry.data_dir)
 
     def test_the_command_is_passed_after_the_image_so_flags_are_inert(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
-        """Everything a job supplies lands after the image name, where docker
+        """Everything a job supplies lands after the image name, where contain
         treats it as the container's argv rather than as its own options."""
         entry = an_entry(tmp_path, ["--privileged", "sh"])
         argv = docker.container_argv(
@@ -98,7 +100,7 @@ class TestTheContainerCommand:
         )
         image_at = argv.index("sha256:abc")
         flags = argv[:image_at]
-        for forbidden in ("--privileged", "--pid", "--cap-add", "--userns"):
+        for forbidden in ("--privileged", "--pid", "--cap-add", "--userns", "--volume"):
             assert forbidden not in flags
 
     def test_the_gpu_is_attached(self, tmp_path: Path, docker: engine.Docker) -> None:
@@ -107,34 +109,26 @@ class TestTheContainerCommand:
         )
         assert argv[argv.index("--gpus") + 1] == "all"
 
-    def test_an_init_is_used_so_an_abort_reaches_pid_one(
-        self, tmp_path: Path, docker: engine.Docker
-    ) -> None:
-        """PID 1 has no default signal dispositions. Without an init, a training
-        script with no SIGTERM handler ignores the abort completely."""
-        argv = docker.container_argv(
+    def test_gpus_are_omitted_when_not_configured(self, tmp_path: Path) -> None:
+        eng = engine.Docker(
+            shared_dir=Path("/srv/spark"),
+            url="http://host.docker.internal:9090",
+            gpus="",
+        )
+        argv = eng.container_argv(
             an_entry(tmp_path), "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
         )
-        assert "--init" in argv
+        assert "--gpus" not in argv
 
-    def test_the_host_gateway_alias_is_added(
+    def test_host_gateway_is_configured_inside_contain_not_in_argv(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
-        """Inside a container `localhost` is the container. Without this the
-        run's own metrics go nowhere, silently, from the writer's end."""
+        """host.docker.internal is set in contain's HostConfig, not as a CLI
+        flag the job could influence."""
         argv = docker.container_argv(
             an_entry(tmp_path), "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
         )
-        assert argv[argv.index("--add-host") + 1] == "host.docker.internal:host-gateway"
-
-    def test_the_run_id_is_forwarded_rather_than_reinvented(
-        self, tmp_path: Path, docker: engine.Docker
-    ) -> None:
-        argv = docker.container_argv(
-            an_entry(tmp_path), "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
-        )
-        forwarded = [argv[i + 1] for i, a in enumerate(argv) if a == "--env"]
-        assert "SPARKS_RUN_ID" in forwarded
+        assert "host.docker.internal" not in " ".join(argv)
 
 
 class TestTheWholeCommand:
@@ -153,7 +147,8 @@ class TestTheWholeCommand:
         assert argv[0] == sys.executable
         assert argv[1:3] == ["-m", "sparks.fire.supervise"]
         assert "sparks-run" not in argv
-        assert argv[argv.index("--") + 1 : argv.index("--") + 3] == ["docker", "run"]
+        after = argv[argv.index("--") + 1 :]
+        assert after[:3] == [sys.executable, "-m", "sparks.fire.contain"]
 
     def test_url_comes_before_name(
         self, tmp_path: Path, docker: engine.Docker
