@@ -1,11 +1,11 @@
 """sparks — the laptop client.
 
-Submit work to the box queue and then close the laptop. The box runs `fire`;
-job supervision is private (`python -m sparks.fire.supervise`).
+Every user-facing verb talks to the box over ssh. Set SPARKS_HOST (or pass
+--host). The box runs `fire`; job supervision is private
+(`python -m sparks.fire.supervise`).
 
-Laptops set SPARKS_HOST (or pass --host). When host is unset, verbs that can
-run against a local queue directory do so — that path is for the box (after
-ssh) and for unit tests with --shared-dir.
+Hidden verbs (`_queue`, `_cancel`, …, `reserve`, `commit`, `contract`) are the
+server half of that ssh: the client never runs the queue on the laptop.
 """
 
 import argparse
@@ -25,26 +25,19 @@ EX_CONFIG = 78
 
 Command = Callable[[argparse.Namespace, list[str]], int]
 
-# User-facing verbs that talk to the queue. Without a host they need a local
-# queue (contract or --shared-dir); otherwise the error points at SPARKS_HOST.
-_QUEUE_VERBS = frozenset({"queue", "cancel", "abort", "retry", "remove"})
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sparks", description=__doc__)
     sub = parser.add_subparsers(dest="command_name", required=True)
-    _add_queue_commands(sub)
+    _add_client_commands(sub)
+    _add_server_commands(sub)
     return parser
 
 
-def _add_queue_commands(
+def _add_client_commands(
     sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> None:
-    """The queue: submit work and then close the laptop.
-
-    Every user-facing verb takes `--host`. When it is set the whole command is
-    forwarded over ssh rather than each verb having a remote implementation.
-    """
+    """Laptop verbs: always require a host, always ssh to the box."""
     submit = sub.add_parser(
         "submit",
         help="build, push, upload --data, and queue a job on the box",
@@ -95,11 +88,40 @@ def _add_queue_commands(
         _add_host(parser)
         parser.set_defaults(func=func)
 
-    # Plumbing. `submit --host` is several steps against the box and these are
-    # two of them; they are not meant to be typed. See remote.submit_remote.
+
+def _add_server_commands(
+    sub: "argparse._SubParsersAction[argparse.ArgumentParser]",
+) -> None:
+    """On-box handlers the client ssh's into. Not meant to be typed."""
+
+    def shared_dir(parser: argparse.ArgumentParser) -> None:
+        parser.add_argument(
+            "--shared-dir",
+            type=Path,
+            default=None,
+            help=argparse.SUPPRESS,
+        )
+
+    queue = sub.add_parser("_queue", help=argparse.SUPPRESS)
+    queue.add_argument("--all", action="store_true")
+    shared_dir(queue)
+    queue.set_defaults(func=cmd_serve_queue)
+
+    for verb, func in (
+        ("_cancel", cmd_serve_cancel),
+        ("_abort", cmd_serve_abort),
+        ("_retry", cmd_serve_retry),
+        ("_remove", cmd_serve_remove),
+    ):
+        parser = sub.add_parser(verb, help=argparse.SUPPRESS)
+        parser.add_argument("job")
+        shared_dir(parser)
+        parser.set_defaults(func=func)
+
+    # submit --host is several steps; these are two of them.
     reserve = sub.add_parser("reserve", help=argparse.SUPPRESS)
     reserve.add_argument("--name", default="job")
-    reserve.add_argument("--shared-dir", type=Path, default=None)
+    shared_dir(reserve)
     reserve.set_defaults(func=cmd_reserve)
 
     commit = sub.add_parser("commit", help=argparse.SUPPRESS)
@@ -112,27 +134,15 @@ def _add_queue_commands(
     commit.add_argument("command", nargs="+")
     commit.set_defaults(func=cmd_commit)
 
-    # Hidden: inspect the box contract (registry_url and friends).
     contract = sub.add_parser("contract", help=argparse.SUPPRESS)
     contract.set_defaults(func=cmd_contract)
 
 
 def _add_host(parser: argparse.ArgumentParser) -> None:
-    """Which queue, and on which machine.
-
-    Laptops set SPARKS_HOST. On the box (and in unit tests with --shared-dir)
-    host may be unset and the verb runs against the local queue directory.
-    """
     parser.add_argument(
         "--host",
         default=None,
         help=f"the box to talk to over ssh. Defaults to ${remote.HOST_ENV}",
-    )
-    parser.add_argument(
-        "--shared-dir",
-        type=Path,
-        default=None,
-        help="the shared tree whose queue to use. Defaults to the provisioned one",
     )
 
 
@@ -145,11 +155,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _cli_errors(fn: Command) -> Command:
-    """Turn the exceptions a command is allowed to raise into exit codes.
-
-    Lives on the command, not in `main`: each verb owns its failure mode, and
-    `main` only parses and dispatches.
-    """
+    """Turn the exceptions a command is allowed to raise into exit codes."""
 
     def wrap(args: argparse.Namespace, argv: list[str]) -> int:
         try:
@@ -164,74 +170,76 @@ def _cli_errors(fn: Command) -> Command:
     return wrap
 
 
-@_cli_errors
-def cmd_submit(args: argparse.Namespace, argv: list[str]) -> int:
-    # Host set → remote. Unset → local queue (box / unit tests). Laptops set
-    # SPARKS_HOST so they never take the local path by accident.
+def _require_host(args: argparse.Namespace) -> str:
     host = remote.host_from(args.host)
-    if host:
-        print(
-            remote.submit_remote(
-                host,
-                name=args.name,
-                command=args.command,
-                context=args.context,
-                data=args.data,
-                image=args.image,
-            )
+    if host is None:
+        raise remote.ClientError(
+            f"set {remote.HOST_ENV} or pass --host; "
+            f"the client always talks to the box"
         )
-        return 0
-    registry_url = None
-    if args.image is None:
-        contract = box.load()
-        registry_url = contract.registry_url if contract else None
-    entry = remote.submit(
-        _queue_dir(args),
-        name=args.name,
-        command=args.command,
-        data=args.data,
-        context=None if args.image else args.context,
-        image=args.image,
-        registry_url=registry_url,
+    return host
+
+
+@_cli_errors
+def cmd_submit(args: argparse.Namespace, _argv: list[str]) -> int:
+    host = _require_host(args)
+    print(
+        remote.submit_remote(
+            host,
+            name=args.name,
+            command=args.command,
+            context=args.context,
+            data=args.data,
+            image=args.image,
+        )
     )
-    print(entry.job.job_id)
     return 0
 
 
-def _remote_or_local(local: Command) -> Command:
-    """Queue verbs: ssh when host is set, else the local queue directory."""
+@_cli_errors
+def cmd_queue(args: argparse.Namespace, _argv: list[str]) -> int:
+    host = _require_host(args)
+    server = ["_queue"]
+    if args.all:
+        server.append("--all")
+    return remote.remote(host, server)
 
+
+def _ask_remote(verb: str) -> Command:
     @_cli_errors
-    def wrap(args: argparse.Namespace, argv: list[str]) -> int:
-        host = remote.host_from(args.host)
-        if host:
-            # Forwarding the argv rather than reconstructing it keeps this from
-            # drifting as flags are added.
-            return remote.remote(host, _without_host(argv))
-        if (
-            args.command_name in _QUEUE_VERBS
-            and getattr(args, "shared_dir", None) is None
-            and box.load() is None
-        ):
-            raise remote.ClientError(
-                f"set {remote.HOST_ENV} or pass --host; "
-                f"the client always talks to the box"
-            )
-        return local(args, argv)
+    def wrap(args: argparse.Namespace, _argv: list[str]) -> int:
+        host = _require_host(args)
+        return remote.remote(host, [f"_{verb}", args.job])
 
     return wrap
 
 
-@_remote_or_local
-def cmd_queue(args: argparse.Namespace, _argv: list[str]) -> int:
+cmd_cancel = _ask_remote("cancel")
+cmd_abort = _ask_remote("abort")
+
+
+@_cli_errors
+def cmd_retry(args: argparse.Namespace, _argv: list[str]) -> int:
+    host = _require_host(args)
+    return remote.remote(host, ["_retry", args.job])
+
+
+@_cli_errors
+def cmd_remove(args: argparse.Namespace, _argv: list[str]) -> int:
+    host = _require_host(args)
+    return remote.remote(host, ["_remove", args.job])
+
+
+@_cli_errors
+def cmd_serve_queue(args: argparse.Namespace, _argv: list[str]) -> int:
     queue_dir = _queue_dir(args)
     entries = spool.entries(queue_dir) if args.all else spool.publishable(queue_dir)
     print(remote.render(entries), end="")
     return 0
 
 
-def _ask(verb: str) -> Command:
-    @_remote_or_local
+def _ask_serve(verb: str) -> Command:
+    @_cli_errors
     def wrap(args: argparse.Namespace, _argv: list[str]) -> int:
         entry = remote.ask(_queue_dir(args), args.job, verb)
         print(f"asked the runner to {verb} {entry.job.job_id}")
@@ -240,20 +248,20 @@ def _ask(verb: str) -> Command:
     return wrap
 
 
-cmd_cancel = _ask("cancel")
-cmd_abort = _ask("abort")
+cmd_serve_cancel = _ask_serve("cancel")
+cmd_serve_abort = _ask_serve("abort")
 
 
-@_remote_or_local
-def cmd_retry(args: argparse.Namespace, _argv: list[str]) -> int:
+@_cli_errors
+def cmd_serve_retry(args: argparse.Namespace, _argv: list[str]) -> int:
     queue_dir = _queue_dir(args)
     again = remote.retry(queue_dir, remote.resolve(queue_dir, args.job))
     print(again.job.job_id)
     return 0
 
 
-@_remote_or_local
-def cmd_remove(args: argparse.Namespace, _argv: list[str]) -> int:
+@_cli_errors
+def cmd_serve_remove(args: argparse.Namespace, _argv: list[str]) -> int:
     print(f"removed {remote.remove(_queue_dir(args), args.job).job.job_id}")
     return 0
 
@@ -262,7 +270,6 @@ def cmd_remove(args: argparse.Namespace, _argv: list[str]) -> int:
 def cmd_reserve(args: argparse.Namespace, _argv: list[str]) -> int:
     # Prints the directory to rsync into. The manifest is written by the
     # `commit` that follows, and until then the runner cannot see this.
-    # Runs locally on the box (submit --host ssh's this in).
     _, path = spool.reserve(_queue_dir(args), args.name, remote.local_user())
     print(path)
     return 0
@@ -311,8 +318,7 @@ def _queue_dir(args: argparse.Namespace) -> Path:
     contract = box.load()
     if contract is None:
         raise box.NotProvisioned(
-            f"set {remote.HOST_ENV} or pass --host; "
-            f"the client always talks to the box"
+            f"{box.config_path()} does not exist; this box has no sparks contract"
         )
     queue_dir = contract.queue_dir
     if not queue_dir.is_dir():
@@ -326,26 +332,6 @@ def _queue_dir(args: argparse.Namespace) -> Path:
             f"make apply) to add the queue service"
         )
     return queue_dir
-
-
-def _without_host(argv: list[str]) -> list[str]:
-    """The same command, minus the flag that sent it over there.
-
-    Left in, the box would try to ssh onwards to itself.
-    """
-    kept: list[str] = []
-    skip = False
-    for token in argv:
-        if skip:
-            skip = False
-            continue
-        if token == "--host":
-            skip = True
-            continue
-        if token.startswith("--host="):
-            continue
-        kept.append(token)
-    return kept
 
 
 if __name__ == "__main__":

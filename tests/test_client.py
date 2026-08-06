@@ -347,8 +347,8 @@ class TestReachingTheBox:
     def test_a_command_with_no_metacharacters_stays_readable(self) -> None:
         """Quoting everything unconditionally would make every command in the
         logs unreadable for the sake of the rare one that needs it."""
-        argv = client.ssh_argv("box", ["queue", "--all"])
-        assert argv[2] == "sparks queue --all"
+        argv = client.ssh_argv("box", ["_queue", "--all"])
+        assert argv[2] == "sparks _queue --all"
 
     def test_the_host_flag_beats_the_environment(
         self, monkeypatch: pytest.MonkeyPatch

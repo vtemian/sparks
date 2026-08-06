@@ -1,6 +1,7 @@
 """The laptop client surface: queue verbs only, no run/runner/demo."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -39,7 +40,7 @@ def test_submit_parses_data_and_command() -> None:
     assert args.command == ["python", "t.py"]
 
 
-def test_queue_verbs_require_host_when_unprovisioned(
+def test_queue_verbs_require_host(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv(client.HOST_ENV, raising=False)
@@ -48,13 +49,44 @@ def test_queue_verbs_require_host_when_unprovisioned(
     assert client.HOST_ENV in capsys.readouterr().err
 
 
-def test_queue_works_locally_with_shared_dir(
+def test_queue_sshes_to_hidden_server_verb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(client.HOST_ENV, raising=False)
+    with patch.object(client, "remote", return_value=0) as remote_fn:
+        assert cli.main(["queue", "--host", "box", "--all"]) == 0
+    remote_fn.assert_called_once_with("box", ["_queue", "--all"])
+
+
+def test_cancel_sshes_to_hidden_server_verb(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(client.HOST_ENV, "box")
+    with patch.object(client, "remote", return_value=0) as remote_fn:
+        assert cli.main(["cancel", "job-1"]) == 0
+    remote_fn.assert_called_once_with("box", ["_cancel", "job-1"])
+
+
+def test_submit_requires_host_and_never_runs_local(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv(client.HOST_ENV, raising=False)
+    data = tmp_path / "data"
+    data.mkdir()
+    code = cli.main(["submit", "--data", str(data), "--", "true"])
+    assert code == 1
+    assert client.HOST_ENV in capsys.readouterr().err
+
+
+def test_server_queue_works_with_shared_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.delenv(client.HOST_ENV, raising=False)
     queue = tmp_path / "queue"
     queue.mkdir()
-    code = cli.main(["queue", "--shared-dir", str(tmp_path)])
+    code = cli.main(["_queue", "--shared-dir", str(tmp_path)])
     assert code == 0
     assert "empty" in capsys.readouterr().out
 
@@ -85,3 +117,4 @@ def test_hidden_verbs_still_parse() -> None:
     )
     assert args.image == "x:1"
     assert build_parser().parse_args(["contract"]).command_name == "contract"
+    assert build_parser().parse_args(["_queue"]).command_name == "_queue"

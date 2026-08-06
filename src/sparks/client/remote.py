@@ -1,11 +1,10 @@
 """Submitting to the queue and asking it what is going on.
 
-Everything here runs on whichever machine the person is sitting at. When that is
-not the box, one flag redirects the whole command over ssh rather than each verb
-growing its own remote path: `sparks queue --host spark.local` is
-`ssh spark.local sparks queue`, and the same is true of cancel, abort and
-remove. Only `submit` is more than that, because only submit has to build an
-image, push it, and carry a data folder across.
+The laptop client always talks to the box over ssh. User-facing verbs require
+`SPARKS_HOST` (or `--host`): `sparks queue --host spark.local` is
+`ssh spark.local sparks _queue`, and the same pattern holds for cancel, abort,
+retry and remove. Only `submit` is more than a thin ssh, because only submit
+has to build an image, push it, and carry a data folder across.
 
 Submitting is five steps and they are in this order for a reason:
 
