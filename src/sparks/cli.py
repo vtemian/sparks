@@ -1,7 +1,7 @@
-"""sparks demo --name e0
+"""sparks run -- python train.py
 
-Plays a synthetic run against the box's Prometheus and prints the Grafana link
-to watch it on.
+Wraps a training command, records what it cost, and prints the Grafana link.
+Queue verbs submit the same kind of work and then let you close the laptop.
 
 This module is the boundary where "you are on a box provisioned for sparks"
 stops being an assumption and becomes a check. `launcher.launch()` stays a plain
@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from sparks import box, client, demo, engine, launcher, runner, spool, summary
+from sparks import box, client, engine, launcher, runner, spool, summary
 
 LOG = logging.getLogger("sparks")
 
@@ -31,6 +31,8 @@ EX_CONFIG = 78
 # worth refusing a run over. Unlike the shared directory, being wrong here
 # costs a bad URL, not a lost record.
 GRAFANA_FALLBACK = "http://spark.local"
+
+Command = Callable[[argparse.Namespace, list[str]], int]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -77,18 +79,9 @@ def build_parser() -> argparse.ArgumentParser:
     launch.add_argument(
         "command", nargs="+", help="the command to run, after a -- separator"
     )
+    launch.set_defaults(func=cmd_run)
 
     _add_queue_commands(sub)
-
-    run = sub.add_parser("demo", help="play a synthetic run")
-    run.add_argument("--name", default="demo")
-    run.add_argument("--seed", type=int, default=0)
-    run.add_argument(
-        "--epochs",
-        type=int,
-        default=demo.EPOCHS,
-        help="shorten an acceptance run without editing the module",
-    )
     return parser
 
 
@@ -118,6 +111,7 @@ def _add_queue_commands(
     )
     _add_host(submit)
     submit.add_argument("command", nargs="+", help="after a -- separator")
+    submit.set_defaults(func=cmd_submit)
 
     listing = sub.add_parser("queue", help="what is running and what is waiting")
     listing.add_argument(
@@ -126,22 +120,29 @@ def _add_queue_commands(
         help="include jobs that finished long enough ago to have aged out",
     )
     _add_host(listing)
+    listing.set_defaults(func=cmd_queue)
 
-    for verb, helping in (
-        ("cancel", "drop a job that has not started yet"),
-        ("abort", "stop a job, whether it has started or not"),
-        ("retry", "submit the same job again, reusing the code already there"),
-        ("remove", "delete a finished job and the code it kept"),
+    for verb, helping, func in (
+        ("cancel", "drop a job that has not started yet", cmd_cancel),
+        ("abort", "stop a job, whether it has started or not", cmd_abort),
+        (
+            "retry",
+            "submit the same job again, reusing the code already there",
+            cmd_retry,
+        ),
+        ("remove", "delete a finished job and the code it kept", cmd_remove),
     ):
         parser = sub.add_parser(verb, help=helping)
         parser.add_argument("job", help="a job id, a unique part of one, or its name")
         _add_host(parser)
+        parser.set_defaults(func=func)
 
     # Plumbing. `submit --host` is three steps against the box and these are two
     # of them; they are not meant to be typed. See client.submit_remote.
     reserve = sub.add_parser("reserve", help=argparse.SUPPRESS)
     reserve.add_argument("--name", default="job")
     reserve.add_argument("--shared-dir", type=Path, default=None)
+    reserve.set_defaults(func=cmd_reserve)
 
     commit = sub.add_parser("commit", help=argparse.SUPPRESS)
     commit.add_argument("path", type=Path)
@@ -151,6 +152,7 @@ def _add_queue_commands(
     commit.add_argument("--git-dirty", action="store_true")
     commit.add_argument("--image", default=None)
     commit.add_argument("command", nargs="+")
+    commit.set_defaults(func=cmd_commit)
 
     daemon = sub.add_parser(
         "runner", help="process the queue; the queue container's entry point"
@@ -175,6 +177,7 @@ def _add_queue_commands(
         default=None,
         help="stop after this many passes, for testing the wiring",
     )
+    daemon.set_defaults(func=cmd_runner)
 
 
 def _add_host(parser: argparse.ArgumentParser) -> None:
@@ -208,104 +211,142 @@ def deep_link(grafana: str, run_id: str, started: float) -> str:
     )
 
 
-QUEUE_COMMANDS = frozenset({"submit", "queue", "cancel", "abort", "retry", "remove"})
-"""Verbs that work equally well from a laptop, given `--host`."""
-
-BOX_ONLY = frozenset({"reserve", "commit", "runner"})
-"""Verbs that only make sense where the queue actually is."""
-
-
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    args = build_parser().parse_args(argv)
-    if args.command_name in QUEUE_COMMANDS or args.command_name in BOX_ONLY:
+    given = list(argv if argv is not None else sys.argv[1:])
+    args = build_parser().parse_args(given)
+    command: Command = args.func
+    return command(args, given)
+
+
+def _cli_errors(fn: Command) -> Command:
+    """Turn the exceptions a command is allowed to raise into exit codes.
+
+    Lives on the command, not in `main`: each verb owns its failure mode, and
+    `main` only parses and dispatches.
+    """
+
+    def wrap(args: argparse.Namespace, argv: list[str]) -> int:
         try:
-            return _queue(args, argv)
+            return fn(args, argv)
         except client.ClientError as e:
             print(f"sparks: {e}", file=sys.stderr)
             return 1
         except (box.NotProvisioned, box.Malformed) as e:
             print(f"sparks: {e}", file=sys.stderr)
             return EX_CONFIG
-    wants_shared = args.command_name == "run"
-    try:
-        settings = _settings(args, wants_shared=wants_shared)
-    except (box.NotProvisioned, box.Malformed) as e:
-        print(f"sparks: {e}", file=sys.stderr)
-        return EX_CONFIG
-    if wants_shared:
-        return _run(args, settings)
+
+    return wrap
+
+
+@_cli_errors
+def cmd_run(args: argparse.Namespace, _argv: list[str]) -> int:
+    settings = _settings(args)
     started = time.time()
-    run_id = demo.run(settings.url, name=args.name, seed=args.seed, epochs=args.epochs)
-    print(run_id)
-    print(deep_link(settings.grafana, run_id, started))
-    return 0
+    result = launcher.launch(
+        args.command,
+        name=args.name,
+        shared_dir=settings.shared_dir,
+        url=settings.url,
+        baseline_seconds=args.baseline_seconds,
+        on_reserved=_announce(args.run_id_file),
+        sha=args.git_sha,
+    )
+    print(result.run_id)
+    print(deep_link(settings.grafana, result.run_id, started))
+    print(f"{result.status}  ->  {result.run_dir}")
+    # Faithful status, so `$?` means something to whatever called us.
+    return result.wrapper_exit
 
 
-def _queue(args: argparse.Namespace, argv: list[str] | None) -> int:
-    """Every queue verb, either here or on the box."""
-    host = client.host_from(getattr(args, "host", None))
-    if host and args.command_name in QUEUE_COMMANDS:
-        if args.command_name == "submit":
-            print(
-                client.submit_remote(
-                    host,
-                    name=args.name,
-                    command=args.command,
-                    context=args.context,
-                    image=args.image,
-                )
+@_cli_errors
+def cmd_submit(args: argparse.Namespace, argv: list[str]) -> int:
+    host = client.host_from(args.host)
+    if host:
+        print(
+            client.submit_remote(
+                host,
+                name=args.name,
+                command=args.command,
+                context=args.context,
+                image=args.image,
             )
-            return 0
-        # Everything else is the same command, run over there. Forwarding the
-        # argv rather than reconstructing it keeps this from drifting as flags
-        # are added.
-        return client.remote(host, _without_host(argv))
-    return _queue_here(args)
-
-
-def _queue_here(args: argparse.Namespace) -> int:
-    queue_dir = _queue_dir(args)
-    name = args.command_name
-    if name == "runner":
-        return _runner(args, queue_dir)
-    if name == "reserve":
-        # Prints the directory to rsync into. The manifest is written by the
-        # `commit` that follows, and until then the runner cannot see this.
-        _, path = spool.reserve(queue_dir, args.name, client.local_user())
-        print(path)
-        return 0
-    if name == "commit":
-        print(_commit(args).job.job_id)
-        return 0
-    if name == "submit":
-        entry = client.submit(
-            queue_dir,
-            name=args.name,
-            command=args.command,
-            context=None if args.image else args.context,
-            image=args.image,
         )
-        print(entry.job.job_id)
         return 0
-    if name == "queue":
-        entries = spool.entries(queue_dir) if args.all else spool.publishable(queue_dir)
-        print(client.render(entries), end="")
-        return 0
-    if name == "retry":
-        again = client.retry(queue_dir, client.resolve(queue_dir, args.job))
-        print(again.job.job_id)
-        return 0
-    if name == "remove":
-        print(f"removed {client.remove(queue_dir, args.job).job.job_id}")
-        return 0
-    entry = client.ask(queue_dir, args.job, name)
-    print(f"asked the runner to {name} {entry.job.job_id}")
+    entry = client.submit(
+        _queue_dir(args),
+        name=args.name,
+        command=args.command,
+        context=None if args.image else args.context,
+        image=args.image,
+    )
+    print(entry.job.job_id)
     return 0
 
 
-def _commit(args: argparse.Namespace) -> spool.Entry:
-    return spool.commit(
+def _remote_or_local(local: Command) -> Command:
+    """Queue verbs that are the same command over ssh when `--host` is set."""
+
+    @_cli_errors
+    def wrap(args: argparse.Namespace, argv: list[str]) -> int:
+        host = client.host_from(args.host)
+        if host:
+            # Forwarding the argv rather than reconstructing it keeps this from
+            # drifting as flags are added.
+            return client.remote(host, _without_host(argv))
+        return local(args, argv)
+
+    return wrap
+
+
+@_remote_or_local
+def cmd_queue(args: argparse.Namespace, _argv: list[str]) -> int:
+    queue_dir = _queue_dir(args)
+    entries = spool.entries(queue_dir) if args.all else spool.publishable(queue_dir)
+    print(client.render(entries), end="")
+    return 0
+
+
+def _ask(verb: str) -> Command:
+    @_remote_or_local
+    def wrap(args: argparse.Namespace, _argv: list[str]) -> int:
+        entry = client.ask(_queue_dir(args), args.job, verb)
+        print(f"asked the runner to {verb} {entry.job.job_id}")
+        return 0
+
+    return wrap
+
+
+cmd_cancel = _ask("cancel")
+cmd_abort = _ask("abort")
+
+
+@_remote_or_local
+def cmd_retry(args: argparse.Namespace, _argv: list[str]) -> int:
+    queue_dir = _queue_dir(args)
+    again = client.retry(queue_dir, client.resolve(queue_dir, args.job))
+    print(again.job.job_id)
+    return 0
+
+
+@_remote_or_local
+def cmd_remove(args: argparse.Namespace, _argv: list[str]) -> int:
+    print(f"removed {client.remove(_queue_dir(args), args.job).job.job_id}")
+    return 0
+
+
+@_cli_errors
+def cmd_reserve(args: argparse.Namespace, _argv: list[str]) -> int:
+    # Prints the directory to rsync into. The manifest is written by the
+    # `commit` that follows, and until then the runner cannot see this.
+    _, path = spool.reserve(_queue_dir(args), args.name, client.local_user())
+    print(path)
+    return 0
+
+
+@_cli_errors
+def cmd_commit(args: argparse.Namespace, _argv: list[str]) -> int:
+    entry = spool.commit(
         args.path,
         spool.Job(
             job_id=args.path.name,
@@ -318,9 +359,12 @@ def _commit(args: argparse.Namespace) -> spool.Entry:
             image=args.image,
         ),
     )
+    print(entry.job.job_id)
+    return 0
 
 
-def _runner(args: argparse.Namespace, queue_dir: Path) -> int:
+@_cli_errors
+def cmd_runner(args: argparse.Namespace, _argv: list[str]) -> int:
     """The queue container's entry point."""
     contract = box.load()
     shared_dir = args.shared_dir or (contract.shared_dir if contract else None)
@@ -328,6 +372,7 @@ def _runner(args: argparse.Namespace, queue_dir: Path) -> int:
         raise box.NotProvisioned(_unprovisioned("runner", ["--shared-dir"]))
     url = args.url if args.url is not None else _runner_url(contract)
     textfile = args.textfile_dir or box.textfile_dir(contract)
+    queue_dir = _queue_dir(args)
     LOG.info("sparks: serving %s, publishing to %s", queue_dir, textfile)
     spool.make_queue_dir(queue_dir)
     runner.Runner(
@@ -383,15 +428,14 @@ def _queue_dir(args: argparse.Namespace) -> Path:
     return queue_dir
 
 
-def _without_host(argv: list[str] | None) -> list[str]:
+def _without_host(argv: list[str]) -> list[str]:
     """The same command, minus the flag that sent it over there.
 
     Left in, the box would try to ssh onwards to itself.
     """
-    given = list(argv if argv is not None else sys.argv[1:])
     kept: list[str] = []
     skip = False
-    for token in given:
+    for token in argv:
         if skip:
             skip = False
             continue
@@ -497,24 +541,6 @@ def _announce(
         summary.write_atomically(target, lambda: run_id + "\n")
 
     return write
-
-
-def _run(args: argparse.Namespace, settings: _Settings) -> int:
-    started = time.time()
-    result = launcher.launch(
-        args.command,
-        name=args.name,
-        shared_dir=settings.shared_dir,
-        url=settings.url,
-        baseline_seconds=args.baseline_seconds,
-        on_reserved=_announce(args.run_id_file),
-        sha=args.git_sha,
-    )
-    print(result.run_id)
-    print(deep_link(settings.grafana, result.run_id, started))
-    print(f"{result.status}  ->  {result.run_dir}")
-    # Faithful status, so `$?` means something to whatever called us.
-    return result.wrapper_exit
 
 
 if __name__ == "__main__":
