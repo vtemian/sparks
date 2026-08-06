@@ -2,7 +2,7 @@
 
 The laptop client always talks to the box over ssh. User-facing verbs require
 `SPARKS_HOST` (or `--host`): `sparks queue --host spark.local` is
-`ssh spark.local sparks _queue`, and the same pattern holds for cancel, abort,
+`ssh spark.local fire-ctl queue`, and the same pattern holds for cancel, abort,
 retry and remove. Only `submit` is more than a thin ssh, because only submit
 has to build an image, push it, and carry a data folder across.
 
@@ -36,6 +36,8 @@ from sparks.run import current_user, git_sha
 LOG = logging.getLogger("sparks")
 
 HOST_ENV = "SPARKS_HOST"
+REMOTE_BIN_ENV = "SPARKS_REMOTE"
+DEFAULT_REMOTE_BIN = "fire-ctl"
 REMOTE_BOX_CONFIG = "/etc/sparks/box.toml"
 
 DOCKERIGNORE = ".dockerignore"
@@ -262,8 +264,12 @@ def host_from(explicit: str | None) -> str | None:
     return explicit or os.environ.get(HOST_ENV) or None
 
 
+def remote_bin() -> str:
+    return os.environ.get(REMOTE_BIN_ENV) or DEFAULT_REMOTE_BIN
+
+
 def ssh_argv(host: str, argv: list[str]) -> list[str]:
-    """`sparks <argv>` on `host`, quoted to survive the trip.
+    """`fire-ctl <argv>` on `host`, quoted to survive the trip.
 
     ssh does not take a command as a list. Whatever it is given it joins with
     spaces and hands to a shell on the far side, so passing arguments
@@ -274,7 +280,7 @@ def ssh_argv(host: str, argv: list[str]) -> list[str]:
     Quoting here rather than trusting the caller, because the argument that
     breaks is always the one somebody typed.
     """
-    return ["ssh", host, shlex.join(["sparks", *argv])]
+    return ["ssh", host, shlex.join([remote_bin(), *argv])]
 
 
 def remote(host: str, argv: list[str]) -> int:
@@ -362,15 +368,17 @@ def commit_argv(
     dirty: bool,
     image: str,
 ) -> list[str]:
-    """The last step of a remote submit, as a pure function.
-
-    Note what is NOT here: `--user`. Whoever ssh'd in owns the job's files, and
-    ownership is what decides who may abort it; the account on this laptop
-    decides nothing and is frequently a different name. Passing it made the
-    queue list a job as `whitemonk` while the run underneath said `vlad` - one
-    person showing up as two, in the record that says who did what.
-    """
-    argv = ["commit", reserved, "--name", name, "--git-sha", sha]
+    """The last step of a remote submit, as a pure function."""
+    argv = [
+        "commit",
+        reserved,
+        "--name",
+        name,
+        "--user",
+        local_user(),
+        "--git-sha",
+        sha,
+    ]
     if dirty:
         argv.append("--git-dirty")
     argv += ["--image", image]

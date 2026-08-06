@@ -49,22 +49,18 @@ def test_queue_verbs_require_host(
     assert client.HOST_ENV in capsys.readouterr().err
 
 
-def test_queue_sshes_to_hidden_server_verb(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_queue_sshes_fire_ctl_queue(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(client.HOST_ENV, raising=False)
     with patch.object(client, "remote", return_value=0) as remote_fn:
         assert cli.main(["queue", "--host", "box", "--all"]) == 0
-    remote_fn.assert_called_once_with("box", ["_queue", "--all"])
+    remote_fn.assert_called_once_with("box", ["queue", "--all"])
 
 
-def test_cancel_sshes_to_hidden_server_verb(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_cancel_sshes_fire_ctl_cancel(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(client.HOST_ENV, "box")
     with patch.object(client, "remote", return_value=0) as remote_fn:
         assert cli.main(["cancel", "job-1"]) == 0
-    remote_fn.assert_called_once_with("box", ["_cancel", "job-1"])
+    remote_fn.assert_called_once_with("box", ["cancel", "job-1"])
 
 
 def test_submit_requires_host_and_never_runs_local(
@@ -79,42 +75,3 @@ def test_submit_requires_host_and_never_runs_local(
     assert code == 1
     assert client.HOST_ENV in capsys.readouterr().err
 
-
-def test_server_queue_works_with_shared_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.delenv(client.HOST_ENV, raising=False)
-    queue = tmp_path / "queue"
-    queue.mkdir()
-    code = cli.main(["_queue", "--shared-dir", str(tmp_path)])
-    assert code == 0
-    assert "empty" in capsys.readouterr().out
-
-
-def test_hidden_contract_prints_registry_url(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    contract = tmp_path / "box.toml"
-    contract.write_text(
-        f'shared_dir = "{tmp_path / "srv"}"\nshared_group = "spark"\n'
-        f'textfile_dir = "{tmp_path / "index"}"\n'
-        'prometheus_url = ""\ngrafana_url = ""\n'
-        'registry_url = "http://spark.local:5000"\n'
-    )
-    monkeypatch.setenv("SPARKS_BOX_CONFIG", str(contract))
-    assert cli.main(["contract"]) == 0
-    out = capsys.readouterr().out
-    assert "registry_url = http://spark.local:5000" in out
-    assert "shared_dir =" in out
-
-
-def test_hidden_verbs_still_parse() -> None:
-    # help=SUPPRESS hides the prose; they remain in the usage choices list.
-    args = build_parser().parse_args(["reserve", "--name", "x"])
-    assert args.name == "x"
-    args = build_parser().parse_args(
-        ["commit", "/tmp/j", "--image", "x:1", "--", "true"]
-    )
-    assert args.image == "x:1"
-    assert build_parser().parse_args(["contract"]).command_name == "contract"
-    assert build_parser().parse_args(["_queue"]).command_name == "_queue"

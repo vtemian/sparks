@@ -313,12 +313,12 @@ class TestReachingTheBox:
         assert "--image" in argv
         assert "spark.local:5000/vlad/n:deadbeef" in argv
 
-    def test_the_box_decides_who_submitted_not_this_laptop(self) -> None:
-        """Ownership of the files decides who may abort a job, and over ssh that
-        is the account on the box. Naming this laptop's account made one person
-        show up as two: the queue said `whitemonk`, the run said `vlad`."""
+    def test_commit_argv_passes_local_user_for_display(self) -> None:
+        """The laptop person is recorded in job.json for the queue listing;
+        file ownership on the box still decides who may abort."""
         argv = client.commit_argv("/q/job-1", "e0", ["true"], "abc", False, IMAGE)
-        assert "--user" not in argv
+        assert "--user" in argv
+        assert argv[argv.index("--user") + 1] == client.local_user()
 
     def test_the_command_survives_the_separator(self) -> None:
         """Everything after `--` is the job's, and flags in it must reach the
@@ -348,8 +348,17 @@ class TestReachingTheBox:
     def test_a_command_with_no_metacharacters_stays_readable(self) -> None:
         """Quoting everything unconditionally would make every command in the
         logs unreadable for the sake of the rare one that needs it."""
-        argv = client.ssh_argv("box", ["_queue", "--all"])
-        assert argv[2] == "sparks _queue --all"
+        argv = client.ssh_argv("box", ["queue", "--all"])
+        assert argv[2] == "fire-ctl queue --all"
+
+    def test_ssh_argv_uses_fire_ctl(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SPARKS_REMOTE", raising=False)
+        argv = client.ssh_argv("box", ["queue", "--all"])
+        assert argv[2] == "fire-ctl queue --all"
+
+    def test_ssh_argv_honours_SPARKS_REMOTE(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("SPARKS_REMOTE", "fire")
+        assert client.ssh_argv("box", ["queue"])[2] == "fire queue"
 
     def test_the_host_flag_beats_the_environment(
         self, monkeypatch: pytest.MonkeyPatch
