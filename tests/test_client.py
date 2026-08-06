@@ -5,6 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -388,28 +389,22 @@ class TestBuildAndPush:
         with pytest.raises(client.ClientError, match="Dockerfile is missing"):
             client.build(tmp_path, "tag:1")
 
-    def test_build_invokes_docker(
+    def test_build_streams_and_tags(
         self, project: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        seen: list[list[str]] = []
-
-        def fake_run(
-            argv: list[str], **kwargs: Any
-        ) -> subprocess.CompletedProcess[str]:
-            seen.append(list(argv))
-            return subprocess.CompletedProcess(argv, 0)
-
-        monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
+        fake_client = MagicMock()
+        fake_client.api.build.return_value = iter([{"stream": "Step 1\n"}])
+        monkeypatch.setattr("sparks.dock.client", lambda: fake_client)
         client.build(project, "spark.local:5000/u/n:r")
-        assert seen == [
-            ["docker", "build", "-t", "spark.local:5000/u/n:r", str(project)]
-        ]
+        fake_client.api.build.assert_called_once()
+        kwargs = fake_client.api.build.call_args.kwargs
+        assert kwargs["path"] == str(project)
+        assert kwargs["tag"] == "spark.local:5000/u/n:r"
 
     def test_push_failure_is_helpful(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            "sparks.client.remote.subprocess.run",
-            lambda *a, **k: subprocess.CompletedProcess(a[0], 1),
-        )
+        fake_client = MagicMock()
+        fake_client.images.push.return_value = iter([{"error": "denied"}])
+        monkeypatch.setattr("sparks.dock.client", lambda: fake_client)
         with pytest.raises(client.ClientError, match="insecure-registries"):
             client.push("spark.local:5000/u/n:r")
 
@@ -421,6 +416,9 @@ class TestSubmitRemote:
         data: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        fake_client = MagicMock()
+        fake_client.api.build.return_value = iter([{"stream": "ok\n"}])
+        fake_client.images.push.return_value = iter([{"status": "Pushed"}])
         calls: list[tuple[str, list[str]]] = []
 
         def fake_run(
@@ -435,6 +433,7 @@ class TestSubmitRemote:
                 return "/q/job-1"
             return "job-1"
 
+        monkeypatch.setattr("sparks.dock.client", lambda: fake_client)
         monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
         monkeypatch.setattr(client, "capture", fake_capture)
         monkeypatch.setattr(client, "local_user", lambda: "vlad")
@@ -450,24 +449,26 @@ class TestSubmitRemote:
         )
         assert job_id == "job-1"
 
-        kinds = [kind for kind, _ in calls]
-        assert kinds == ["run", "run", "ssh", "run", "ssh"]
-
         tag = "spark.local:5000/vlad/exp:abc1234"
-        assert calls[0] == (
-            "run",
-            ["docker", "build", "-t", tag, str(project)],
+        fake_client.api.build.assert_called_once()
+        build_kwargs = fake_client.api.build.call_args.kwargs
+        assert build_kwargs["path"] == str(project)
+        assert build_kwargs["tag"] == tag
+        fake_client.images.push.assert_called_once_with(
+            "spark.local:5000/vlad/exp", tag="abc1234", stream=True, decode=True
         )
-        assert calls[1] == ("run", ["docker", "push", tag])
-        assert calls[2] == (
+
+        kinds = [kind for kind, _ in calls]
+        assert kinds == ["ssh", "run", "ssh"]
+        assert calls[0] == (
             "ssh",
             ["reserve", "--name", "exp", "--user", "vlad"],
         )
-        assert calls[3][1][0] == "rsync"
-        assert calls[3][1][-1] == f"box:/q/job-1/{spool.DATA_DIR}/"
-        assert f"{data}/" in calls[3][1]
-        assert "context" not in "".join(calls[3][1])
-        commit = calls[4][1]
+        assert calls[1][1][0] == "rsync"
+        assert calls[1][1][-1] == f"box:/q/job-1/{spool.DATA_DIR}/"
+        assert f"{data}/" in calls[1][1]
+        assert "context" not in "".join(calls[1][1])
+        commit = calls[2][1]
         assert commit[0] == "commit"
         assert "--image" in commit
         assert tag in commit
@@ -479,6 +480,9 @@ class TestSubmitRemote:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         fetched: list[str] = []
+        fake_client = MagicMock()
+        fake_client.api.build.return_value = iter([{"stream": "ok\n"}])
+        fake_client.images.push.return_value = iter([{"status": "Pushed"}])
 
         def fake_run(
             argv: list[str], **kwargs: Any
@@ -494,6 +498,7 @@ class TestSubmitRemote:
             fetched.append(host)
             return "http://spark.local:5000"
 
+        monkeypatch.setattr("sparks.dock.client", lambda: fake_client)
         monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
         monkeypatch.setattr(client, "capture", fake_capture)
         monkeypatch.setattr(client, "fetch_registry_url", fake_fetch)

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-from sparks import spool
+from sparks import dock, spool
 from sparks.run import current_user, git_sha
 
 LOG = logging.getLogger("sparks")
@@ -77,21 +77,50 @@ def tag_for(registry_url: str, user: str, name: str, ref: str) -> str:
 def build(context: Path, tag: str) -> None:
     if not (context / "Dockerfile").is_file():
         raise ClientError(f"{context}/Dockerfile is missing")
-    done = subprocess.run(
-        ["docker", "build", "-t", tag, str(context)],
-        check=False,
-    )
-    if done.returncode != 0:
-        raise ClientError(f"docker build failed for {tag}")
+    try:
+        docker_client = dock.client()
+        stream = docker_client.api.build(
+            path=str(context),
+            tag=tag,
+            decode=True,
+            rm=True,
+        )
+        for chunk in stream:
+            if "stream" in chunk:
+                print(chunk["stream"], end="")
+            if "error" in chunk or "errorDetail" in chunk:
+                raise ClientError(f"docker build failed for {tag}")
+    except ClientError:
+        raise
+    except dock.DockerException as e:
+        raise ClientError(f"docker build failed for {tag}: {e}") from e
 
 
 def push(tag: str) -> None:
-    done = subprocess.run(["docker", "push", tag], check=False)
-    if done.returncode != 0:
+    if ":" not in tag.rsplit("/", 1)[-1]:
+        repository, image_tag = tag, "latest"
+    else:
+        repository, image_tag = tag.rsplit(":", 1)
+    try:
+        docker_client = dock.client()
+        for line in docker_client.images.push(
+            repository, tag=image_tag, stream=True, decode=True
+        ):
+            if line.get("error") or line.get("errorDetail"):
+                raise ClientError(
+                    f"docker push failed for {tag}. Is the registry in "
+                    f"insecure-registries and is SPARKS_HOST reachable?"
+                )
+            status = line.get("status")
+            if status:
+                print(status)
+    except ClientError:
+        raise
+    except dock.DockerException as e:
         raise ClientError(
             f"docker push failed for {tag}. Is the registry in "
             f"insecure-registries and is SPARKS_HOST reachable?"
-        )
+        ) from e
 
 
 def fetch_registry_url(host: str) -> str:
