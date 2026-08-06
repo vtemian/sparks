@@ -22,7 +22,7 @@ from sparks.energy import (
     EnergyReading,
     Sampler,
 )
-from sparks.process import Supervisor
+from sparks.fire.process import Supervisor
 from sparks.run import current_user, git_sha
 
 LOG = logging.getLogger("sparks")

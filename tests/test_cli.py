@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from sparks.client import cli, remote as client
+from sparks.client import cli
+from sparks.client import remote as client
 from sparks.client.cli import build_parser
 
 

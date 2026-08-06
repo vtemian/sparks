@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from sparks import index, runner, spool
+from sparks import index, spool
+from sparks.fire import runner
 
 
 class FakeHandle:

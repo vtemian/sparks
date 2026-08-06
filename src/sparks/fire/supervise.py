@@ -1,7 +1,9 @@
-"""sparks-run -- python train.py
+"""sparks.fire.supervise -- python train.py
 
 Wraps a training command, records what it cost, and prints the Grafana link.
-Used inside the queue container (and on the box) — not the laptop client.
+Private to the fire package: the queue nests it via `python -m`, not as a
+console script. Used inside the queue container (and on the box) — not the
+laptop client.
 """
 
 import argparse
@@ -11,7 +13,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from sparks import box, launcher, summary
+from sparks import box, summary
+from sparks.fire import launch as launcher
 
 LOG = logging.getLogger("sparks")
 
@@ -27,7 +30,7 @@ GRAFANA_FALLBACK = "http://spark.local"
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="sparks-run", description=__doc__)
+    parser = argparse.ArgumentParser(prog="sparks.fire.supervise", description=__doc__)
     # No defaults on any of these three. They are properties of the box, and the
     # box states them in /etc/sparks/box.toml. An unset value stays distinct from
     # `--url ""`, which is how you ask for no telemetry at all.
@@ -160,7 +163,7 @@ def _unprovisioned(missing: list[str]) -> str:
         f"Provision the box:\n"
         f"    cd sparkup && make apply\n\n"
         f"Or, on a box sparkup does not manage, say so explicitly:\n"
-        f"    sparks-run {flags}"
+        f"    python -m sparks.fire.supervise {flags}"
     )
 
 

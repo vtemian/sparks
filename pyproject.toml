@@ -13,8 +13,7 @@ dependencies = [
 
 [project.scripts]
 sparks = "sparks.client.cli:main"
-sparks-runner = "sparks.runner_main:main"
-sparks-run = "sparks.run_main:main"
+fire = "sparks.fire.cli:main"
 
 [dependency-groups]
 dev = [

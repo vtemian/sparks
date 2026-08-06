@@ -1,10 +1,10 @@
 """How runs end, exercised with real child processes and no mocks anywhere.
 
 Every status here is produced by a real fork, a real signal and a real reap,
-because the entire value of `sparks.process` is what the kernel actually does to
+because the entire value of `sparks.fire.process` is what the kernel actually does to
 a process rather than what a stand-in was told to report. Several of these tests
 signal the *test runner itself*, which is the only faithful way to reproduce
-`sparks-run` being killed from another terminal: the child raises the signal
+the supervisor being killed from another terminal: the child raises the signal
 against its own parent, so there is no sleep racing the handler.
 
 The grace and sweep periods come from the constructor. The 30 s production grace
@@ -22,7 +22,7 @@ import threading
 import time
 from pathlib import Path
 
-from sparks.process import Completed, Supervisor, clamp_exit, classify
+from sparks.fire.process import Completed, Supervisor, clamp_exit, classify
 
 # Short enough to keep the suite fast, long enough that a loaded laptop does not
 # escalate a child that was about to comply.

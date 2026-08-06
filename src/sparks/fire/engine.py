@@ -1,11 +1,11 @@
 """Docker, as the runner needs it: pull a registry image, then run it under
-`sparks-run` as the account that submitted it.
+`python -m sparks.fire.supervise` as the account that submitted it.
 
 The nesting is deliberate and reads oddly the first time:
 
-    sparks-run -- docker run ... <image> <command>
+    python -m sparks.fire.supervise -- docker run ... <image> <command>
 
-`sparks-run` stays OUTSIDE the training container so that a project's image does
+Supervision stays OUTSIDE the training container so that a project's image does
 not have to contain sparks. The alternative - sparks as every image's entrypoint
 - would put this framework in the dependency list of every Dockerfile anyone
 writes, which fails the only test that matters for the thing people have to
@@ -17,20 +17,21 @@ and the queue container gets them from sparkup.
 
 Privilege runs the other way from what the nesting suggests. This module runs as
 root, because talking to the Docker socket is root-equivalent, and it drops to
-the submitter's uid for `sparks-run` and everything under it. The uid comes from
-`stat()` on the job manifest, never from a field inside it.
+the submitter's uid for the supervisor and everything under it. The uid comes
+from `stat()` on the job manifest, never from a field inside it.
 """
 
 import contextlib
 import logging
 import os
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
 
 from sparks import spool
-from sparks.runner import PullFailed
+from sparks.fire.runner import PullFailed
 
 LOG = logging.getLogger("sparks")
 
@@ -61,7 +62,7 @@ class Credentials:
 
 
 class Process:
-    """A job in flight: the `sparks-run` process, and the container under it."""
+    """A job in flight: the supervise process, and the container under it."""
 
     def __init__(
         self,
@@ -79,7 +80,7 @@ class Process:
         return self._child.poll()
 
     def terminate(self) -> None:
-        """SIGTERM to `sparks-run`, and nothing else.
+        """SIGTERM to the supervisor, and nothing else.
 
         Deliberately not to the container directly: the supervisor's whole
         contract is that being signalled is what makes a run `cancelled` rather
@@ -130,7 +131,7 @@ class Docker:
     """Prometheus as reachable FROM A CONTAINER. The box contract's URL is
     loopback, which inside here is this container, so the queue is configured
     with the host-gateway form and passes the same one down."""
-    sparks_bin: str = "sparks-run"
+    supervise_module: str = "sparks.fire.supervise"
     gpus: str = "all"
     """Passed to `docker run --gpus`, or empty to omit the flag entirely.
 
@@ -255,7 +256,9 @@ class Docker:
         """The whole nested command, as a pure function so it can be read and
         tested without a daemon."""
         return [
-            self.sparks_bin,
+            sys.executable,
+            "-m",
+            self.supervise_module,
             "--url",
             self.url,
             "--name",
@@ -310,9 +313,9 @@ class Docker:
             # this line makes it.
             "--add-host",
             "host.docker.internal:host-gateway",
-            # Value-less form: forwards what `sparks-run` put in our environment,
-            # so the run id the container reports under is the one the wrapper
-            # reserved rather than a second one invented inside.
+            # Value-less form: forwards what the supervisor put in our
+            # environment, so the run id the container reports under is the one
+            # the wrapper reserved rather than a second one invented inside.
             "--env",
             "SPARKS_RUN_ID",
             "--env",

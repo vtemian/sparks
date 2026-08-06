@@ -37,7 +37,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sparks import box, index, launcher, shared, summary
+from sparks import box, index, shared, summary
 from sparks.client import cli
 from sparks.energy import (
     MIN_COUNTER_WINDOW_SECONDS,
@@ -45,6 +45,7 @@ from sparks.energy import (
     SOURCE_RATIO,
     Sampler,
 )
+from sparks.fire import launch as launcher
 from sparks.run import current_user
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
@@ -161,7 +162,7 @@ def check_contract(report: Report, shared_dir: Path) -> None:
     if contract is None:
         report.bad(
             "the box declares itself provisioned",
-            f"{box.config_path()} is absent, so `sparks-run` refuses with exit "
+            f"{box.config_path()} is absent, so supervise refuses with exit "
             f"{cli.EX_CONFIG}. Converge sparkup with the sparks role.",
         )
         return
@@ -403,9 +404,9 @@ def _promtool(report: Report, target: Path) -> None:
 def _exit_code(report: Report, shared_dir: Path) -> None:
     """A queue or a shell && reads $?. The whole suite once passed while the
     wrapper returned 0 for a crashed run."""
-    from sparks import run_main
+    from sparks.fire import supervise
 
-    code = run_main.main(
+    code = supervise.main(
         [
             "--url",
             "",
@@ -472,7 +473,7 @@ def _second_account(report: Report, shared_dir: Path, other_user: str | None) ->
             other_user,
             sys.executable,
             "-m",
-            "sparks.run_main",
+            "sparks.fire.supervise",
             "--url",
             "",
             "--shared-dir",

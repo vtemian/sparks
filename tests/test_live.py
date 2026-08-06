@@ -13,8 +13,8 @@ from typing import Any
 import pytest
 import requests
 
-from sparks import launcher
 from sparks.emit import FLUSH_SECONDS, RunMetrics
+from sparks.fire import launch as launcher
 from sparks.run import new_run_id
 
 URL = "http://127.0.0.1:19091"

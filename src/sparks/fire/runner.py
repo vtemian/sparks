@@ -12,7 +12,7 @@ maintains; the fields inside those files are labels for humans.
 
 Docker lives behind `Engine` so that everything here - ordering, state
 transitions, who may abort what, what a pull failure does to the job behind it
-- is testable without a daemon. The real one is in `sparks.engine`.
+- is testable without a daemon. The real one is in `sparks.fire.engine`.
 """
 
 import contextlib
@@ -46,7 +46,7 @@ class Handle(Protocol):
         own schedule, so nothing here needs a second timer."""
 
     def run_id(self) -> str | None:
-        """The run `sparks-run` created, once it has said so."""
+        """The run the supervisor created, once it has said so."""
 
     def container_id(self) -> str | None: ...
 
@@ -61,7 +61,7 @@ class Engine(Protocol):
         """Pull `image`. Raises `PullFailed`."""
 
     def start(self, entry: spool.Entry, image: str, log_path: Path) -> Handle:
-        """Start the job's container under `sparks-run`, as the job's owner."""
+        """Start the job's container under supervise, as the job's owner."""
 
     def release(self, container_id: str) -> None:
         """Remove a container this runner is no longer supervising."""

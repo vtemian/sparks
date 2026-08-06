@@ -1,10 +1,10 @@
-"""sparks-runner: queue daemon entry point (flags, no subcommand)."""
+"""fire: queue daemon entry point (flags, no subcommand)."""
 
 from pathlib import Path
 
 import pytest
 
-from sparks.runner_main import build_parser
+from sparks.fire.cli import build_parser
 
 
 def test_runner_takes_flags_without_a_subcommand() -> None:
@@ -27,8 +27,8 @@ def test_runner_takes_flags_without_a_subcommand() -> None:
 
 
 def test_runner_rejects_a_leading_runner_token() -> None:
-    # Compose used to pass `runner` as a sparks subcommand; sparks-runner must
-    # not require that token, and a stray one must not be silently accepted as
+    # Compose used to pass `runner` as a sparks subcommand; fire must not
+    # require that token, and a stray one must not be silently accepted as
     # a positional that argparse then misreads.
     with pytest.raises(SystemExit):
         build_parser().parse_args(["runner", "--shared-dir", "/srv/spark"])

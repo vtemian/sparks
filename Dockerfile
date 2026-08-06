@@ -5,7 +5,7 @@
 # why the Docker CLI is here and why the socket is mounted at runtime.
 #
 # It deliberately does NOT contain torch, CUDA or anything a model needs. The
-# whole point of `sparks-run` living outside the training container is that a
+# whole point of supervision living outside the training container is that a
 # project's image stays a project's image.
 
 ARG PYTHON_VERSION=3.12
@@ -79,5 +79,5 @@ ENV PYTHONUNBUFFERED=1
 # each job's own uid before starting it. See engine.credentials.
 USER root
 
-ENTRYPOINT ["sparks-runner"]
+ENTRYPOINT ["fire"]
 CMD []

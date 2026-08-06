@@ -13,7 +13,7 @@ import pytest
 
 from sparks import energy, summary
 from sparks.energy import Sampler
-from sparks.launcher import launch
+from sparks.fire.launch import launch
 
 
 def read_summary(run_dir: Path) -> dict[str, object]:
@@ -248,7 +248,7 @@ def test_a_cancelled_run_is_not_recorded_as_finished(tmp_path: Path) -> None:
     # checkpoints and exits 0 under its own power; the wrapper was the thing
     # signalled, so the run did NOT run to completion. Recording this as
     # `finished` is the dashboard lying about how runs end.
-    from sparks.process import classify
+    from sparks.fire.process import classify
 
     outcome = classify(returncode=0, interrupted_by=signal.SIGTERM)
     assert outcome.status == "cancelled"
@@ -336,7 +336,7 @@ def test_the_record_is_not_lost_when_saving_the_summary_fails(
     # The child ran to completion; a PermissionError while saving must still
     # call metrics.end(status) and must not lie about the child's exit code,
     # or a LIFECYCLE-exempt training_run_info sits on the dashboard forever.
-    import sparks.launcher as launcher_mod
+    import sparks.fire.launch as launcher_mod
 
     ended: list[str] = []
 

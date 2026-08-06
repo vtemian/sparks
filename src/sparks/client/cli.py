@@ -1,7 +1,7 @@
 """sparks — the laptop client.
 
-Submit work to the box queue and then close the laptop. The queue daemon and
-the training wrapper are separate entry points (`sparks-runner`, `sparks-run`).
+Submit work to the box queue and then close the laptop. The box runs `fire`;
+job supervision is private (`python -m sparks.fire.supervise`).
 
 Laptops set SPARKS_HOST (or pass --host). When host is unset, verbs that can
 run against a local queue directory do so — that path is for the box (after

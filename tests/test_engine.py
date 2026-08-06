@@ -5,11 +5,13 @@ are the difference between a colleague running a training job and a colleague
 being root on the box. They are asserted individually and on purpose.
 """
 
+import sys
 from pathlib import Path
 
 import pytest
 
-from sparks import engine, runner, spool
+from sparks import spool
+from sparks.fire import engine, runner
 
 
 @pytest.fixture
@@ -133,7 +135,7 @@ class TestTheContainerCommand:
 
 
 class TestTheWholeCommand:
-    def test_sparks_run_wraps_docker_run(
+    def test_job_is_supervised_via_python_minus_m_fire_supervise(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
         """The nesting that keeps sparks out of everybody's Dockerfile."""
@@ -145,14 +147,15 @@ class TestTheWholeCommand:
             uid=1001,
             gid=1002,
         )
-        assert argv[0] == "sparks-run"
-        assert "run" not in argv[: argv.index("--")]
+        assert argv[0] == sys.executable
+        assert argv[1:3] == ["-m", "sparks.fire.supervise"]
+        assert "sparks-run" not in argv
         assert argv[argv.index("--") + 1 : argv.index("--") + 3] == ["docker", "run"]
 
     def test_url_comes_before_name(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
-        """sparks-run has no subcommand; --url still precedes the rest so a
+        """supervise has no subcommand; --url still precedes the rest so a
         stale compose or hand-built argv that put it after --name is caught."""
         argv = docker.argv(
             an_entry(tmp_path),
@@ -224,14 +227,14 @@ class TestDroppingPrivilege:
     ) -> None:
         """Asking for it as a normal user is EPERM, which crashed the runner
         before this was a check rather than an attempt."""
-        monkeypatch.setattr("sparks.engine.os.geteuid", lambda: 501)
+        monkeypatch.setattr("sparks.fire.engine.os.geteuid", lambda: 501)
         assert docker.credentials(uid=501, gid=20) == engine.Credentials()
 
     def test_root_becomes_the_submitter(
         self, docker: engine.Docker, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("sparks.engine.os.geteuid", lambda: 0)
-        monkeypatch.setattr("sparks.engine.shared_group", lambda _: None)
+        monkeypatch.setattr("sparks.fire.engine.os.geteuid", lambda: 0)
+        monkeypatch.setattr("sparks.fire.engine.shared_group", lambda _: None)
         docker.extra_groups = [999]
         assert docker.credentials(uid=1001, gid=1002) == engine.Credentials(
             user=1001, group=1002, extra_groups=[999]
@@ -244,7 +247,7 @@ class TestDroppingPrivilege:
         one, so without this a job cannot write its own run directory. The box
         found this; no test before it could, because they all ran as a user who
         already owned the tree."""
-        monkeypatch.setattr("sparks.engine.os.geteuid", lambda: 0)
+        monkeypatch.setattr("sparks.fire.engine.os.geteuid", lambda: 0)
         docker = engine.Docker(shared_dir=tmp_path, url="", extra_groups=[999])
         groups = docker.credentials(uid=1001, gid=1002).extra_groups or []
         assert tmp_path.stat().st_gid in groups
@@ -253,7 +256,7 @@ class TestDroppingPrivilege:
     def test_the_shared_group_is_not_named_twice(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr("sparks.engine.os.geteuid", lambda: 0)
+        monkeypatch.setattr("sparks.fire.engine.os.geteuid", lambda: 0)
         gid = tmp_path.stat().st_gid
         docker = engine.Docker(shared_dir=tmp_path, url="", extra_groups=[gid])
         assert docker.credentials(uid=1, gid=1).extra_groups == [gid]
@@ -262,7 +265,7 @@ class TestDroppingPrivilege:
         self, docker: engine.Docker, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """docker.shared_dir is /srv/spark, which does not exist here."""
-        monkeypatch.setattr("sparks.engine.os.geteuid", lambda: 0)
+        monkeypatch.setattr("sparks.fire.engine.os.geteuid", lambda: 0)
         assert docker.credentials(uid=1, gid=1).user == 1
 
     def test_a_non_root_runner_warns_when_it_is_the_wrong_account(
@@ -273,7 +276,7 @@ class TestDroppingPrivilege:
     ) -> None:
         """Silently recording somebody else's run under your own name is how a
         colleague ends up unable to read their own output."""
-        monkeypatch.setattr("sparks.engine.os.geteuid", lambda: 501)
+        monkeypatch.setattr("sparks.fire.engine.os.geteuid", lambda: 501)
         docker.credentials(uid=1001, gid=1002)
         assert "wrong account" in caplog.text
 

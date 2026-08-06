@@ -1,11 +1,11 @@
-"""sparks-run: wrap a training command and record what it cost."""
+"""sparks.fire.supervise: wrap a training command and record what it cost."""
 
 from pathlib import Path
 
 import pytest
 
-from sparks import run_main
-from sparks.run_main import build_parser, deep_link
+from sparks.fire import supervise
+from sparks.fire.supervise import build_parser, deep_link
 
 
 def test_no_url_is_left_unset_rather_than_guessed() -> None:
@@ -52,8 +52,8 @@ def test_an_unprovisioned_box_refuses_to_run_a_job(
 ) -> None:
     # conftest.py points SPARKS_BOX_CONFIG at a file that does not exist, so
     # every test sees an unprovisioned box unless it says otherwise.
-    code = run_main.main(["--", "true"])
-    assert code == run_main.EX_CONFIG
+    code = supervise.main(["--", "true"])
+    assert code == supervise.EX_CONFIG
     err = capsys.readouterr().err
     assert "not configured for sparks" in err
     # Names the missing file and the way out of it, both: "misconfigured" with
@@ -66,7 +66,7 @@ def test_an_unprovisioned_box_refuses_to_run_a_job(
 def test_explicit_paths_run_on_a_box_sparkup_does_not_manage(tmp_path: Path) -> None:
     # A laptop, or someone else's cluster. Saying where everything is must stay
     # possible, or sparks is unusable anywhere but one machine.
-    code = run_main.main(
+    code = supervise.main(
         # --baseline-seconds 0: the default samples idle power for a minute.
         ["--url", "", "--shared-dir", str(tmp_path), "-b", "0", "--", "true"],
     )
@@ -87,7 +87,7 @@ def test_the_contract_supplies_the_defaults(
         'registry_url = "http://spark.local:5000"\n'
     )
     monkeypatch.setenv("SPARKS_BOX_CONFIG", str(contract))
-    code = run_main.main(["--name", "contract", "-b", "0", "--", "true"])
+    code = supervise.main(["--name", "contract", "-b", "0", "--", "true"])
     assert code == 0
     # The run landed in the tree the box named, with no flags passed at all.
     assert list((shared / "runs").iterdir())
@@ -106,8 +106,8 @@ def test_a_contract_that_no_longer_matches_the_box_refuses(
         'registry_url = "http://spark.local:5000"\n'
     )
     monkeypatch.setenv("SPARKS_BOX_CONFIG", str(contract))
-    code = run_main.main(["--", "true"])
-    assert code == run_main.EX_CONFIG
+    code = supervise.main(["--", "true"])
+    assert code == supervise.EX_CONFIG
     err = capsys.readouterr().err
     assert "does not match" in err
     assert str(tmp_path / "gone" / "runs") in err
@@ -119,14 +119,14 @@ def test_a_hand_edited_contract_says_so(
     contract = tmp_path / "box.toml"
     contract.write_text("this is not toml\n")
     monkeypatch.setenv("SPARKS_BOX_CONFIG", str(contract))
-    assert run_main.main(["--", "true"]) == run_main.EX_CONFIG
+    assert supervise.main(["--", "true"]) == supervise.EX_CONFIG
     assert "not valid TOML" in capsys.readouterr().err
 
 
 def test_a_crashed_child_makes_the_cli_exit_nonzero(tmp_path: Path) -> None:
     # A queue or a shell && reads $?. Returning 0 for a crashed run is the
     # wrapper lying to its caller.
-    code = run_main.main(
+    code = supervise.main(
         [
             "--url",
             "",

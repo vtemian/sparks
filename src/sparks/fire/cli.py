@@ -1,7 +1,7 @@
-"""sparks-runner — the queue daemon.
+"""fire — the queue daemon.
 
 The queue container's entry point. Flags are the main argparse surface (no
-`runner` subcommand), so compose can pass `--url … --shared-dir …` directly.
+subcommand), so compose can pass `--url … --shared-dir …` directly.
 """
 
 import argparse
@@ -9,7 +9,8 @@ import logging
 import sys
 from pathlib import Path
 
-from sparks import box, engine, runner, spool
+from sparks import box, spool
+from sparks.fire import engine, runner
 
 LOG = logging.getLogger("sparks")
 
@@ -18,7 +19,7 @@ EX_CONFIG = 78
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="sparks-runner", description=__doc__)
+    parser = argparse.ArgumentParser(prog="fire", description=__doc__)
     parser.add_argument(
         "--url",
         help="Prometheus as reachable from inside the queue container. "
@@ -108,7 +109,7 @@ def _unprovisioned(missing: list[str]) -> str:
         f"Provision the box:\n"
         f"    cd sparkup && make apply\n\n"
         f"Or say so explicitly:\n"
-        f"    sparks-runner {flags}"
+        f"    fire {flags}"
     )
 
 

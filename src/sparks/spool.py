@@ -46,7 +46,7 @@ the path stays absent and old spool trees remain recognisable."""
 DATA_DIR = "data"
 PULL_LOG = "pull.log"
 LAUNCH_LOG = "launch.log"
-"""What `sparks-run` said when the job container started. Separate from
+"""What the supervisor said when the job container started. Separate from
 `pull.log` (registry pull) and from the run's own `output.log`, which lives
 with the run rather than with the job."""
 CID_FILE = "container.id"
@@ -142,7 +142,7 @@ class State:
     """The digest actually pulled, which is the reproducibility record: a tag
     can be re-pointed, a digest cannot."""
     run_id: str | None = None
-    """The run `sparks-run` created, which is the join to `sparks_run_info` and
+    """The run the supervisor created, which is the join to `sparks_run_info` and
     to everything the dashboards already know how to show."""
     container_id: str | None = None
     started_unix: float | None = None
