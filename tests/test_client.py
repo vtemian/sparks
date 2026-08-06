@@ -252,10 +252,22 @@ class TestRetry:
     def test_the_retry_is_owned_by_whoever_retried_it(
         self, queue: Path, data: Path
     ) -> None:
-        entry = _submit(queue, data, user="someone-else")
+        entry = _submit(queue, data)
         spool.set_state(entry.path, spool.State(state=spool.FINISHED))
         again = client.retry(queue, spool.load(entry.path))
         assert again.owner_uid == os.getuid()
+
+    def test_retrying_someone_elses_job_is_refused(
+        self, queue: Path, data: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Corpora make this sharper than cancel: retry would clone their data/.
+        entry = _submit(queue, data, user="alice")
+        spool.set_state(entry.path, spool.State(state=spool.FINISHED))
+        monkeypatch.setattr(
+            spool.Entry, "may_be_controlled_by", lambda self, uid: False
+        )
+        with pytest.raises(client.ClientError, match="belongs to"):
+            client.retry(queue, spool.load(entry.path))
 
 
 class TestListing:
@@ -435,6 +447,43 @@ class TestSubmitRemote:
         assert "--image" in commit
         assert tag in commit
 
+    def test_submit_remote_fetches_registry_url_when_omitted(
+        self,
+        project: Path,
+        data: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        fetched: list[str] = []
+
+        def fake_run(
+            argv: list[str], **kwargs: Any
+        ) -> subprocess.CompletedProcess[bytes]:
+            return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
+
+        def fake_remote_capture(host: str, argv: list[str]) -> str:
+            if argv[0] == "reserve":
+                return "/q/job-1"
+            return "job-1"
+
+        def fake_fetch(host: str) -> str:
+            fetched.append(host)
+            return "http://spark.local:5000"
+
+        monkeypatch.setattr("sparks.client.subprocess.run", fake_run)
+        monkeypatch.setattr(client, "remote_capture", fake_remote_capture)
+        monkeypatch.setattr(client, "fetch_registry_url", fake_fetch)
+        monkeypatch.setattr(client, "local_user", lambda: "vlad")
+        monkeypatch.setattr(client, "provenance", lambda _ctx: ("abc1234", False))
+
+        client.submit_remote(
+            "box",
+            name="exp",
+            command=["true"],
+            context=project,
+            data=data,
+        )
+        assert fetched == ["box"]
+
     def test_submit_remote_skips_build_when_image_given(
         self,
         project: Path,
@@ -469,9 +518,7 @@ class TestSubmitRemote:
         )
         assert all(c[1][:1] != ["docker"] for c in calls if c[0] == "run")
         commit = next(
-            argv
-            for kind, argv in calls
-            if kind == "remote" and argv[0] == "commit"
+            argv for kind, argv in calls if kind == "remote" and argv[0] == "commit"
         )
         assert "already:pushed" in commit
 
