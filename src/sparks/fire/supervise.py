@@ -8,6 +8,7 @@ laptop client.
 
 import argparse
 import logging
+import os
 import sys
 import time
 from collections.abc import Callable
@@ -20,55 +21,9 @@ LOG = logging.getLogger("sparks")
 
 DASHBOARD = "/d/training-runs/training-runs"
 
-# sysexits.h EX_CONFIG. A distinct code so a queue, or a shell running this in a
-# loop, can tell "this box is set up wrong" from "the training job crashed".
-EX_CONFIG = 78
-
 # Cosmetic: it only decorates the printed link, so an unknown Grafana is not
 # worth refusing a run over.
 GRAFANA_FALLBACK = "http://spark.local"
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="sparks.fire.supervise", description=__doc__)
-    # No defaults on any of these three. They are properties of the box, and the
-    # box states them in /etc/sparks/box.toml. An unset value stays distinct from
-    # `--url ""`, which is how you ask for no telemetry at all.
-    parser.add_argument(
-        "--url",
-        help="Prometheus, which must have the remote-write receiver enabled. "
-        "Defaults to the provisioned one; pass empty to publish nothing",
-    )
-    parser.add_argument("--grafana", help="where the dashboards live")
-    parser.add_argument("--name", default="run")
-    parser.add_argument(
-        "--shared-dir",
-        help="where runs are recorded. Defaults to the provisioned "
-        "spark_shared_dir, which is a per-box value and not this repo's guess",
-    )
-    parser.add_argument(
-        "-b",
-        "--baseline-seconds",
-        type=float,
-        default=launcher.BASELINE_SECONDS,
-        help="idle power sampled first, so marginal energy means something",
-    )
-    parser.add_argument(
-        "--git-sha",
-        default=None,
-        help="the commit to record. Defaults to this directory's HEAD, which is "
-        "wrong when something else shipped the code being run",
-    )
-    parser.add_argument(
-        "--run-id-file",
-        type=Path,
-        help="write the run id here as soon as it is known, for a supervisor "
-        "that needs to know which run this is before the run has ended",
-    )
-    parser.add_argument(
-        "command", nargs="+", help="the command to run, after a -- separator"
-    )
-    return parser
 
 
 def deep_link(grafana: str, run_id: str, started: float) -> str:
@@ -79,36 +34,6 @@ def deep_link(grafana: str, run_id: str, started: float) -> str:
         f"{grafana.rstrip('/')}{DASHBOARD}"
         f"?orgId=1&var-run_id={run_id}&from={frm}&to=now&refresh=10s"
     )
-
-
-def main(argv: list[str] | None = None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    given = list(argv if argv is not None else sys.argv[1:])
-    args = build_parser().parse_args(given)
-    try:
-        return run(args)
-    except (box.NotProvisioned, box.Malformed) as e:
-        print(f"sparks: {e}", file=sys.stderr)
-        return EX_CONFIG
-
-
-def run(args: argparse.Namespace) -> int:
-    settings = _settings(args)
-    started = time.time()
-    result = launcher.launch(
-        args.command,
-        name=args.name,
-        shared_dir=settings.shared_dir,
-        url=settings.url,
-        baseline_seconds=args.baseline_seconds,
-        on_reserved=_announce(args.run_id_file),
-        sha=args.git_sha,
-    )
-    print(result.run_id)
-    print(deep_link(settings.grafana, result.run_id, started))
-    print(f"{result.status}  ->  {result.run_dir}")
-    # Faithful status, so `$?` means something to whatever called us.
-    return result.wrapper_exit
 
 
 class _Settings:
@@ -131,6 +56,7 @@ def _settings(args: argparse.Namespace) -> _Settings:
     contract = box.load()
     shared = Path(args.shared_dir) if args.shared_dir else None
     url = args.url
+
     if contract is None:
         missing = [
             n for n, v in (("--shared-dir", shared), ("--url", url)) if v is None
@@ -143,6 +69,7 @@ def _settings(args: argparse.Namespace) -> _Settings:
             raise box.NotProvisioned(_mismatched(complaints))
         shared = shared or contract.shared_dir
         url = contract.prometheus_url if url is None else url
+
     assert shared is not None  # unprovisioned path raised above when missing
     return _Settings(
         shared_dir=shared,
@@ -196,6 +123,84 @@ def _announce(
         summary.write_atomically(target, lambda: run_id + "\n")
 
     return write
+
+
+def run(args: argparse.Namespace) -> int:
+    settings = _settings(args)
+    started = time.time()
+
+    result = launcher.launch(
+        args.command,
+        name=args.name,
+        shared_dir=settings.shared_dir,
+        url=settings.url,
+        baseline_seconds=args.baseline_seconds,
+        on_reserved=_announce(args.run_id_file),
+        sha=args.git_sha,
+    )
+
+    print(result.run_id)
+    print(deep_link(settings.grafana, result.run_id, started))
+    print(f"{result.status}  ->  {result.run_dir}")
+    # Faithful status, so `$?` means something to whatever called us.
+    return result.wrapper_exit
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="sparks.fire.supervise", description=__doc__)
+    # No defaults on any of these three. They are properties of the box, and the
+    # box states them in /etc/sparks/box.toml. An unset value stays distinct from
+    # `--url ""`, which is how you ask for no telemetry at all.
+
+    parser.add_argument(
+        "--url",
+        help="Prometheus, which must have the remote-write receiver enabled. "
+        "Defaults to the provisioned one; pass empty to publish nothing",
+    )
+    parser.add_argument("--grafana", help="where the dashboards live")
+    parser.add_argument("--name", default="run")
+    parser.add_argument(
+        "--shared-dir",
+        help="where runs are recorded. Defaults to the provisioned "
+        "spark_shared_dir, which is a per-box value and not this repo's guess",
+    )
+
+    parser.add_argument(
+        "-b",
+        "--baseline-seconds",
+        type=float,
+        default=launcher.BASELINE_SECONDS,
+        help="idle power sampled first, so marginal energy means something",
+    )
+    parser.add_argument(
+        "--git-sha",
+        default=None,
+        help="the commit to record. Defaults to this directory's HEAD, which is "
+        "wrong when something else shipped the code being run",
+    )
+    parser.add_argument(
+        "--run-id-file",
+        type=Path,
+        help="write the run id here as soon as it is known, for a supervisor "
+        "that needs to know which run this is before the run has ended",
+    )
+
+    parser.add_argument(
+        "command", nargs="+", help="the command to run, after a -- separator"
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    given = list(argv if argv is not None else sys.argv[1:])
+    args = build_parser().parse_args(given)
+
+    try:
+        return run(args)
+    except (box.NotProvisioned, box.Malformed) as e:
+        print(f"sparks: {e}", file=sys.stderr)
+        return os.EX_CONFIG
 
 
 if __name__ == "__main__":

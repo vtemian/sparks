@@ -23,11 +23,13 @@ HEADINGS = ("JOB", "USER", "STATE", "AGE", "RUN")
 def queue_dir(shared_dir: Path | None = None) -> Path:
     if shared_dir is not None:
         return Path(shared_dir) / "queue"
+
     contract = box.load()
     if contract is None:
         raise ControlError(
             f"{box.config_path()} does not exist; this box has no sparks contract"
         )
+
     qd = contract.queue_dir
     if not qd.is_dir():
         raise ControlError(
@@ -54,11 +56,13 @@ def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
             f"{entry.job.job_id} belongs to {entry.job.user}, and only they "
             "can retry it (retry clones their data directory)"
         )
+
     who = entry.job.user
     job_id, path = spool.reserve(queue_dir, entry.job.name, who)
     source = entry.data_dir
     if source.is_dir():
         _clone(source, path / spool.DATA_DIR)
+
     return spool.commit(
         path,
         spool.Job(
@@ -85,9 +89,11 @@ def resolve(queue_dir: Path, needle: str) -> spool.Entry:
     found = spool.entries(queue_dir)
     if not found:
         raise ControlError("there are no jobs in the queue")
+
     exact = [e for e in found if e.job.job_id == needle]
     if exact:
         return exact[0]
+
     matches = [e for e in found if needle in e.job.job_id or e.job.name == needle]
     if not matches:
         raise ControlError(f"no job matches {needle!r}")
@@ -99,6 +105,7 @@ def resolve(queue_dir: Path, needle: str) -> spool.Entry:
             return live[0]
         ids = "\n".join(f"    {e.job.job_id}  {e.state.state}" for e in matches)
         raise ControlError(f"{needle!r} matches several jobs:\n{ids}")
+
     return matches[0]
 
 
@@ -114,6 +121,7 @@ def ask(queue_dir: Path, needle: str, action: str) -> spool.Entry:
         raise ControlError(
             f"{entry.job.job_id} belongs to {entry.job.user}, and only they can stop it"
         )
+
     spool.request(entry.path, action)
     return entry
 
@@ -127,6 +135,7 @@ def remove(queue_dir: Path, needle: str) -> spool.Entry:
         )
     if not entry.may_be_controlled_by(os.getuid()):
         raise ControlError(f"{entry.job.job_id} belongs to {entry.job.user}")
+
     spool.remove(entry.path)
     return entry
 
@@ -135,6 +144,7 @@ def render(entries: list[spool.Entry], now: float | None = None) -> str:
     """The queue as a person reads it."""
     if not entries:
         return "the queue is empty\n"
+
     moment = time.time() if now is None else now
     rows = [
         (

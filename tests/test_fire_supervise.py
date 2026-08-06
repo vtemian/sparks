@@ -1,5 +1,6 @@
 """sparks.fire.supervise: wrap a training command and record what it cost."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -53,7 +54,7 @@ def test_an_unprovisioned_box_refuses_to_run_a_job(
     # conftest.py points SPARKS_BOX_CONFIG at a file that does not exist, so
     # every test sees an unprovisioned box unless it says otherwise.
     code = supervise.main(["--", "true"])
-    assert code == supervise.EX_CONFIG
+    assert code == os.EX_CONFIG
     err = capsys.readouterr().err
     assert "not configured for sparks" in err
     # Names the missing file and the way out of it, both: "misconfigured" with
@@ -107,7 +108,7 @@ def test_a_contract_that_no_longer_matches_the_box_refuses(
     )
     monkeypatch.setenv("SPARKS_BOX_CONFIG", str(contract))
     code = supervise.main(["--", "true"])
-    assert code == supervise.EX_CONFIG
+    assert code == os.EX_CONFIG
     err = capsys.readouterr().err
     assert "does not match" in err
     assert str(tmp_path / "gone" / "runs") in err
@@ -119,7 +120,7 @@ def test_a_hand_edited_contract_says_so(
     contract = tmp_path / "box.toml"
     contract.write_text("this is not toml\n")
     monkeypatch.setenv("SPARKS_BOX_CONFIG", str(contract))
-    assert supervise.main(["--", "true"]) == supervise.EX_CONFIG
+    assert supervise.main(["--", "true"]) == os.EX_CONFIG
     assert "not valid TOML" in capsys.readouterr().err
 
 

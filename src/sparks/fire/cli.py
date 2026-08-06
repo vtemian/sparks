@@ -7,6 +7,7 @@ SSH-RPC control surface (queue, cancel, abort, …).
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -15,52 +16,6 @@ from sparks.fire import ctl, engine, runner
 
 LOG = logging.getLogger("sparks")
 
-# sysexits.h EX_CONFIG.
-EX_CONFIG = 78
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="fire", description=__doc__)
-    parser.add_argument(
-        "--url",
-        help="Prometheus as reachable from inside the queue container. "
-        "Defaults to the contract's URL rewritten off loopback",
-    )
-    parser.add_argument(
-        "--textfile-dir",
-        type=Path,
-        help="where to publish the queue's metrics. Defaults to the "
-        "provisioned node_exporter textfile directory",
-    )
-    parser.add_argument("--shared-dir", type=Path)
-    parser.add_argument(
-        "--gpus",
-        default="all",
-        help="passed to docker run --gpus. Empty omits the flag, which a box "
-        "with no nvidia runtime needs: there it is an error, not a no-op",
-    )
-    parser.add_argument("--poll-seconds", type=float, default=runner.POLL_SECONDS)
-    parser.add_argument(
-        "--ticks",
-        type=int,
-        default=None,
-        help="stop after this many passes, for testing the wiring",
-    )
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    given = list(argv if argv is not None else sys.argv[1:])
-    if given and not given[0].startswith("-") and given[0] in ctl.VERBS:
-        return ctl.ctl_main(given)
-    args = build_parser().parse_args(given)
-    try:
-        return serve(args)
-    except (box.NotProvisioned, box.Malformed) as e:
-        print(f"fire: {e}", file=sys.stderr)
-        return EX_CONFIG
-
 
 def serve(args: argparse.Namespace) -> int:
     """The queue container's entry point."""
@@ -68,10 +23,12 @@ def serve(args: argparse.Namespace) -> int:
     shared_dir = args.shared_dir or (contract.shared_dir if contract else None)
     if shared_dir is None:
         raise box.NotProvisioned(_unprovisioned(["--shared-dir"]))
+
     url = args.url if args.url is not None else _runner_url(contract)
     textfile = args.textfile_dir or box.textfile_dir(contract)
     queue_dir = shared_dir / "queue"
-    LOG.info("sparks: serving %s, publishing to %s", queue_dir, textfile)
+
+    LOG.info("fire: serving %s, publishing to %s", queue_dir, textfile)
     spool.make_queue_dir(queue_dir)
     runner.Runner(
         queue_dir=queue_dir,
@@ -97,6 +54,7 @@ def _runner_url(contract: box.Box | None) -> str:
     """
     if contract is None:
         return ""
+
     url = contract.prometheus_url
     for loopback in ("127.0.0.1", "localhost", "::1"):
         if loopback in url:
@@ -115,6 +73,53 @@ def _unprovisioned(missing: list[str]) -> str:
         f"Or say so explicitly:\n"
         f"    fire {flags}"
     )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="fire", description=__doc__)
+
+    parser.add_argument(
+        "--url",
+        help="Prometheus as reachable from inside the queue container. "
+        "Defaults to the contract's URL rewritten off loopback",
+    )
+    parser.add_argument(
+        "--textfile-dir",
+        type=Path,
+        help="where to publish the queue's metrics. Defaults to the "
+        "provisioned node_exporter textfile directory",
+    )
+    parser.add_argument("--shared-dir", type=Path)
+
+    parser.add_argument(
+        "--gpus",
+        default="all",
+        help="passed to docker run --gpus. Empty omits the flag, which a box "
+        "with no nvidia runtime needs: there it is an error, not a no-op",
+    )
+    parser.add_argument("--poll-seconds", type=float, default=runner.POLL_SECONDS)
+    parser.add_argument(
+        "--ticks",
+        type=int,
+        default=None,
+        help="stop after this many passes, for testing the wiring",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    given = list(argv if argv is not None else sys.argv[1:])
+
+    if given and not given[0].startswith("-") and given[0] in ctl.VERBS:
+        return ctl.main(given)
+
+    args = build_parser().parse_args(given)
+    try:
+        return serve(args)
+    except (box.NotProvisioned, box.Malformed) as e:
+        print(f"fire: {e}", file=sys.stderr)
+        return os.EX_CONFIG
 
 
 if __name__ == "__main__":

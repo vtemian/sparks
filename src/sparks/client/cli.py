@@ -38,6 +38,7 @@ def queue(args: argparse.Namespace, _argv: list[str]) -> int:
     server = ["queue"]
     if args.all:
         server.append("--all")
+
     return remote.run(args.host, server)
 
 

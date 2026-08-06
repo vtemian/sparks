@@ -307,6 +307,7 @@ def capture(host: str, argv: list[str]) -> str:
     )
     if done.returncode != 0:
         raise ClientError(f"{host} refused: {(done.stderr or done.stdout).strip()}")
+
     return done.stdout.strip()
 
 
@@ -328,11 +329,13 @@ def submit_remote(
     """
     if not data.is_dir():
         raise ClientError(f"--data {data} is not a directory")
+
     who = local_user()
     sha, dirty = provenance(context)
     url = registry_url
     if image is None and url is None:
         url = fetch_registry_url(host)
+
     tag = _resolve_tag(
         image=image,
         context=context,
@@ -341,11 +344,11 @@ def submit_remote(
         name=name,
         sha=sha,
     )
-    reserved = capture(
-        host, ["reserve", "--name", name, "--user", who]
-    )
+
+    reserved = capture(host, ["reserve", "--name", name, "--user", who])
     if not reserved:
         raise ClientError(f"{host} did not say where to put the job")
+
     dest = f"{host}:{reserved}/{spool.DATA_DIR}/"
     argv = rsync_argv(data, dest)
     try:
@@ -361,6 +364,7 @@ def submit_remote(
             f"could not copy --data to {host}: "
             f"{done.stderr.decode(errors='replace').strip()}"
         )
+
     return capture(host, commit_argv(reserved, name, command, sha, dirty, tag))
 
 
@@ -385,6 +389,7 @@ def commit_argv(
     ]
     if dirty:
         argv.append("--git-dirty")
+
     argv += ["--image", image]
     return [*argv, "--", *command]
 
