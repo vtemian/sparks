@@ -21,6 +21,7 @@ the result as a real run.
 import getpass
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import time
@@ -312,22 +313,36 @@ def host_from(explicit: str | None) -> str | None:
     return explicit or os.environ.get(HOST_ENV) or None
 
 
+def ssh_argv(host: str, argv: list[str]) -> list[str]:
+    """`sparks <argv>` on `host`, quoted to survive the trip.
+
+    ssh does not take a command as a list. Whatever it is given it joins with
+    spaces and hands to a shell on the far side, so passing arguments
+    separately only LOOKS safe: `-c 'echo a; echo b'` arrives as three words and
+    the semicolon is the remote shell's. The first job submitted from a laptop
+    with a quoted command came back as a bash syntax error.
+
+    Quoting here rather than trusting the caller, because the argument that
+    breaks is always the one somebody typed.
+    """
+    return ["ssh", host, shlex.join(["sparks", *argv])]
+
+
 def remote(host: str, argv: list[str]) -> int:
     """Run the same command on the box.
 
     One implementation for every verb, rather than each growing its own remote
-    path. The command is passed as separate arguments so the remote shell does
-    no word-splitting of its own on anything a person typed.
+    path.
     """
     try:
-        return subprocess.run(["ssh", host, "sparks", *argv], check=False).returncode
+        return subprocess.run(ssh_argv(host, argv), check=False).returncode
     except FileNotFoundError as e:
         raise ClientError("ssh is not installed") from e
 
 
 def remote_capture(host: str, argv: list[str]) -> str:
     done = subprocess.run(
-        ["ssh", host, "sparks", *argv],
+        ssh_argv(host, argv),
         capture_output=True,
         text=True,
         timeout=SSH_TIMEOUT_SECONDS,

@@ -246,6 +246,22 @@ class TestReachingTheBox:
         assert argv[argv.index("--") + 1 :] == ["python", "-m", "train", "--lr", "3e-4"]
         assert "--git-dirty" in argv[: argv.index("--")]
 
+    def test_a_quoted_command_survives_the_trip(self) -> None:
+        """ssh joins its arguments and hands them to a shell on the far side, so
+        passing them separately only looks safe. A real submit came back as a
+        bash syntax error because the job's own semicolon was executed there."""
+        argv = client.ssh_argv("box", ["submit", "--", "sh", "-c", "echo a; echo b"])
+        assert argv[:2] == ["ssh", "box"]
+        # One argument to ssh, and the dangerous parts are inert inside it.
+        assert len(argv) == 3
+        assert "'echo a; echo b'" in argv[2]
+
+    def test_a_command_with_no_metacharacters_stays_readable(self) -> None:
+        """Quoting everything unconditionally would make every command in the
+        logs unreadable for the sake of the rare one that needs it."""
+        argv = client.ssh_argv("box", ["queue", "--all"])
+        assert argv[2] == "sparks queue --all"
+
     def test_the_host_flag_beats_the_environment(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
