@@ -9,6 +9,7 @@ dependencies = [
     # it lazily and degrades to zero, because development happens where there
     # is no GPU and a box may have no monitoring at all.
     "nvidia-ml-py>=12.560",
+    "docker>=7.2.0",
 ]
 
 [project.scripts]
@@ -22,6 +23,7 @@ dev = [
     "ruff>=0.8",
     "requests>=2.32",
     "types-requests>=2.32",
+    "types-docker>=7.2.0.20260806",
 ]
 
 [build-system]
