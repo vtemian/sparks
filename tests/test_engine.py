@@ -234,10 +234,39 @@ class TestDroppingPrivilege:
         self, docker: engine.Docker, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr("sparks.engine.os.geteuid", lambda: 0)
+        monkeypatch.setattr("sparks.engine.shared_group", lambda _: None)
         docker.extra_groups = [999]
         assert docker.credentials(uid=1001, gid=1002) == engine.Credentials(
             user=1001, group=1002, extra_groups=[999]
         )
+
+    def test_the_shared_group_comes_along(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """setuid hands over the primary group and drops every supplementary
+        one, so without this a job cannot write its own run directory. The box
+        found this; no test before it could, because they all ran as a user who
+        already owned the tree."""
+        monkeypatch.setattr("sparks.engine.os.geteuid", lambda: 0)
+        docker = engine.Docker(shared_dir=tmp_path, url="", extra_groups=[999])
+        groups = docker.credentials(uid=1001, gid=1002).extra_groups or []
+        assert tmp_path.stat().st_gid in groups
+        assert 999 in groups
+
+    def test_the_shared_group_is_not_named_twice(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("sparks.engine.os.geteuid", lambda: 0)
+        gid = tmp_path.stat().st_gid
+        docker = engine.Docker(shared_dir=tmp_path, url="", extra_groups=[gid])
+        assert docker.credentials(uid=1, gid=1).extra_groups == [gid]
+
+    def test_an_unreadable_shared_tree_is_not_fatal(
+        self, docker: engine.Docker, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """docker.shared_dir is /srv/spark, which does not exist here."""
+        monkeypatch.setattr("sparks.engine.os.geteuid", lambda: 0)
+        assert docker.credentials(uid=1, gid=1).user == 1
 
     def test_a_non_root_runner_warns_when_it_is_the_wrong_account(
         self,

@@ -247,10 +247,19 @@ class Docker:
         return Credentials(
             user=uid,
             group=gid,
-            # The docker group, without which the submitter cannot reach the
-            # socket to start their own container.
-            extra_groups=self.extra_groups or None,
+            # setuid gives them their primary group and no others, so every
+            # group the job needs has to be named here: docker, to reach the
+            # socket and start its own container, and the shared group, to write
+            # the run directory.
+            extra_groups=self.groups() or None,
         )
+
+    def groups(self) -> list[int]:
+        configured = list(self.extra_groups)
+        shared = shared_group(self.shared_dir)
+        if shared is not None and shared not in configured:
+            configured.append(shared)
+        return configured
 
     def argv(
         self,
@@ -358,6 +367,24 @@ class Docker:
             LOG.warning("sparks: built %s but could not read its id", tag)
             return tag
         return result.stdout.decode().strip() or tag
+
+
+def shared_group(shared_dir: Path) -> int | None:
+    """The group that owns the shared tree.
+
+    Needed because `setuid` to a submitter gives them their PRIMARY group and
+    nothing else: the supplementary groups their account has on the box do not
+    come along, so membership of the shared group is lost exactly when it
+    matters. Without this a job cannot write its own run directory.
+
+    Found on the box and not before it: every test until then ran as a user who
+    already owned the directory, where the missing group makes no difference.
+    """
+    try:
+        return shared_dir.stat().st_gid
+    except OSError as e:
+        LOG.warning("sparks: cannot read %s: %s", shared_dir, e)
+        return None
 
 
 def docker_group() -> int | None:
