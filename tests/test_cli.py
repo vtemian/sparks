@@ -88,6 +88,7 @@ def test_the_contract_supplies_the_defaults(
         f'shared_dir = "{shared}"\nshared_group = "spark"\n'
         f'textfile_dir = "{tmp_path / "index"}"\n'
         'prometheus_url = ""\ngrafana_url = "http://elsewhere.local"\n'
+        'registry_url = "http://spark.local:5000"\n'
     )
     monkeypatch.setenv("SPARKS_BOX_CONFIG", str(contract))
     code = cli.main(["run", "--name", "contract", "-b", "0", "--", "true"])
@@ -106,6 +107,7 @@ def test_a_contract_that_no_longer_matches_the_box_refuses(
         f'shared_dir = "{tmp_path / "gone"}"\nshared_group = "spark"\n'
         f'textfile_dir = "{tmp_path / "index"}"\n'
         'prometheus_url = ""\ngrafana_url = ""\n'
+        'registry_url = "http://spark.local:5000"\n'
     )
     monkeypatch.setenv("SPARKS_BOX_CONFIG", str(contract))
     code = cli.main(["run", "--", "true"])

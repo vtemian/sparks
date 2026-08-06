@@ -11,6 +11,7 @@ shared_group   = "spark"
 textfile_dir   = "{textfile}"
 prometheus_url = "http://127.0.0.1:9090"
 grafana_url    = "http://spark.local"
+registry_url   = "http://spark.local:5000"
 """
 
 
@@ -28,6 +29,36 @@ def a_box(tmp_path: Path, *, runs: bool = True, textfile: bool = True) -> Path:
     return path
 
 
+def test_registry_url_is_required(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "box.toml"
+    path.write_text(
+        'shared_dir = "/srv/spark"\nshared_group = "spark"\n'
+        'textfile_dir = "/var/lib/node_exporter/textfile"\n'
+        'prometheus_url = "http://127.0.0.1:9090"\n'
+        'grafana_url = "http://spark.local"\n'
+    )
+    monkeypatch.setenv("SPARKS_BOX_CONFIG", str(path))
+    with pytest.raises(box.Malformed, match="registry_url"):
+        box.load()
+
+
+def test_registry_url_is_loaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "box.toml"
+    path.write_text(
+        'shared_dir = "/srv/spark"\nshared_group = "spark"\n'
+        'textfile_dir = "/var/lib/node_exporter/textfile"\n'
+        'prometheus_url = "http://127.0.0.1:9090"\n'
+        'grafana_url = "http://spark.local"\n'
+        'registry_url = "http://spark.local:5000"\n'
+    )
+    monkeypatch.setenv("SPARKS_BOX_CONFIG", str(path))
+    assert box.load().registry_url == "http://spark.local:5000"
+
+
 def test_a_missing_contract_reads_as_an_unprovisioned_box(tmp_path: Path) -> None:
     # Not an exception: "no contract" is a normal answer that the caller decides
     # what to do about. Only the CLI turns it into a refusal.
@@ -41,6 +72,7 @@ def test_a_contract_is_read_into_paths_and_urls(tmp_path: Path) -> None:
     assert loaded.textfile_dir == tmp_path / "textfile"
     assert loaded.prometheus_url == "http://127.0.0.1:9090"
     assert loaded.grafana_url == "http://spark.local"
+    assert loaded.registry_url == "http://spark.local:5000"
     assert loaded.shared_group == "spark"
 
 

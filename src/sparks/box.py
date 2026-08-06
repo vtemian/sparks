@@ -24,7 +24,7 @@ from pathlib import Path
 PATH = Path("/etc/sparks/box.toml")
 
 PATHS = ("shared_dir", "textfile_dir")
-STRINGS = ("shared_group", "prometheus_url", "grafana_url")
+STRINGS = ("shared_group", "prometheus_url", "grafana_url", "registry_url")
 
 
 class NotProvisioned(Exception):
@@ -46,6 +46,7 @@ class Box:
     textfile_dir: Path
     prometheus_url: str
     grafana_url: str
+    registry_url: str
 
     @property
     def runs_dir(self) -> Path:
@@ -90,6 +91,7 @@ def load(path: Path | None = None) -> Box | None:
         textfile_dir=Path(data["textfile_dir"]),
         prometheus_url=str(data["prometheus_url"]),
         grafana_url=str(data["grafana_url"]),
+        registry_url=str(data["registry_url"]),
     )
 
 
