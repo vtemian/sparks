@@ -1,5 +1,8 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+from docker.errors import APIError, NotFound
+
 import sparks.dock as dock
 
 
@@ -8,3 +11,25 @@ def test_client_uses_from_env() -> None:
     with patch("docker.from_env", return_value=fake) as from_env:
         assert dock.client() is fake
         from_env.assert_called_once_with()
+
+
+def test_remove_quietly_force_removes() -> None:
+    client = MagicMock()
+    container = MagicMock()
+    client.containers.get.return_value = container
+    dock.remove_quietly(client, "abc123")
+    client.containers.get.assert_called_once_with("abc123")
+    container.remove.assert_called_once_with(force=True, v=True)
+
+
+def test_remove_quietly_swallows_not_found() -> None:
+    client = MagicMock()
+    client.containers.get.side_effect = NotFound("missing")
+    dock.remove_quietly(client, "gone")
+
+
+def test_remove_quietly_swallows_api_error(caplog: pytest.LogCaptureFixture) -> None:
+    client = MagicMock()
+    client.containers.get.side_effect = APIError("denied")
+    dock.remove_quietly(client, "abc123")
+    assert "docker remove abc123" in caplog.text

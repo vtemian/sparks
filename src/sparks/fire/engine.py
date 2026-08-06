@@ -26,11 +26,12 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
 
-from sparks import spool
+from sparks import dock, spool
 from sparks.fire.runner import PullFailed
 
 LOG = logging.getLogger("sparks")
@@ -111,15 +112,9 @@ class Process:
         container = self.container_id()
         if not container:
             return
-        result = _run_quietly(
-            ["docker", "rm", "--force", "--volumes", container],
-            timeout=CLEANUP_TIMEOUT_SECONDS,
+        dock.remove_quietly(
+            dock.client(), container, timeout=CLEANUP_TIMEOUT_SECONDS
         )
-        if result is not None and result.returncode == 0:
-            # Not necessarily "left behind": --rm removal is asynchronous, so
-            # this usually just wins a harmless race with the daemon. Worth a
-            # line at debug, not a claim at info that something went wrong.
-            LOG.debug("sparks: cleaned up container %s", container[:12])
 
 
 @dataclass
@@ -148,28 +143,26 @@ class Docker:
         Without this, `docker run` is what discovers the problem, and the
         launch log is a worse place to look than a dedicated pull failure.
         """
-        with log_path.open("wb") as log:
-            try:
-                done = subprocess.run(
-                    [self.docker_bin, "pull", image],
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    stdin=subprocess.DEVNULL,
-                    timeout=PULL_TIMEOUT_SECONDS,
-                    check=False,
-                )
-            except subprocess.TimeoutExpired as e:
-                raise PullFailed(
-                    f"the pull was still going after "
-                    f"{PULL_TIMEOUT_SECONDS / 3600:g}h and was stopped"
-                ) from e
-            except OSError as e:
-                raise PullFailed(f"could not run docker pull: {e}") from e
-        if done.returncode != 0:
-            raise PullFailed(
-                f"docker pull exited {done.returncode}; the output is in "
-                f"{log_path.name}"
-            )
+        deadline = time.monotonic() + PULL_TIMEOUT_SECONDS
+        try:
+            client = dock.client()
+            with log_path.open("wb") as log:
+                for chunk in client.api.pull(image, stream=True, decode=True):
+                    if time.monotonic() > deadline:
+                        raise PullFailed(
+                            f"the pull was still going after "
+                            f"{PULL_TIMEOUT_SECONDS / 3600:g}h and was stopped"
+                        )
+                    line = chunk.get("status") or chunk.get("error") or str(chunk)
+                    log.write((line + "\n").encode())
+                    if chunk.get("error") or chunk.get("errorDetail"):
+                        raise PullFailed(
+                            f"docker pull failed; the output is in {log_path.name}"
+                        )
+        except PullFailed:
+            raise
+        except dock.DockerException as e:
+            raise PullFailed(f"could not pull image: {e}") from e
 
     def start(self, entry: spool.Entry, image: str, log_path: Path) -> Process:
         """Start the job, as its owner."""
@@ -336,9 +329,8 @@ class Docker:
         this a restart of the queue leaves the GPU held by a run whose record
         already says it ended.
         """
-        _run_quietly(
-            [self.docker_bin, "rm", "--force", "--volumes", container_id],
-            timeout=CLEANUP_TIMEOUT_SECONDS,
+        dock.remove_quietly(
+            dock.client(), container_id, timeout=CLEANUP_TIMEOUT_SECONDS
         )
 
 
@@ -385,19 +377,3 @@ def _first_line(path: Path) -> str | None:
     except OSError:
         return None
     return text.strip().splitlines()[0] if text.strip() else None
-
-
-def _run_quietly(
-    argv: list[str], timeout: float
-) -> subprocess.CompletedProcess[bytes] | None:
-    try:
-        return subprocess.run(
-            argv,
-            capture_output=True,
-            timeout=timeout,
-            check=False,
-            stdin=subprocess.DEVNULL,
-        )
-    except (OSError, subprocess.SubprocessError) as e:
-        LOG.warning("sparks: %s failed: %s", " ".join(argv[:3]), e)
-        return None

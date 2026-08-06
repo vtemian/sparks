@@ -7,11 +7,14 @@ being root on the box. They are asserted individually and on purpose.
 
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
+import sparks.dock as dock
 from sparks import spool
-from sparks.fire import engine, runner
+from sparks.fire import engine
+from sparks.fire.runner import PullFailed
 
 
 @pytest.fixture
@@ -211,14 +214,20 @@ class TestTheWholeCommand:
 
 
 class TestPull:
-    def test_a_missing_docker_binary_is_a_pull_failure_not_a_crash(
-        self, tmp_path: Path, docker: engine.Docker
+    def test_api_error_is_a_pull_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A pull failure fails one job. An exception out of here would be
         caught by the runner's blanket handler and fail it far less legibly."""
-        docker.docker_bin = "definitely-not-a-real-binary"
-        with pytest.raises(runner.PullFailed, match="could not run docker pull"):
-            docker.pull(IMAGE, tmp_path / "pull.log")
+        log = tmp_path / "pull.log"
+        fake = MagicMock()
+        fake.api.pull.side_effect = dock.APIError("boom")
+        monkeypatch.setattr("sparks.dock.client", lambda: fake)
+        eng = engine.Docker(shared_dir=tmp_path, url="http://example")
+        with pytest.raises(PullFailed, match="pull"):
+            eng.pull("missing:tag", log)
+        assert log.exists()
+        fake.api.pull.assert_called_once_with("missing:tag", stream=True, decode=True)
 
 
 class TestDroppingPrivilege:
