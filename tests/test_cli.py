@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from sparks import cli, client
-from sparks.cli import build_parser
+from sparks.client import cli, remote as client
+from sparks.client.cli import build_parser
 
 
 def test_client_cli_has_no_run() -> None:

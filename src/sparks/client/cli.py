@@ -15,7 +15,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from sparks import box, client, spool
+from sparks import box, spool
+from sparks.client import remote
 
 LOG = logging.getLogger("sparks")
 
@@ -95,7 +96,7 @@ def _add_queue_commands(
         parser.set_defaults(func=func)
 
     # Plumbing. `submit --host` is several steps against the box and these are
-    # two of them; they are not meant to be typed. See client.submit_remote.
+    # two of them; they are not meant to be typed. See remote.submit_remote.
     reserve = sub.add_parser("reserve", help=argparse.SUPPRESS)
     reserve.add_argument("--name", default="job")
     reserve.add_argument("--shared-dir", type=Path, default=None)
@@ -125,7 +126,7 @@ def _add_host(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--host",
         default=None,
-        help=f"the box to talk to over ssh. Defaults to ${client.HOST_ENV}",
+        help=f"the box to talk to over ssh. Defaults to ${remote.HOST_ENV}",
     )
     parser.add_argument(
         "--shared-dir",
@@ -153,7 +154,7 @@ def _cli_errors(fn: Command) -> Command:
     def wrap(args: argparse.Namespace, argv: list[str]) -> int:
         try:
             return fn(args, argv)
-        except client.ClientError as e:
+        except remote.ClientError as e:
             print(f"sparks: {e}", file=sys.stderr)
             return 1
         except (box.NotProvisioned, box.Malformed) as e:
@@ -167,10 +168,10 @@ def _cli_errors(fn: Command) -> Command:
 def cmd_submit(args: argparse.Namespace, argv: list[str]) -> int:
     # Host set → remote. Unset → local queue (box / unit tests). Laptops set
     # SPARKS_HOST so they never take the local path by accident.
-    host = client.host_from(args.host)
+    host = remote.host_from(args.host)
     if host:
         print(
-            client.submit_remote(
+            remote.submit_remote(
                 host,
                 name=args.name,
                 command=args.command,
@@ -184,7 +185,7 @@ def cmd_submit(args: argparse.Namespace, argv: list[str]) -> int:
     if args.image is None:
         contract = box.load()
         registry_url = contract.registry_url if contract else None
-    entry = client.submit(
+    entry = remote.submit(
         _queue_dir(args),
         name=args.name,
         command=args.command,
@@ -202,18 +203,18 @@ def _remote_or_local(local: Command) -> Command:
 
     @_cli_errors
     def wrap(args: argparse.Namespace, argv: list[str]) -> int:
-        host = client.host_from(args.host)
+        host = remote.host_from(args.host)
         if host:
             # Forwarding the argv rather than reconstructing it keeps this from
             # drifting as flags are added.
-            return client.remote(host, _without_host(argv))
+            return remote.remote(host, _without_host(argv))
         if (
             args.command_name in _QUEUE_VERBS
             and getattr(args, "shared_dir", None) is None
             and box.load() is None
         ):
-            raise client.ClientError(
-                f"set {client.HOST_ENV} or pass --host; "
+            raise remote.ClientError(
+                f"set {remote.HOST_ENV} or pass --host; "
                 f"the client always talks to the box"
             )
         return local(args, argv)
@@ -225,14 +226,14 @@ def _remote_or_local(local: Command) -> Command:
 def cmd_queue(args: argparse.Namespace, _argv: list[str]) -> int:
     queue_dir = _queue_dir(args)
     entries = spool.entries(queue_dir) if args.all else spool.publishable(queue_dir)
-    print(client.render(entries), end="")
+    print(remote.render(entries), end="")
     return 0
 
 
 def _ask(verb: str) -> Command:
     @_remote_or_local
     def wrap(args: argparse.Namespace, _argv: list[str]) -> int:
-        entry = client.ask(_queue_dir(args), args.job, verb)
+        entry = remote.ask(_queue_dir(args), args.job, verb)
         print(f"asked the runner to {verb} {entry.job.job_id}")
         return 0
 
@@ -246,14 +247,14 @@ cmd_abort = _ask("abort")
 @_remote_or_local
 def cmd_retry(args: argparse.Namespace, _argv: list[str]) -> int:
     queue_dir = _queue_dir(args)
-    again = client.retry(queue_dir, client.resolve(queue_dir, args.job))
+    again = remote.retry(queue_dir, remote.resolve(queue_dir, args.job))
     print(again.job.job_id)
     return 0
 
 
 @_remote_or_local
 def cmd_remove(args: argparse.Namespace, _argv: list[str]) -> int:
-    print(f"removed {client.remove(_queue_dir(args), args.job).job.job_id}")
+    print(f"removed {remote.remove(_queue_dir(args), args.job).job.job_id}")
     return 0
 
 
@@ -262,7 +263,7 @@ def cmd_reserve(args: argparse.Namespace, _argv: list[str]) -> int:
     # Prints the directory to rsync into. The manifest is written by the
     # `commit` that follows, and until then the runner cannot see this.
     # Runs locally on the box (submit --host ssh's this in).
-    _, path = spool.reserve(_queue_dir(args), args.name, client.local_user())
+    _, path = spool.reserve(_queue_dir(args), args.name, remote.local_user())
     print(path)
     return 0
 
@@ -274,7 +275,7 @@ def cmd_commit(args: argparse.Namespace, _argv: list[str]) -> int:
         spool.Job(
             job_id=args.path.name,
             name=args.name,
-            user=args.user or client.local_user(),
+            user=args.user or remote.local_user(),
             command=args.command,
             submitted_unix=time.time(),
             git_sha=args.git_sha,
@@ -310,7 +311,7 @@ def _queue_dir(args: argparse.Namespace) -> Path:
     contract = box.load()
     if contract is None:
         raise box.NotProvisioned(
-            f"set {client.HOST_ENV} or pass --host; "
+            f"set {remote.HOST_ENV} or pass --host; "
             f"the client always talks to the box"
         )
     queue_dir = contract.queue_dir

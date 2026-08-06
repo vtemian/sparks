@@ -37,7 +37,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sparks import box, cli, index, launcher, shared, summary
+from sparks import box, index, launcher, shared, summary
+from sparks.client import cli
 from sparks.energy import (
     MIN_COUNTER_WINDOW_SECONDS,
     RATIO_TOLERANCE,

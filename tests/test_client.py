@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-from sparks import client, spool
+from sparks import spool
+from sparks.client import remote as client
 
 IMAGE = "spark.local:5000/test/job:1"
 
@@ -377,7 +378,7 @@ class TestBuildAndPush:
             seen.append(list(argv))
             return subprocess.CompletedProcess(argv, 0)
 
-        monkeypatch.setattr("sparks.client.subprocess.run", fake_run)
+        monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
         client.build(project, "spark.local:5000/u/n:r")
         assert seen == [
             ["docker", "build", "-t", "spark.local:5000/u/n:r", str(project)]
@@ -385,7 +386,7 @@ class TestBuildAndPush:
 
     def test_push_failure_is_helpful(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
-            "sparks.client.subprocess.run",
+            "sparks.client.remote.subprocess.run",
             lambda *a, **k: subprocess.CompletedProcess(a[0], 1),
         )
         with pytest.raises(client.ClientError, match="insecure-registries"):
@@ -413,7 +414,7 @@ class TestSubmitRemote:
                 return "/q/job-1"
             return "job-1"
 
-        monkeypatch.setattr("sparks.client.subprocess.run", fake_run)
+        monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
         monkeypatch.setattr(client, "remote_capture", fake_remote_capture)
         monkeypatch.setattr(client, "local_user", lambda: "vlad")
         monkeypatch.setattr(client, "provenance", lambda _ctx: ("abc1234", False))
@@ -469,7 +470,7 @@ class TestSubmitRemote:
             fetched.append(host)
             return "http://spark.local:5000"
 
-        monkeypatch.setattr("sparks.client.subprocess.run", fake_run)
+        monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
         monkeypatch.setattr(client, "remote_capture", fake_remote_capture)
         monkeypatch.setattr(client, "fetch_registry_url", fake_fetch)
         monkeypatch.setattr(client, "local_user", lambda: "vlad")
@@ -504,7 +505,7 @@ class TestSubmitRemote:
                 return "/q/job-1"
             return "job-1"
 
-        monkeypatch.setattr("sparks.client.subprocess.run", fake_run)
+        monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
         monkeypatch.setattr(client, "remote_capture", fake_remote_capture)
         monkeypatch.setattr(client, "provenance", lambda _ctx: ("abc1234", False))
 
@@ -534,5 +535,5 @@ class TestSubmitRemote:
             assert argv[3] == "/etc/sparks/box.toml"
             return subprocess.CompletedProcess(argv, 0, stdout=toml, stderr=b"")
 
-        monkeypatch.setattr("sparks.client.subprocess.run", fake_run)
+        monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
         assert client.fetch_registry_url("box") == "http://spark.local:5000"
