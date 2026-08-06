@@ -6,7 +6,9 @@ import argparse
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 from sparks import box, spool
 from sparks.fire import control
@@ -138,7 +140,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
     try:
-        return args.func(args)
+        func = cast(Callable[[argparse.Namespace], int], args.func)
+        return func(args)
     except control.ControlError as e:
         print(f"fire: {e}", file=sys.stderr)
         return 1
