@@ -86,13 +86,13 @@ def main(argv: list[str] | None = None) -> int:
     given = list(argv if argv is not None else sys.argv[1:])
     args = build_parser().parse_args(given)
     try:
-        return cmd_run(args)
+        return run(args)
     except (box.NotProvisioned, box.Malformed) as e:
         print(f"sparks: {e}", file=sys.stderr)
         return EX_CONFIG
 
 
-def cmd_run(args: argparse.Namespace) -> int:
+def run(args: argparse.Namespace) -> int:
     settings = _settings(args)
     started = time.time()
     result = launcher.launch(

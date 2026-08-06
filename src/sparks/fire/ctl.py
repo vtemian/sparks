@@ -24,7 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     q = sub.add_parser("queue", help="what is running and what is waiting")
     q.add_argument("--all", action="store_true")
     _shared(q)
-    q.set_defaults(func=_cmd_queue)
+    q.set_defaults(func=queue)
 
     for verb, help_text in (
         ("cancel", "drop a job that has not started yet"),
@@ -36,32 +36,32 @@ def build_parser() -> argparse.ArgumentParser:
         p.set_defaults(func=_ask(verb))
 
     for verb, help_text, func in (
-        ("retry", "submit the same job again", _cmd_retry),
-        ("remove", "delete a finished job", _cmd_remove),
+        ("retry", "submit the same job again", retry),
+        ("remove", "delete a finished job", remove),
     ):
         p = sub.add_parser(verb, help=help_text)
         p.add_argument("job")
         _shared(p)
         p.set_defaults(func=func)
 
-    reserve = sub.add_parser("reserve", help=argparse.SUPPRESS)
-    reserve.add_argument("--name", default="job")
-    reserve.add_argument("--user", default="fire")
-    _shared(reserve)
-    reserve.set_defaults(func=_cmd_reserve)
+    reserve_p = sub.add_parser("reserve", help=argparse.SUPPRESS)
+    reserve_p.add_argument("--name", default="job")
+    reserve_p.add_argument("--user", default="fire")
+    _shared(reserve_p)
+    reserve_p.set_defaults(func=reserve)
 
-    commit = sub.add_parser("commit", help=argparse.SUPPRESS)
-    commit.add_argument("path", type=Path)
-    commit.add_argument("--name", default="job")
-    commit.add_argument("--user", default="fire")
-    commit.add_argument("--git-sha", default="unknown")
-    commit.add_argument("--git-dirty", action="store_true")
-    commit.add_argument("--image", required=True)
-    commit.add_argument("command", nargs="+")
-    commit.set_defaults(func=_cmd_commit)
+    commit_p = sub.add_parser("commit", help=argparse.SUPPRESS)
+    commit_p.add_argument("path", type=Path)
+    commit_p.add_argument("--name", default="job")
+    commit_p.add_argument("--user", default="fire")
+    commit_p.add_argument("--git-sha", default="unknown")
+    commit_p.add_argument("--git-dirty", action="store_true")
+    commit_p.add_argument("--image", required=True)
+    commit_p.add_argument("command", nargs="+")
+    commit_p.set_defaults(func=commit)
 
-    contract = sub.add_parser("contract", help=argparse.SUPPRESS)
-    contract.set_defaults(func=_cmd_contract)
+    contract_p = sub.add_parser("contract", help=argparse.SUPPRESS)
+    contract_p.set_defaults(func=contract)
     return parser
 
 
@@ -81,7 +81,7 @@ def ctl_main(argv: list[str]) -> int:
         return EX_CONFIG
 
 
-def _cmd_queue(args: argparse.Namespace) -> int:
+def queue(args: argparse.Namespace) -> int:
     qd = control.queue_dir(args.shared_dir)
     entries = spool.entries(qd) if args.all else spool.publishable(qd)
     print(control.render(entries), end="")
@@ -97,20 +97,20 @@ def _ask(action: str):
     return run
 
 
-def _cmd_retry(args: argparse.Namespace) -> int:
+def retry(args: argparse.Namespace) -> int:
     qd = control.queue_dir(args.shared_dir)
     again = control.retry(qd, control.resolve(qd, args.job))
     print(again.job.job_id)
     return 0
 
 
-def _cmd_remove(args: argparse.Namespace) -> int:
+def remove(args: argparse.Namespace) -> int:
     entry = control.remove(control.queue_dir(args.shared_dir), args.job)
     print(f"removed {entry.job.job_id}")
     return 0
 
 
-def _cmd_reserve(args: argparse.Namespace) -> int:
+def reserve(args: argparse.Namespace) -> int:
     _, path = spool.reserve(
         control.queue_dir(args.shared_dir), args.name, args.user
     )
@@ -118,7 +118,7 @@ def _cmd_reserve(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_commit(args: argparse.Namespace) -> int:
+def commit(args: argparse.Namespace) -> int:
     entry = spool.commit(
         args.path,
         spool.Job(
@@ -136,7 +136,7 @@ def _cmd_commit(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_contract(_args: argparse.Namespace) -> int:
+def contract(_args: argparse.Namespace) -> int:
     c = box.load()
     if c is None:
         raise box.NotProvisioned(

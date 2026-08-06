@@ -56,13 +56,13 @@ def main(argv: list[str] | None = None) -> int:
         return ctl.ctl_main(given)
     args = build_parser().parse_args(given)
     try:
-        return cmd_runner(args)
+        return serve(args)
     except (box.NotProvisioned, box.Malformed) as e:
         print(f"fire: {e}", file=sys.stderr)
         return EX_CONFIG
 
 
-def cmd_runner(args: argparse.Namespace) -> int:
+def serve(args: argparse.Namespace) -> int:
     """The queue container's entry point."""
     contract = box.load()
     shared_dir = args.shared_dir or (contract.shared_dir if contract else None)

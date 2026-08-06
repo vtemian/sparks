@@ -264,6 +264,11 @@ def host_from(explicit: str | None) -> str | None:
     return explicit or os.environ.get(HOST_ENV) or None
 
 
+def is_configured(explicit: str | None = None) -> bool:
+    """Whether the laptop knows which box to talk to."""
+    return host_from(explicit) is not None
+
+
 def remote_bin() -> str:
     return os.environ.get(REMOTE_BIN_ENV) or DEFAULT_REMOTE_BIN
 
@@ -283,19 +288,16 @@ def ssh_argv(host: str, argv: list[str]) -> list[str]:
     return ["ssh", host, shlex.join([remote_bin(), *argv])]
 
 
-def remote(host: str, argv: list[str]) -> int:
-    """Run the same command on the box.
-
-    One implementation for every verb, rather than each growing its own remote
-    path.
-    """
+def run(host: str, argv: list[str]) -> int:
+    """SSH `fire-ctl <argv>` on `host`; return the remote exit code."""
     try:
         return subprocess.run(ssh_argv(host, argv), check=False).returncode
     except FileNotFoundError as e:
         raise ClientError("ssh is not installed") from e
 
 
-def remote_capture(host: str, argv: list[str]) -> str:
+def capture(host: str, argv: list[str]) -> str:
+    """SSH `fire-ctl <argv>` on `host`; return stdout (stripped)."""
     done = subprocess.run(
         ssh_argv(host, argv),
         capture_output=True,
@@ -339,7 +341,7 @@ def submit_remote(
         name=name,
         sha=sha,
     )
-    reserved = remote_capture(
+    reserved = capture(
         host, ["reserve", "--name", name, "--user", who]
     )
     if not reserved:
@@ -359,7 +361,7 @@ def submit_remote(
             f"could not copy --data to {host}: "
             f"{done.stderr.decode(errors='replace').strip()}"
         )
-    return remote_capture(host, commit_argv(reserved, name, command, sha, dirty, tag))
+    return capture(host, commit_argv(reserved, name, command, sha, dirty, tag))
 
 
 def commit_argv(

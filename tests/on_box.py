@@ -38,7 +38,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from sparks import box, index, shared, summary
-from sparks.client import cli
 from sparks.energy import (
     MIN_COUNTER_WINDOW_SECONDS,
     RATIO_TOLERANCE,
@@ -163,7 +162,7 @@ def check_contract(report: Report, shared_dir: Path) -> None:
         report.bad(
             "the box declares itself provisioned",
             f"{box.config_path()} is absent, so supervise refuses with exit "
-            f"{cli.EX_CONFIG}. Converge sparkup with the sparks role.",
+            f"{os.EX_CONFIG}. Converge sparkup with the sparks role.",
         )
         return
     report.ok("the box declares itself provisioned", str(box.config_path()))

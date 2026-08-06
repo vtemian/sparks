@@ -1,5 +1,6 @@
 """The laptop client surface: queue verbs only, no run/runner/demo."""
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -45,22 +46,22 @@ def test_queue_verbs_require_host(
 ) -> None:
     monkeypatch.delenv(client.HOST_ENV, raising=False)
     code = cli.main(["queue"])
-    assert code == 1
+    assert code == os.EX_CONFIG
     assert client.HOST_ENV in capsys.readouterr().err
 
 
 def test_queue_sshes_fire_ctl_queue(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(client.HOST_ENV, raising=False)
-    with patch.object(client, "remote", return_value=0) as remote_fn:
+    with patch.object(client, "run", return_value=0) as run_fn:
         assert cli.main(["queue", "--host", "box", "--all"]) == 0
-    remote_fn.assert_called_once_with("box", ["queue", "--all"])
+    run_fn.assert_called_once_with("box", ["queue", "--all"])
 
 
 def test_cancel_sshes_fire_ctl_cancel(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(client.HOST_ENV, "box")
-    with patch.object(client, "remote", return_value=0) as remote_fn:
+    with patch.object(client, "run", return_value=0) as run_fn:
         assert cli.main(["cancel", "job-1"]) == 0
-    remote_fn.assert_called_once_with("box", ["cancel", "job-1"])
+    run_fn.assert_called_once_with("box", ["cancel", "job-1"])
 
 
 def test_submit_requires_host_and_never_runs_local(
@@ -72,6 +73,6 @@ def test_submit_requires_host_and_never_runs_local(
     data = tmp_path / "data"
     data.mkdir()
     code = cli.main(["submit", "--data", str(data), "--", "true"])
-    assert code == 1
+    assert code == os.EX_CONFIG
     assert client.HOST_ENV in capsys.readouterr().err
 

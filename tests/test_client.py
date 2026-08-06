@@ -372,6 +372,15 @@ class TestReachingTheBox:
     def test_no_host_anywhere_means_here(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(client.HOST_ENV, raising=False)
         assert client.host_from(None) is None
+        assert not client.is_configured(None)
+
+    def test_is_configured_when_host_is_known(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(client.HOST_ENV, raising=False)
+        assert client.is_configured("box")
+        monkeypatch.setenv(client.HOST_ENV, "from-env")
+        assert client.is_configured(None)
 
 
 class TestBuildAndPush:
@@ -420,14 +429,14 @@ class TestSubmitRemote:
             calls.append(("run", list(argv)))
             return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
 
-        def fake_remote_capture(host: str, argv: list[str]) -> str:
-            calls.append(("remote", list(argv)))
+        def fake_capture(host: str, argv: list[str]) -> str:
+            calls.append(("ssh", list(argv)))
             if argv[0] == "reserve":
                 return "/q/job-1"
             return "job-1"
 
         monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
-        monkeypatch.setattr(client, "remote_capture", fake_remote_capture)
+        monkeypatch.setattr(client, "capture", fake_capture)
         monkeypatch.setattr(client, "local_user", lambda: "vlad")
         monkeypatch.setattr(client, "provenance", lambda _ctx: ("abc1234", False))
 
@@ -442,7 +451,7 @@ class TestSubmitRemote:
         assert job_id == "job-1"
 
         kinds = [kind for kind, _ in calls]
-        assert kinds == ["run", "run", "remote", "run", "remote"]
+        assert kinds == ["run", "run", "ssh", "run", "ssh"]
 
         tag = "spark.local:5000/vlad/exp:abc1234"
         assert calls[0] == (
@@ -451,7 +460,7 @@ class TestSubmitRemote:
         )
         assert calls[1] == ("run", ["docker", "push", tag])
         assert calls[2] == (
-            "remote",
+            "ssh",
             ["reserve", "--name", "exp", "--user", "vlad"],
         )
         assert calls[3][1][0] == "rsync"
@@ -476,7 +485,7 @@ class TestSubmitRemote:
         ) -> subprocess.CompletedProcess[bytes]:
             return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
 
-        def fake_remote_capture(host: str, argv: list[str]) -> str:
+        def fake_capture(host: str, argv: list[str]) -> str:
             if argv[0] == "reserve":
                 return "/q/job-1"
             return "job-1"
@@ -486,7 +495,7 @@ class TestSubmitRemote:
             return "http://spark.local:5000"
 
         monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
-        monkeypatch.setattr(client, "remote_capture", fake_remote_capture)
+        monkeypatch.setattr(client, "capture", fake_capture)
         monkeypatch.setattr(client, "fetch_registry_url", fake_fetch)
         monkeypatch.setattr(client, "local_user", lambda: "vlad")
         monkeypatch.setattr(client, "provenance", lambda _ctx: ("abc1234", False))
@@ -514,14 +523,14 @@ class TestSubmitRemote:
             calls.append(("run", list(argv)))
             return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
 
-        def fake_remote_capture(host: str, argv: list[str]) -> str:
-            calls.append(("remote", list(argv)))
+        def fake_capture(host: str, argv: list[str]) -> str:
+            calls.append(("ssh", list(argv)))
             if argv[0] == "reserve":
                 return "/q/job-1"
             return "job-1"
 
         monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
-        monkeypatch.setattr(client, "remote_capture", fake_remote_capture)
+        monkeypatch.setattr(client, "capture", fake_capture)
         monkeypatch.setattr(client, "provenance", lambda _ctx: ("abc1234", False))
 
         client.submit_remote(
@@ -534,7 +543,7 @@ class TestSubmitRemote:
         )
         assert all(c[1][:1] != ["docker"] for c in calls if c[0] == "run")
         commit = next(
-            argv for kind, argv in calls if kind == "remote" and argv[0] == "commit"
+            argv for kind, argv in calls if kind == "ssh" and argv[0] == "commit"
         )
         assert "already:pushed" in commit
 
