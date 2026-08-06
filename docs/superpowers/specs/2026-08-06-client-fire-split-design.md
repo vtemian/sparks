@@ -11,6 +11,8 @@ Client / server only:
 | `sparks` | `sparks.client` | Laptop: submit, queue, cancel, … |
 | `fire` | `sparks.fire` | Box: queue daemon |
 
+SSH-RPC via host `fire-ctl` (`docker compose exec … fire <verb>`) supersedes hidden on-box `sparks` verbs.
+
 Job supervision (energy, metrics, summary around `docker run`) is **private** to the server: `python -m sparks.fire.supervise`, not a third console script. It exists so measurement stays outside the training image without putting sparks in every Dockerfile.
 
 ## Non-goals

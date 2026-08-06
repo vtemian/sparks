@@ -578,7 +578,7 @@ Expected: contract prints `registry_url`; queue prints empty or job table. **Req
 - Modify: `INSTALL_CLAUDE.md` (client/server paragraph: SSH → fire-ctl → fire)
 - Modify: `docs/superpowers/specs/2026-08-06-client-fire-split-design.md` — add a one-line note that SSH-RPC into `fire` supersedes “hidden sparks verbs on the box” (do not rewrite the whole doc)
 
-- [ ] **Step 1: Update README client section**
+- [x] **Step 1: Update README client section**
 
 Replace any implication that ssh runs `sparks` on the box for queue verbs. Example:
 
@@ -588,13 +588,13 @@ The laptop client SSHes `fire-ctl` on the box (installed by sparkup), which
 still uses rsync over SSH into the shared spool path.
 ```
 
-- [ ] **Step 2: Run full test suite**
+- [x] **Step 2: Run full test suite**
 
 Run: `uv run pytest -q`
 
 Expected: PASS (all green)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add README.md INSTALL_CLAUDE.md docs/superpowers/specs/2026-08-06-client-fire-split-design.md

@@ -15,6 +15,9 @@ own training runs. Do not push work across that line in either direction.
 | Laptop venv | `sparks` | client: build/push image, upload `--data`, enqueue, queue/cancel/abort/remove |
 | Queue image | `fire` | server: drain the spool, pull image, start job, honour cancel/abort |
 
+Queue control from the laptop SSHes host `fire-ctl` (sparkup installs it), which `docker exec`s
+into the queue container and runs `fire <verb>`; bulk `--data` still rsyncs over SSH.
+
 Supervision of each training container is private: `python -m sparks.fire.supervise` inside the
 image (called by `fire`), not a console script on PATH. There is no `sparks-run`, `sparks-runner`,
 laptop `sparks run`, or `sparks demo`. Images are built on the laptop and pushed to the box
@@ -160,8 +163,8 @@ distinct so a queue can tell a misconfigured box from a crashed job). Explicit `
 `--url` still override it for tests and non-sparkup machines.
 
 Laptops never load the contract locally for the happy path: they set `SPARKS_HOST` (or `--host`)
-and the client talks to the box over ssh, reading `registry_url` from the remote contract when it
-needs to build and push.
+and SSH `fire-ctl` on the box for queue verbs and `fire-ctl contract` for `registry_url` when
+building and pushing.
 
 This replaced two guesses, both of which lost data quietly. `--shared-dir` used to default to
 `/srv/spark`, which is *this repo's* default and not the box's — the box overrides it — so omitting

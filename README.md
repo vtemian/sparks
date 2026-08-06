@@ -21,6 +21,10 @@ The client builds the image from the current directory (or `--context`), pushes 
 registry, uploads `--data` into the job, and enqueues it. Inside the container that folder is
 mounted at `/data` (`$SPARKS_DATA`); training code should read that path, not a laptop path.
 
+The laptop client SSHes `fire-ctl` on the box (installed by sparkup), which `docker exec`s into
+the queue container and runs `fire <verb>`. Bulk `--data` still uses rsync over SSH into the
+shared spool path.
+
 The registry is plain HTTP on the LAN (same trust boundary as ssh). Docker on the laptop must
 allow it, e.g. in `daemon.json`:
 
