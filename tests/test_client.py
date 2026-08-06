@@ -10,6 +10,7 @@ import pytest
 
 from sparks import spool
 from sparks.client import remote as client
+from sparks.fire import control
 
 IMAGE = "spark.local:5000/test/job:1"
 
@@ -161,12 +162,12 @@ class TestWhatIsShipped:
 class TestFindingAJob:
     def test_a_full_id_matches(self, queue: Path, data: Path) -> None:
         entry = _submit(queue, data)
-        assert client.resolve(queue, entry.job.job_id).job.job_id == entry.job.job_id
+        assert control.resolve(queue, entry.job.job_id).job.job_id == entry.job.job_id
 
     def test_a_unique_fragment_matches(self, queue: Path, data: Path) -> None:
         """Job ids are long and nobody retypes them."""
         entry = _submit(queue, data, name="distinctive")
-        assert client.resolve(queue, "distinctive").job.job_id == entry.job.job_id
+        assert control.resolve(queue, "distinctive").job.job_id == entry.job.job_id
 
     def test_an_ambiguous_name_is_refused_rather_than_guessed(
         self, queue: Path, data: Path
@@ -175,8 +176,8 @@ class TestFindingAJob:
         for _ in range(3):
             entry = _submit(queue, data, name="same")
             spool.set_state(entry.path, spool.State(state=spool.FINISHED))
-        with pytest.raises(client.ClientError, match="matches several"):
-            client.resolve(queue, "same")
+        with pytest.raises(control.ControlError, match="matches several"):
+            control.resolve(queue, "same")
 
     def test_one_live_job_among_finished_ones_is_not_ambiguous(
         self, queue: Path, data: Path
@@ -185,23 +186,23 @@ class TestFindingAJob:
         old = _submit(queue, data)
         spool.set_state(old.path, spool.State(state=spool.FINISHED))
         live = _submit(queue, data)
-        assert client.resolve(queue, "e0").job.job_id == live.job.job_id
+        assert control.resolve(queue, "e0").job.job_id == live.job.job_id
 
     def test_nothing_matching_says_so(self, queue: Path, data: Path) -> None:
         _submit(queue, data)
-        with pytest.raises(client.ClientError, match="no job matches"):
-            client.resolve(queue, "nonsense")
+        with pytest.raises(control.ControlError, match="no job matches"):
+            control.resolve(queue, "nonsense")
 
     def test_an_empty_queue_says_that_instead(self, queue: Path) -> None:
         spool.make_queue_dir(queue)
-        with pytest.raises(client.ClientError, match="no jobs"):
-            client.resolve(queue, "anything")
+        with pytest.raises(control.ControlError, match="no jobs"):
+            control.resolve(queue, "anything")
 
 
 class TestStopping:
     def test_asking_to_abort_leaves_a_request(self, queue: Path, data: Path) -> None:
         entry = _submit(queue, data)
-        client.ask(queue, "e0", spool.ABORT)
+        control.ask(queue, "e0", spool.ABORT)
         assert [r.action for r in spool.requests(entry.path)] == [spool.ABORT]
 
     def test_a_job_that_already_ended_cannot_be_stopped(
@@ -209,23 +210,23 @@ class TestStopping:
     ) -> None:
         entry = _submit(queue, data)
         spool.set_state(entry.path, spool.State(state=spool.FINISHED))
-        with pytest.raises(client.ClientError, match="nothing to stop"):
-            client.ask(queue, "e0", spool.ABORT)
+        with pytest.raises(control.ControlError, match="nothing to stop"):
+            control.ask(queue, "e0", spool.ABORT)
 
     def test_removing_a_running_job_is_refused_with_the_verb_that_works(
         self, queue: Path, data: Path
     ) -> None:
         entry = _submit(queue, data)
         spool.set_state(entry.path, spool.State(state=spool.RUNNING))
-        with pytest.raises(client.ClientError, match="sparks abort"):
-            client.remove(queue, "e0")
+        with pytest.raises(control.ControlError, match="sparks abort"):
+            control.remove(queue, "e0")
 
     def test_removing_a_finished_job_takes_the_context_with_it(
         self, queue: Path, data: Path
     ) -> None:
         entry = _submit(queue, data)
         spool.set_state(entry.path, spool.State(state=spool.FINISHED))
-        client.remove(queue, "e0")
+        control.remove(queue, "e0")
         assert not entry.path.exists()
 
 
@@ -235,7 +236,7 @@ class TestRetry:
     ) -> None:
         entry = _submit(queue, data, command=["python", "train.py"])
         spool.set_state(entry.path, spool.State(state=spool.FAILED, exit_code=1))
-        again = client.retry(queue, spool.load(entry.path))
+        again = control.retry(queue, spool.load(entry.path))
         assert again.job.retry_of == entry.job.job_id
         assert again.job.command == ["python", "train.py"]
         assert again.job.image == entry.job.image
@@ -247,15 +248,15 @@ class TestRetry:
         """It would run the same thing twice at once, on one GPU."""
         entry = _submit(queue, data)
         spool.set_state(entry.path, spool.State(state=spool.RUNNING))
-        with pytest.raises(client.ClientError, match=r"twice at once"):
-            client.retry(queue, spool.load(entry.path))
+        with pytest.raises(control.ControlError, match=r"twice at once"):
+            control.retry(queue, spool.load(entry.path))
 
     def test_the_retry_is_owned_by_whoever_retried_it(
         self, queue: Path, data: Path
     ) -> None:
         entry = _submit(queue, data)
         spool.set_state(entry.path, spool.State(state=spool.FINISHED))
-        again = client.retry(queue, spool.load(entry.path))
+        again = control.retry(queue, spool.load(entry.path))
         assert again.owner_uid == os.getuid()
 
     def test_retrying_someone_elses_job_is_refused(
@@ -267,20 +268,20 @@ class TestRetry:
         monkeypatch.setattr(
             spool.Entry, "may_be_controlled_by", lambda self, uid: False
         )
-        with pytest.raises(client.ClientError, match="belongs to"):
-            client.retry(queue, spool.load(entry.path))
+        with pytest.raises(control.ControlError, match="belongs to"):
+            control.retry(queue, spool.load(entry.path))
 
 
 class TestListing:
     def test_an_empty_queue_says_so_rather_than_printing_a_bare_header(
         self,
     ) -> None:
-        assert client.render([]) == "the queue is empty\n"
+        assert control.render([]) == "the queue is empty\n"
 
     def test_the_columns_line_up(self, queue: Path, data: Path) -> None:
         _submit(queue, data, name="short")
         _submit(queue, data, name="a-much-longer-name")
-        lines = client.render(spool.entries(queue)).splitlines()
+        lines = control.render(spool.entries(queue)).splitlines()
         assert len(lines) == 3
         # The state column starts at the same offset on both rows, which it
         # only does if the widest job id set the width.
@@ -289,14 +290,14 @@ class TestListing:
     def test_a_running_job_shows_its_run(self, queue: Path, data: Path) -> None:
         entry = _submit(queue, data)
         spool.set_state(entry.path, spool.State(state=spool.RUNNING, run_id="run-abc"))
-        assert "run-abc" in client.render(spool.entries(queue))
+        assert "run-abc" in control.render(spool.entries(queue))
 
     @pytest.mark.parametrize(
         ("seconds", "shown"),
         [(5, "5s"), (90, "1m"), (7200, "2.0h"), (200_000, "2d")],
     )
     def test_ages_are_readable(self, seconds: float, shown: str) -> None:
-        assert client._duration(seconds) == shown
+        assert control._duration(seconds) == shown
 
 
 class TestReachingTheBox:

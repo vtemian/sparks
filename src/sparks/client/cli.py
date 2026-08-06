@@ -17,6 +17,7 @@ from pathlib import Path
 
 from sparks import box, spool
 from sparks.client import remote
+from sparks.fire import control
 
 LOG = logging.getLogger("sparks")
 
@@ -160,7 +161,7 @@ def _cli_errors(fn: Command) -> Command:
     def wrap(args: argparse.Namespace, argv: list[str]) -> int:
         try:
             return fn(args, argv)
-        except remote.ClientError as e:
+        except (remote.ClientError, control.ControlError) as e:
             print(f"sparks: {e}", file=sys.stderr)
             return 1
         except (box.NotProvisioned, box.Malformed) as e:
@@ -234,14 +235,14 @@ def cmd_remove(args: argparse.Namespace, _argv: list[str]) -> int:
 def cmd_serve_queue(args: argparse.Namespace, _argv: list[str]) -> int:
     queue_dir = _queue_dir(args)
     entries = spool.entries(queue_dir) if args.all else spool.publishable(queue_dir)
-    print(remote.render(entries), end="")
+    print(control.render(entries), end="")
     return 0
 
 
 def _ask_serve(verb: str) -> Command:
     @_cli_errors
     def wrap(args: argparse.Namespace, _argv: list[str]) -> int:
-        entry = remote.ask(_queue_dir(args), args.job, verb)
+        entry = control.ask(_queue_dir(args), args.job, verb)
         print(f"asked the runner to {verb} {entry.job.job_id}")
         return 0
 
@@ -255,14 +256,14 @@ cmd_serve_abort = _ask_serve("abort")
 @_cli_errors
 def cmd_serve_retry(args: argparse.Namespace, _argv: list[str]) -> int:
     queue_dir = _queue_dir(args)
-    again = remote.retry(queue_dir, remote.resolve(queue_dir, args.job))
+    again = control.retry(queue_dir, control.resolve(queue_dir, args.job))
     print(again.job.job_id)
     return 0
 
 
 @_cli_errors
 def cmd_serve_remove(args: argparse.Namespace, _argv: list[str]) -> int:
-    print(f"removed {remote.remove(_queue_dir(args), args.job).job.job_id}")
+    print(f"removed {control.remove(_queue_dir(args), args.job).job.job_id}")
     return 0
 
 
