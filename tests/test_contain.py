@@ -147,6 +147,65 @@ class TestMain:
         fake_client.containers.run.assert_called_once()
         fake_container.remove.assert_called_once_with(force=True, v=True)
 
+    def test_stops_if_aborted_during_create(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cidfile = tmp_path / "container.id"
+        fake_container = MagicMock()
+        fake_container.id = "abc123deadbeef"
+        fake_container.wait.return_value = {"StatusCode": 137}
+
+        fake_client = MagicMock()
+
+        def run_then_mark_abort(*_a: object, **_k: object) -> MagicMock:
+            contain._abort_requested = True
+            return fake_container
+
+        fake_client.containers.run.side_effect = run_then_mark_abort
+        monkeypatch.setattr("sparks.fire.contain.dock.client", lambda: fake_client)
+
+        code = contain.main(
+            [
+                "--name",
+                "sparks-job-1",
+                "--cidfile",
+                str(cidfile),
+                "--user",
+                "1:1",
+                "--shared-dir",
+                "/shared",
+                "--data-dir",
+                str(tmp_path / "data"),
+                "--workdir",
+                "/shared",
+                "img:t",
+                "true",
+            ]
+        )
+
+        assert code == 1
+        fake_container.stop.assert_called_once_with(timeout=30)
+        fake_container.logs.assert_not_called()
+        fake_container.remove.assert_called_once_with(force=True, v=True)
+
+    def test_command_tokens_do_not_change_volumes(self) -> None:
+        kwargs = contain.run_kwargs(
+            name="n",
+            image="i",
+            command=["--volume", "/:/host", "sh"],
+            user="1:1",
+            shared_dir="/shared",
+            data_dir="/data/job",
+            workdir="/shared",
+            gpus="",
+            environment={},
+        )
+        assert kwargs["volumes"] == {
+            "/shared": {"bind": "/shared", "mode": "rw"},
+            "/data/job": {"bind": "/data", "mode": "ro"},
+        }
+        assert kwargs["command"] == ["--volume", "/:/host", "sh"]
+
     def test_stops_container_on_sigterm(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

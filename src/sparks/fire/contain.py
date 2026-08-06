@@ -160,6 +160,14 @@ def main(argv: list[str] | None = None) -> int:
             raise RuntimeError(msg)
         args.cidfile.write_text(container_id + "\n", encoding="utf-8")
 
+        # SIGTERM during containers.run() sets the flag but cannot stop yet:
+        # the handle did not exist. Catch up before we stream logs.
+        if _abort_requested:
+            with contextlib.suppress(Exception):
+                container.stop(timeout=int(process.GRACE_SECONDS))
+            container.wait()
+            return 1
+
         for chunk in container.logs(
             stream=True, follow=True, stdout=True, stderr=True
         ):
