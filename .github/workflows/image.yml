@@ -79,4 +79,5 @@ jobs:
         if: github.event_name != 'pull_request'
         run: |
           docker run --rm "${REGISTRY}/${IMAGE}:sha-${GITHUB_SHA}" --help > /dev/null
-          docker run --rm --entrypoint docker "${REGISTRY}/${IMAGE}:sha-${GITHUB_SHA}" --version
+          docker run --rm --entrypoint python "${REGISTRY}/${IMAGE}:sha-${GITHUB_SHA}" \
+            -c 'import docker; import sparks.fire.contain; print(docker.__version__)'

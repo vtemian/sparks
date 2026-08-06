@@ -1,8 +1,9 @@
 # The queue runner, and nothing else.
 #
 # This image is infrastructure, not a base for training jobs. A job brings its
-# own image built from its own Dockerfile, and this one starts it -- which is
-# why the Docker CLI is here and why the socket is mounted at runtime.
+# own image built from its own Dockerfile, and this one starts it via the Docker
+# SDK (PyPI `docker`) talking to the host daemon through the socket mounted at
+# runtime by sparkup.
 #
 # It deliberately does NOT contain torch, CUDA or anything a model needs. The
 # whole point of supervision living outside the training container is that a
@@ -35,31 +36,12 @@ RUN uv sync --locked --no-dev --no-editable
 
 FROM python:${PYTHON_VERSION}-slim
 
-# The version of the Docker CLI, which is not the version of the daemon it
-# talks to: the client negotiates the API version down, so this only has to be
-# recent enough for the flags the engine uses.
-ARG DOCKER_VERSION=27.5.1
-ARG TARGETARCH
-
 RUN set -eux; \
     apt-get update; \
     # rsync: how a retry clones an existing job's data tree on the box.
     # ca-certificates: for pulling job images from the local registry over HTTPS
     # mirrors if the daemon is configured that way; cheap either way.
-    apt-get install -y --no-install-recommends rsync ca-certificates curl; \
-    case "${TARGETARCH}" in \
-        amd64) docker_arch=x86_64 ;; \
-        arm64) docker_arch=aarch64 ;; \
-        *) echo "no docker CLI build for ${TARGETARCH}" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL "https://download.docker.com/linux/static/stable/${docker_arch}/docker-${DOCKER_VERSION}.tgz" \
-        -o /tmp/docker.tgz; \
-    # Only the client. The tarball also carries dockerd, containerd and runc,
-    # none of which belong in here -- this talks to the host's daemon.
-    tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docker; \
-    rm /tmp/docker.tgz; \
-    apt-get purge -y curl; \
-    apt-get autoremove -y; \
+    apt-get install -y --no-install-recommends rsync ca-certificates; \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /opt/venv /opt/venv
