@@ -43,8 +43,9 @@ ARG TARGETARCH
 
 RUN set -eux; \
     apt-get update; \
-    # rsync: how a job's code gets into the queue, and how a retry clones it.
-    # ca-certificates: for pulling base images during a job's build.
+    # rsync: how a retry clones an existing job's data tree on the box.
+    # ca-certificates: for pulling job images from the local registry over HTTPS
+    # mirrors if the daemon is configured that way; cheap either way.
     apt-get install -y --no-install-recommends rsync ca-certificates curl; \
     case "${TARGETARCH}" in \
         amd64) docker_arch=x86_64 ;; \

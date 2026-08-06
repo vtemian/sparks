@@ -152,7 +152,7 @@ class TestWhatIsShipped:
 
     def test_the_source_slash_is_not_lost(self, project: Path) -> None:
         """Without the trailing slash rsync nests the directory inside the
-        destination, and the Dockerfile is then one level too deep."""
+        destination, and `/data` would then be one level too deep."""
         argv = client.rsync_argv(project, "/dest")
         assert argv[-2] == f"{project}/"
 

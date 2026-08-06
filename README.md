@@ -3,16 +3,42 @@
 Training runs on the DGX Spark, with the curves in Grafana next to the hardware they ran on.
 
 Needs a box provisioned by [sparkup](https://github.com/vtemian/sparkup): Prometheus with the
-remote-write receiver, and Grafana on `http://spark.local`. sparkup's `sparks` role provisions the
-rest and writes `/etc/sparks/box.toml`, which is where this framework learns the box's shared
-directory, textfile directory and Prometheus URL.
+remote-write receiver, Grafana on `http://spark.local`, a local image registry, and the queue
+runner. sparkup's `sparks` role writes `/etc/sparks/box.toml` (shared directory, textfile
+directory, Prometheus URL, `registry_url`), and its registry role is what jobs push to.
 
-Without that file `sparks run` refuses to start, exiting 78, rather than recording a run into a
-directory nothing reads. On a machine sparkup does not manage, say where things are explicitly:
+## Submit a job
+
+From a laptop with Docker and ssh:
 
 ```sh
-sparks run --shared-dir /tmp/runs --url "" -- python train.py   # empty url: no telemetry
+export SPARKS_HOST=spark.local   # or you@spark.local
+sparks submit --data ./corpus --name e0 -- python train.py
 ```
+
+The client builds the image from the current directory (or `--context`), pushes it to the box
+registry, uploads `--data` into the job, and enqueues it. Inside the container that folder is
+mounted at `/data` (`$SPARKS_DATA`); training code should read that path, not a laptop path.
+
+The registry is plain HTTP on the LAN (same trust boundary as ssh). Docker on the laptop must
+allow it, e.g. in `daemon.json`:
+
+```json
+{ "insecure-registries": ["spark.local:5000"] }
+```
+
+Then restart Docker Desktop / dockerd. Use the same host:port as `registry_url` in the box
+contract.
+
+```sh
+sparks queue            # what's running and waiting
+sparks cancel <job>     # drop a job that has not started
+sparks abort <job>      # stop one whether or not it has started
+sparks remove <job>     # delete a finished job
+```
+
+`sparks` is the laptop client. On the box, `sparks-runner` drains the queue and nests
+`sparks-run` around each training container — those are not laptop commands.
 
 ## Instrument a run
 
@@ -39,7 +65,8 @@ make deploy SPARKS_HOST=you@spark.local  # if your SSH login differs
 ```
 
 Pushes the tree, installs it into the training venv, and hands Grafana both dashboards. Grafana picks
-them up within 10 seconds; no restart, no root.
+them up within 10 seconds; no restart, no root. The image registry and queue runner come from
+sparkup (`make apply` there), not from this deploy.
 
 ## Develop
 

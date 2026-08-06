@@ -4,9 +4,22 @@ This repo's facts, decisions and traps, for an agent working in it. Humans want
 [README.md](README.md).
 
 **Scope.** sparks owns training runs: emitting their metrics, launching them, and queueing them.
-[sparkup](https://github.com/vtemian/sparkup) owns the box and gets system metrics into Prometheus,
-and its `INSTALL_CLAUDE.md` says explicitly that it does not own training runs. Do not push work
-across that line in either direction.
+[sparkup](https://github.com/vtemian/sparkup) owns the box (including the local image registry) and
+gets system metrics into Prometheus, and its `INSTALL_CLAUDE.md` says explicitly that it does not
+own training runs. Do not push work across that line in either direction.
+
+**Three entry points, not one.**
+
+| Script | Where | Role |
+|---|---|---|
+| `sparks` | laptop | client: build/push image, upload `--data`, enqueue, queue/cancel/abort/remove |
+| `sparks-runner` | box (queue container) | drain the spool: pull image, start job, honour cancel/abort |
+| `sparks-run` | box, nested by the runner | training wrapper: metrics lifecycle, energy, run directory |
+
+There is no laptop `sparks run` and no `sparks demo`. Images are built on the laptop and pushed to
+the box registry; the runner only pulls. Job data is one folder via `--data`, mounted at `/data`
+(`$SPARKS_DATA`) in the container — training code must read that path. The box does **not** build
+from a shipped `context/` directory.
 
 ---
 
@@ -93,6 +106,16 @@ rather than degrading. Terminal state lives on `training_run_end_timestamp_secon
 
 ## Traps
 
+- **Laptop Docker needs `insecure-registries` for `registry_url`.** The registry is plain HTTP on
+  purpose (LAN trust = ssh trust). Without e.g. `{"insecure-registries": ["spark.local:5000"]}` in
+  the laptop's `daemon.json` (then restart Docker), `docker push` fails and submit dies before the
+  job is reserved. Match the host:port in `/etc/sparks/box.toml`'s `registry_url`.
+- **`--data` is required; train against `/data` or `$SPARKS_DATA`.** The client uploads that folder
+  into the job and the runner mounts it read-only at `/data`. A script that hard-codes a laptop
+  corpus path will fail on the box even though submit succeeded.
+- **The box never builds a job image.** `job.image` is required; `sparks-runner` pulls it. Shipping
+  project `context/` for `docker build` on the box is gone. To change code, rebuild and submit from
+  a laptop (or pass `--image` to reuse a tag already in the registry).
 - **`# noqa: BLE001` fails `ruff check` here.** `BLE` is not in the `select` list, so `RUF100` flags
   the directive as unused. The broad `except` clauses carry plain comments instead.
 - **`prometheus_remote_writer` ships no `py.typed`**, so its import carries
@@ -129,11 +152,15 @@ its untracked `host_vars`. Write `$SPARKS_SHARED_DIR` in this repo, never a lite
 project's name into a framework meant to serve several is the mistake this section exists to prevent.
 
 **The box says where those paths are; sparks does not guess.** sparkup's `sparks` role writes
-`/etc/sparks/box.toml`, and `sparks run` reads it for the shared directory, the textfile directory
-and the Prometheus URL. Without that file the command **refuses to start**, exiting **78**
-(`EX_CONFIG`, distinct so a queue can tell a misconfigured box from a crashed job). Explicit
-`--shared-dir` and `--url` still override it, which is how the framework stays usable on a laptop or
-a box sparkup does not manage.
+`/etc/sparks/box.toml` with the shared directory, textfile directory, Prometheus URL, Grafana URL
+and `registry_url`. `sparks-run` and `sparks-runner` read it on the box; without that file (or with
+a promised path missing) they **refuse to start**, exiting **78** (`EX_CONFIG`, distinct so a queue
+can tell a misconfigured box from a crashed job). Explicit `--shared-dir` and `--url` still
+override it for tests and non-sparkup machines.
+
+Laptops never load the contract locally for the happy path: they set `SPARKS_HOST` (or `--host`)
+and the client talks to the box over ssh, reading `registry_url` from the remote contract when it
+needs to build and push.
 
 This replaced two guesses, both of which lost data quietly. `--shared-dir` used to default to
 `/srv/spark`, which is *this repo's* default and not the box's — the box overrides it — so omitting
@@ -146,11 +173,14 @@ like success. A run that cannot be recorded properly now refuses to start instea
 uses, and for the same reason.
 
 - `SPARKS_HOST` defaults to `spark.local`, so it uses your own SSH login. Nobody else's belongs in a
-  tracked file.
+  tracked file. The laptop client uses the same variable to reach the queue.
 - `SPARKS_SHARED_DIR` defaults to `/srv/spark`, matching sparkup's default rather than any box.
 - `SPARKS_VENV` has **no** default and `make deploy` refuses without it. It is the venv your training
   code runs in, which belongs to a project this one does not know about. Guessing would be worse than
   failing.
+
+The image registry itself is sparkup's: converge with the `registry` role so `registry_url` names a
+service that exists. `make deploy` here does not start it.
 
 ## The seam into Grafana
 
@@ -170,16 +200,12 @@ uses, and for the same reason.
 - Install sparks into the **training** venv, not a library venv that a lockfile owns. A venv rebuilt
   by `uv sync --frozen` drops anything added by hand, silently, at the next sync.
 
-## What is not built yet
+## What is still open
 
-Slice 2: `sparks run -- <cmd>`, run directories under `$SPARKS_SHARED_DIR/runs/<id>/`, the NVML energy delta
-and idle baseline, `summary.json`, Grafana annotations, and the `sparks-overview` table. Annotations
-and snapshots both need a Grafana service account token, because the box's Grafana is anonymous
-**Viewer** and cannot POST.
-
-Slice 3: the queue. A spool directory under `$SPARKS_SHARED_DIR`, one systemd service under a service account
-so exclusivity is structural, and a textfile exporter. Exclusivity is what makes marginal energy
-attribution mean anything.
+The queue, the laptop client, and `sparks-run` under the runner are in. Still missing relative to
+earlier slice notes: Grafana annotations and snapshots (need a Grafana service account token —
+anonymous **Viewer** cannot POST), and the overview-table / energy caveats listed under
+"Deferred" below.
 
 **The alerts are evaluated but not routed.** `alerts/sparks.yml` is loaded on a provisioned box:
 sparkup's `sparks` role vendors it, validates it with `promtool` from the pinned Prometheus image,
@@ -253,10 +279,11 @@ the scraped half needs sparkup's exporter defaults, which is its checker's job, 
 
 ## The supervisor and the child write disjoint series, enforced in code
 
-`sparks run` is the supervisor and holds a `RunMetrics` with `lifecycle=True`; the training child
-gets its own via `emit.from_env(...)`, which sets `lifecycle=False`. They must never write the same
-series. Two writers choose timestamps independently, and remote-write 1.0 rejects an out-of-order
-sample by rolling back the **entire request**, so the batch carrying the loss simply never lands.
+`sparks-run` is the supervisor (nested by the queue runner around each job container) and holds a
+`RunMetrics` with `lifecycle=True`; the training child gets its own via `emit.from_env(...)`, which
+sets `lifecycle=False`. They must never write the same series. Two writers choose timestamps
+independently, and remote-write 1.0 rejects an out-of-order sample by rolling back the **entire
+request**, so the batch carrying the loss simply never lands.
 
 A review caught this happening for real. The launcher pushed stale markers for the child's series
 while the pump thread was still running, and the resulting out-of-order sample destroyed the batch
@@ -303,7 +330,7 @@ minutes and that is the honest behaviour.
   and an unknown are distinguishable and `absent()` works. What is missing is a second whole-box
   source to disagree with.
 - **The index lands in `SPARKS_TEXTFILE_DIR`, or the `textfile_dir` the box declared in
-  `/etc/sparks/box.toml`.** There is no fallback any more: `sparks run` checks that directory is
+  `/etc/sparks/box.toml`.** There is no fallback any more: `sparks-run` checks that directory is
   writable before starting anything and refuses with exit 78 if it is not, because the old fallback
   (`<shared>/index`) was never scraped and left `count(sparks_run_info)` empty while looking healthy.
   A library caller that bypasses the CLI still only gets a logged warning, since a failed index must
@@ -357,6 +384,5 @@ are both 0.
 
 The index writes `0644`, ends with a newline, and passes `promtool check metrics`.
 
-**`--url` and `--grafana` are top-level flags and must precede the subcommand**:
-`sparks --url http://127.0.0.1:9090 run --name x -- cmd`. Putting them after `run` is an argparse
-usage error and exits 2.
+**`sparks-run` takes `--url` / `--shared-dir` as its own flags** (it is a separate entry point, not a
+`sparks` subcommand). The laptop client is only `sparks submit|queue|cancel|abort|retry|remove`.

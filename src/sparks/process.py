@@ -478,7 +478,7 @@ def _stdout_bytes() -> BinaryIO | None:
 
 def _write(sink: IO[bytes], line: bytes) -> None:
     with contextlib.suppress(OSError, ValueError):
-        # BrokenPipeError when the terminal goes away (`sparks run ... | head`),
+        # BrokenPipeError when the terminal goes away (`sparks-run ... | head`),
         # ValueError when a sink was closed under us. Losing an echo must never
         # kill the run.
         sink.write(line)

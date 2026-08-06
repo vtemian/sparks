@@ -43,11 +43,11 @@ REMOTE_BOX_CONFIG = "/etc/sparks/box.toml"
 DOCKERIGNORE = ".dockerignore"
 
 ALWAYS_EXCLUDED = (".git/", "__pycache__/", "*.pyc", ".venv/")
-"""Never shipped, whatever the project says.
+"""Never uploaded with `--data`, whatever the tree says.
 
-`.git` in particular: it is the largest thing in most checkouts, docker builds
-never need it, and the provenance that would justify carrying it is recorded as
-a field instead.
+`.git` in particular: it is the largest thing in most checkouts, jobs never need
+it, and the provenance that would justify carrying it is recorded as a field
+instead.
 """
 
 RSYNC_TIMEOUT_SECONDS = 1800.0
@@ -197,17 +197,17 @@ def _resolve_tag(
     return tag
 
 
-def ship(context: Path, destination: Path) -> None:
-    """Copy the project into the job directory.
+def ship(source: Path, destination: Path) -> None:
+    """Copy a local tree (usually `--data`) into a job directory.
 
-    rsync rather than `shutil.copytree` for one reason that matters: it honours
-    `.dockerignore`, so what is shipped is what the build would have used, and a
-    project that already excludes its datasets does not have them copied.
+    rsync rather than `shutil.copytree` so `.dockerignore` exclusions still
+    apply when a data tree happens to carry one, and so always-excluded paths
+    like `.git/` never ride along.
     """
-    if not context.is_dir():
-        raise ClientError(f"{context} is not a directory")
+    if not source.is_dir():
+        raise ClientError(f"{source} is not a directory")
     destination.mkdir(parents=True, exist_ok=True)
-    argv = rsync_argv(context, str(destination))
+    argv = rsync_argv(source, str(destination))
     try:
         done = subprocess.run(
             argv, capture_output=True, timeout=RSYNC_TIMEOUT_SECONDS, check=False
@@ -215,23 +215,23 @@ def ship(context: Path, destination: Path) -> None:
     except FileNotFoundError as e:
         raise ClientError("rsync is not installed, and submitting needs it") from e
     except subprocess.TimeoutExpired as e:
-        raise ClientError(f"copying {context} took over 30 minutes") from e
+        raise ClientError(f"copying {source} took over 30 minutes") from e
     if done.returncode != 0:
         raise ClientError(
-            f"could not copy {context}: {done.stderr.decode(errors='replace').strip()}"
+            f"could not copy {source}: {done.stderr.decode(errors='replace').strip()}"
         )
 
 
-def rsync_argv(context: Path, destination: str) -> list[str]:
+def rsync_argv(source: Path, destination: str) -> list[str]:
     """The trailing slash on the source is load-bearing: without it rsync
-    creates `<destination>/<context name>/` instead of copying the contents."""
+    creates `<destination>/<source name>/` instead of copying the contents."""
     argv = ["rsync", "--archive", "--delete"]
     for pattern in ALWAYS_EXCLUDED:
         argv += ["--exclude", pattern]
-    ignore = context / DOCKERIGNORE
+    ignore = source / DOCKERIGNORE
     if ignore.is_file():
         argv += [f"--exclude-from={ignore}"]
-    return [*argv, f"{context}/", destination]
+    return [*argv, f"{source}/", destination]
 
 
 def provenance(context: Path) -> tuple[str, bool]:
@@ -396,14 +396,14 @@ def _duration(seconds: float) -> str:
 def _clone(source: Path, destination: Path) -> None:
     """Hardlink the tree where the filesystem allows it.
 
-    A build context can be gigabytes and a retry does not change it, so copying
+    A data folder can be gigabytes and a retry does not change it, so copying
     the bytes again is pure waste. Hardlinks are safe here because nothing ever
-    writes into a context after it is committed.
+    writes into a committed job's `data/` after submit.
     """
     try:
         shutil.copytree(source, destination, copy_function=os.link)
     except OSError as e:
-        LOG.info("sparks: could not hardlink the context (%s); copying instead", e)
+        LOG.info("sparks: could not hardlink data (%s); copying instead", e)
         shutil.copytree(source, destination, dirs_exist_ok=True)
 
 
@@ -466,8 +466,9 @@ def submit_remote(
 ) -> str:
     """Build/push (unless image given), reserve, ship data, then commit.
 
-    See the module docstring for why the manifest goes last. Project `context/`
-    is never rsynced — the runner pulls the image.
+    See the module docstring for why the manifest goes last. The Docker build
+    context stays on the laptop; only `--data` is rsynced — the runner pulls
+    the image.
     """
     if not data.is_dir():
         raise ClientError(f"--data {data} is not a directory")

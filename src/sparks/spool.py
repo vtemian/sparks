@@ -18,10 +18,10 @@ update - would need `shared.exclusive` on every state change and on every poll
 of every job, and would still leave a client able to corrupt a running job's
 record by racing the runner.
 
-`job.json` is written LAST, after the build context has finished streaming into
-the directory, and its presence is what makes the job visible. A runner that
-picked a job up mid-rsync would build half a source tree and record the result
-as a real run.
+`job.json` is written LAST, after `--data` has finished streaming into the
+directory, and its presence is what makes the job visible. A runner that
+picked a job up mid-rsync would mount a half-copied data tree and record the
+result as a real run.
 """
 
 import contextlib
@@ -41,13 +41,14 @@ LOG = logging.getLogger("sparks")
 JOB_FILE = "job.json"
 STATE_FILE = "state.json"
 CONTEXT_DIR = "context"
+"""Legacy name. Jobs no longer ship a build context; kept so tests can assert
+the path stays absent and old spool trees remain recognisable."""
 DATA_DIR = "data"
-BUILD_LOG = "build.log"
 PULL_LOG = "pull.log"
 LAUNCH_LOG = "launch.log"
-"""What `sparks run` said. Separate from `build.log` so a failed build's output
-is still there to read after a retry, and separate from the run's own
-`output.log`, which lives with the run rather than with the job."""
+"""What `sparks-run` said when the job container started. Separate from
+`pull.log` (registry pull) and from the run's own `output.log`, which lives
+with the run rather than with the job."""
 CID_FILE = "container.id"
 RUN_ID_FILE = "run_id"
 REQUESTS_DIR = "requests"
@@ -138,17 +139,17 @@ class State:
 
     state: str = QUEUED
     image: str | None = None
-    """The digest actually built or pulled, which is the reproducibility record:
-    a tag can be re-pointed, a digest cannot."""
+    """The digest actually pulled, which is the reproducibility record: a tag
+    can be re-pointed, a digest cannot."""
     run_id: str | None = None
-    """The run `sparks run` created, which is the join to `sparks_run_info` and
+    """The run `sparks-run` created, which is the join to `sparks_run_info` and
     to everything the dashboards already know how to show."""
     container_id: str | None = None
     started_unix: float | None = None
     finished_unix: float | None = None
     exit_code: int | None = None
     detail: str | None = None
-    """Why it ended this way, when the state alone does not say. A build error,
+    """Why it ended this way, when the state alone does not say. A pull error,
     or who aborted it."""
 
     def to_dict(self) -> dict[str, Any]:

@@ -4,7 +4,7 @@ Every status here is produced by a real fork, a real signal and a real reap,
 because the entire value of `sparks.process` is what the kernel actually does to
 a process rather than what a stand-in was told to report. Several of these tests
 signal the *test runner itself*, which is the only faithful way to reproduce
-`sparks run` being killed from another terminal: the child raises the signal
+`sparks-run` being killed from another terminal: the child raises the signal
 against its own parent, so there is no sleep racing the handler.
 
 The grace and sweep periods come from the constructor. The 30 s production grace

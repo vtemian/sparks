@@ -160,7 +160,7 @@ def check_contract(report: Report, shared_dir: Path) -> None:
     if contract is None:
         report.bad(
             "the box declares itself provisioned",
-            f"{box.config_path()} is absent, so `sparks run` refuses with exit "
+            f"{box.config_path()} is absent, so `sparks-run` refuses with exit "
             f"{cli.EX_CONFIG}. Converge sparkup with the sparks role.",
         )
         return

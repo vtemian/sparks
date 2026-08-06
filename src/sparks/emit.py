@@ -306,9 +306,9 @@ class RunMetrics:
 
 
 def from_env(autostart: bool = True, **labels: str) -> RunMetrics | None:
-    """The training loop's entry point, for a child launched by `sparks run`.
+    """The training loop's entry point, for a child launched by `sparks-run`.
 
-    Returns None outside `sparks run`, so the same script runs standalone
+    Returns None outside `sparks-run`, so the same script runs standalone
     without the caller branching on it.
     """
     run_id = os.environ.get("SPARKS_RUN_ID")
