@@ -1,5 +1,5 @@
-"""Docker, as the runner needs it: build a project, then run it under `sparks
-run` as the account that submitted it.
+"""Docker, as the runner needs it: pull a registry image, then run it under
+`sparks run` as the account that submitted it.
 
 The nesting is deliberate and reads oddly the first time:
 
@@ -30,17 +30,16 @@ from pathlib import Path
 from typing import IO
 
 from sparks import spool
-from sparks.runner import BuildFailed
+from sparks.runner import PullFailed
 
 LOG = logging.getLogger("sparks")
 
 DOCKER_SOCKET = Path("/var/run/docker.sock")
 
-BUILD_TIMEOUT_SECONDS = 3600.0
-"""A build that has taken an hour is not going to finish. Bounded because the
-runner is single-threaded: a hung build is the whole queue stopped."""
+PULL_TIMEOUT_SECONDS = 3600.0
+"""A pull that has taken an hour is not going to finish. Bounded because the
+runner is single-threaded: a hung pull is the whole queue stopped."""
 
-INSPECT_TIMEOUT_SECONDS = 30.0
 CLEANUP_TIMEOUT_SECONDS = 60.0
 
 CONTAINER_PREFIX = "sparks"
@@ -142,51 +141,34 @@ class Docker:
     docker_bin: str = "docker"
     extra_groups: list[int] = field(default_factory=list)
 
-    def build(self, context: Path, tag: str, log_path: Path) -> str:
-        """Build the project's Dockerfile and return the image id.
+    def pull(self, image: str, log_path: Path) -> None:
+        """Pull a registry image so a missing or broken ref fails the job here.
 
-        The id, not a tag: a tag can be re-pointed at another image later and
-        the record would silently change meaning. This is a locally built image
-        so it has no registry digest to quote instead.
+        Without this, `docker run` is what discovers the problem, and the
+        launch log is a worse place to look than a dedicated pull failure.
         """
-        dockerfile = context / "Dockerfile"
-        if not dockerfile.is_file():
-            raise BuildFailed(
-                f"{context.name} has no Dockerfile. sparks builds your project "
-                "into an image and runs that; a project without one has not "
-                "said how it should be built"
-            )
         with log_path.open("wb") as log:
             try:
                 done = subprocess.run(
-                    [
-                        self.docker_bin,
-                        "build",
-                        "--tag",
-                        tag,
-                        "--file",
-                        str(dockerfile),
-                        str(context),
-                    ],
+                    [self.docker_bin, "pull", image],
                     stdout=log,
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.DEVNULL,
-                    timeout=BUILD_TIMEOUT_SECONDS,
+                    timeout=PULL_TIMEOUT_SECONDS,
                     check=False,
                 )
             except subprocess.TimeoutExpired as e:
-                raise BuildFailed(
-                    f"the build was still going after "
-                    f"{BUILD_TIMEOUT_SECONDS / 3600:g}h and was stopped"
+                raise PullFailed(
+                    f"the pull was still going after "
+                    f"{PULL_TIMEOUT_SECONDS / 3600:g}h and was stopped"
                 ) from e
             except OSError as e:
-                raise BuildFailed(f"could not run docker build: {e}") from e
+                raise PullFailed(f"could not run docker pull: {e}") from e
         if done.returncode != 0:
-            raise BuildFailed(
-                f"docker build exited {done.returncode}; the output is in "
+            raise PullFailed(
+                f"docker pull exited {done.returncode}; the output is in "
                 f"{log_path.name}"
             )
-        return self._image_id(tag)
 
     def start(self, entry: spool.Entry, image: str, log_path: Path) -> Process:
         """Start the job, as its owner."""
@@ -322,6 +304,8 @@ class Docker:
             f"{uid}:{gid}",
             "--volume",
             f"{self.shared_dir}:{self.shared_dir}",
+            "--volume",
+            f"{entry.data_dir}:/data:ro",
             "--workdir",
             str(self.shared_dir),
             # THE TRAP, the same one monitoring's compose file documents: inside
@@ -339,6 +323,8 @@ class Docker:
             "SPARKS_PROMETHEUS_URL",
             "--env",
             "PYTHONUNBUFFERED=1",
+            "--env",
+            "SPARKS_DATA=/data",
             image,
             *entry.job.command,
         ]
@@ -355,18 +341,6 @@ class Docker:
             [self.docker_bin, "rm", "--force", "--volumes", container_id],
             timeout=CLEANUP_TIMEOUT_SECONDS,
         )
-
-    def _image_id(self, tag: str) -> str:
-        result = _run_quietly(
-            [self.docker_bin, "image", "inspect", "--format", "{{.Id}}", tag],
-            timeout=INSPECT_TIMEOUT_SECONDS,
-        )
-        if result is None or result.returncode != 0:
-            # The build succeeded, so this is worth recording but not worth
-            # failing the job over. The tag still names the image that will run.
-            LOG.warning("sparks: built %s but could not read its id", tag)
-            return tag
-        return result.stdout.decode().strip() or tag
 
 
 def shared_group(shared_dir: Path) -> int | None:

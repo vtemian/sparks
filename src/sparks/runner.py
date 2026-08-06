@@ -11,7 +11,7 @@ cancel or abort comes from `stat()` on the request. Both are facts the kernel
 maintains; the fields inside those files are labels for humans.
 
 Docker lives behind `Engine` so that everything here - ordering, state
-transitions, who may abort what, what a build failure does to the job behind it
+transitions, who may abort what, what a pull failure does to the job behind it
 - is testable without a daemon. The real one is in `sparks.engine`.
 """
 
@@ -33,8 +33,6 @@ POLL_SECONDS = 2.0
 Also the worst-case delay between asking for an abort and the signal arriving,
 which is why it is seconds rather than the minute a pure scheduler would want.
 """
-
-BUILD_TAG_PREFIX = "sparks-job"
 
 
 class Handle(Protocol):
@@ -59,8 +57,8 @@ class Handle(Protocol):
 class Engine(Protocol):
     """Everything the runner needs from Docker."""
 
-    def build(self, context: Path, tag: str, log_path: Path) -> str:
-        """Build `context` and return the image digest. Raises `BuildFailed`."""
+    def pull(self, image: str, log_path: Path) -> None:
+        """Pull `image`. Raises `PullFailed`."""
 
     def start(self, entry: spool.Entry, image: str, log_path: Path) -> Handle:
         """Start the job's container under `sparks run`, as the job's owner."""
@@ -69,8 +67,8 @@ class Engine(Protocol):
         """Remove a container this runner is no longer supervising."""
 
 
-class BuildFailed(Exception):
-    """The project's Dockerfile did not produce an image."""
+class PullFailed(Exception):
+    """The registry did not yield an image the runner can run."""
 
 
 @dataclass
@@ -178,37 +176,33 @@ class Runner:
             LOG.warning("sparks: could not publish the queue: %s", e)
 
     def process(self, entry: spool.Entry) -> None:
-        """Build and run one job, from queued to terminal."""
-        image = entry.job.image
-        if image is None:
-            image = self._build(entry)
-            if image is None:
-                return
-        self._run(entry, image)
-
-    def _build(self, entry: spool.Entry) -> str | None:
-        spool.advance(entry.path, state=spool.BUILDING)
-        self.publish()
-        tag = f"{BUILD_TAG_PREFIX}:{entry.job.job_id}"
+        """Pull and run one job, from queued to terminal."""
+        if not entry.job.image:
+            self._fail(
+                entry,
+                "job has no image; rebuild and submit from a laptop",
+            )
+            return
+        if not entry.data_dir.is_dir():
+            self._fail(entry, "job data/ directory is missing")
+            return
         try:
-            digest = self.engine.build(
-                entry.context_dir, tag, entry.path / spool.BUILD_LOG
-            )
-        except BuildFailed as e:
-            # Terminal for this job and invisible to the next one: a broken
-            # Dockerfile is one person's problem, not the queue's.
-            LOG.warning("sparks: %s failed to build: %s", entry.job.job_id, e)
-            spool.advance(
-                entry.path,
-                state=spool.FAILED,
-                finished_unix=self.now(),
-                detail=f"build failed: {e}",
-            )
-            spool.clear_requests(entry.path)
-            self.publish()
-            return None
-        spool.advance(entry.path, image=digest)
-        return digest
+            self.engine.pull(entry.job.image, entry.path / spool.PULL_LOG)
+        except PullFailed as e:
+            LOG.warning("sparks: %s failed to pull: %s", entry.job.job_id, e)
+            self._fail(entry, f"pull failed: {e}")
+            return
+        self._run(entry, entry.job.image)
+
+    def _fail(self, entry: spool.Entry, detail: str) -> None:
+        spool.advance(
+            entry.path,
+            state=spool.FAILED,
+            finished_unix=self.now(),
+            detail=detail,
+        )
+        spool.clear_requests(entry.path)
+        self.publish()
 
     def _run(self, entry: spool.Entry, image: str) -> None:
         started = self.now()

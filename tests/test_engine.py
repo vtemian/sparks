@@ -23,13 +23,15 @@ IMAGE = "spark.local:5000/demo:1"
 
 
 def an_entry(tmp_path: Path, command: list[str] | None = None) -> spool.Entry:
-    return spool.submit(
+    entry = spool.submit(
         tmp_path / "queue",
         name="e0",
         user="vlad",
         command=command or ["python", "train.py"],
         image=IMAGE,
     )
+    entry.data_dir.mkdir(parents=True, exist_ok=True)
+    return entry
 
 
 class TestTheContainerCommand:
@@ -56,7 +58,20 @@ class TestTheContainerCommand:
         # below proves the job's tokens land there.
         flags = argv[: argv.index("sha256:abc")]
         volumes = [flags[i + 1] for i, a in enumerate(flags) if a == "--volume"]
-        assert volumes == ["/srv/spark:/srv/spark"]
+        assert volumes == [
+            "/srv/spark:/srv/spark",
+            f"{entry.data_dir}:/data:ro",
+        ]
+
+    def test_job_data_is_mounted_read_only_at_slash_data(
+        self, tmp_path: Path, docker: engine.Docker
+    ) -> None:
+        entry = an_entry(tmp_path)
+        argv = docker.container_argv(
+            entry, "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
+        )
+        assert f"{entry.data_dir}:/data:ro" in argv
+        assert ("--env", "SPARKS_DATA=/data") in list(zip(argv, argv[1:]))
 
     def test_the_command_is_passed_after_the_image_so_flags_are_inert(
         self, tmp_path: Path, docker: engine.Docker
@@ -192,38 +207,15 @@ class TestTheWholeCommand:
         assert argv[argv.index("--run-id-file") + 1] == str(tmp_path / "run_id")
 
 
-class TestBuild:
-    def test_a_project_with_no_dockerfile_is_told_so(
+class TestPull:
+    def test_a_missing_docker_binary_is_a_pull_failure_not_a_crash(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
-        """The one contract sparks has with a project. Worth an error that says
-        what to do rather than whatever docker prints."""
-        context = tmp_path / "context"
-        context.mkdir()
-        with pytest.raises(runner.BuildFailed, match="no Dockerfile"):
-            docker.build(context, "tag", tmp_path / "build.log")
-
-    def test_the_check_happens_before_docker_is_invoked(
-        self, tmp_path: Path, docker: engine.Docker
-    ) -> None:
-        """So a box without a daemon still gives the useful message."""
-        context = tmp_path / "context"
-        context.mkdir()
-        docker.docker_bin = "definitely-not-a-real-binary"
-        with pytest.raises(runner.BuildFailed, match="no Dockerfile"):
-            docker.build(context, "tag", tmp_path / "build.log")
-
-    def test_a_missing_docker_binary_is_a_build_failure_not_a_crash(
-        self, tmp_path: Path, docker: engine.Docker
-    ) -> None:
-        """A build failure fails one job. An exception out of here would be
+        """A pull failure fails one job. An exception out of here would be
         caught by the runner's blanket handler and fail it far less legibly."""
-        context = tmp_path / "context"
-        context.mkdir()
-        (context / "Dockerfile").write_text("FROM scratch\n")
         docker.docker_bin = "definitely-not-a-real-binary"
-        with pytest.raises(runner.BuildFailed, match="could not run docker build"):
-            docker.build(context, "tag", tmp_path / "build.log")
+        with pytest.raises(runner.PullFailed, match="could not run docker pull"):
+            docker.pull(IMAGE, tmp_path / "pull.log")
 
 
 class TestDroppingPrivilege:

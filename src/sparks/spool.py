@@ -43,6 +43,7 @@ STATE_FILE = "state.json"
 CONTEXT_DIR = "context"
 DATA_DIR = "data"
 BUILD_LOG = "build.log"
+PULL_LOG = "pull.log"
 LAUNCH_LOG = "launch.log"
 """What `sparks run` said. Separate from `build.log` so a failed build's output
 is still there to read after a retry, and separate from the run's own

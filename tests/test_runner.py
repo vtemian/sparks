@@ -1,7 +1,7 @@
 """The runner, with Docker faked out.
 
 Everything asserted here is the runner's own judgement: what runs next, what a
-build failure does to the job behind it, who is allowed to stop what, and
+pull failure does to the job behind it, who is allowed to stop what, and
 whether a job that ends still leaves a truthful record. None of it needs a
 daemon, which is the point of the Engine seam.
 """
@@ -55,26 +55,23 @@ class FakeEngine:
     def __init__(
         self,
         handle: FakeHandle | None = None,
-        build_error: str | None = None,
-        digest: str = "sha256:abc",
+        pull_error: str | None = None,
         on_start: Callable[[spool.Entry], None] | None = None,
     ) -> None:
         self.handle = handle or FakeHandle()
-        self.build_error = build_error
-        self.digest = digest
+        self.pull_error = pull_error
         self.on_start = on_start
-        self.built: list[Path] = []
+        self.pulled: list[str] = []
         self.started: list[tuple[str, str]] = []
         self.released: list[str] = []
 
     def release(self, container_id: str) -> None:
         self.released.append(container_id)
 
-    def build(self, context: Path, tag: str, log_path: Path) -> str:
-        self.built.append(context)
-        if self.build_error:
-            raise runner.BuildFailed(self.build_error)
-        return self.digest
+    def pull(self, image: str, log_path: Path) -> None:
+        self.pulled.append(image)
+        if self.pull_error:
+            raise runner.PullFailed(self.pull_error)
 
     def start(self, entry: spool.Entry, image: str, log_path: Path) -> FakeHandle:
         self.started.append((entry.job.job_id, image))
@@ -112,16 +109,21 @@ def a_job(
     queue: Path,
     name: str = "e0",
     when: float | None = None,
-    image: str | None = IMAGE,
+    image: str = IMAGE,
+    *,
+    with_data: bool = True,
 ) -> spool.Entry:
-    return spool.submit(
+    entry = spool.submit(
         queue,
         name=name,
         user="vlad",
         command=["python", "train.py"],
         when=when,
-        image=image,  # type: ignore[arg-type]
+        image=image,
     )
+    if with_data:
+        entry.data_dir.mkdir(parents=True, exist_ok=True)
+    return entry
 
 
 def ask_to_abort(entry: spool.Entry) -> None:
@@ -130,7 +132,7 @@ def ask_to_abort(entry: spool.Entry) -> None:
 
 
 class TestHappyPath:
-    def test_a_queued_job_is_built_and_run_and_recorded(
+    def test_a_queued_job_is_pulled_and_run_and_recorded(
         self, tmp_path: Path, textfile: Path
     ) -> None:
         engine = FakeEngine()
@@ -141,7 +143,7 @@ class TestHappyPath:
         assert done.state.state == spool.FINISHED
         assert done.state.exit_code == 0
         assert done.state.image == IMAGE
-        assert engine.built == []
+        assert engine.pulled == [IMAGE]
         assert engine.started[0][1] == IMAGE
 
     def test_the_run_id_is_recorded_so_the_job_joins_its_run(
@@ -175,16 +177,6 @@ class TestHappyPath:
         r.tick()
         assert handle.finished
 
-    def test_a_prebuilt_image_skips_the_build(
-        self, tmp_path: Path, textfile: Path
-    ) -> None:
-        engine = FakeEngine()
-        r = a_runner(tmp_path, textfile, engine)
-        a_job(r.queue_dir, image="ghcr.io/someone/thing:v1")
-        r.tick()
-        assert engine.built == []
-        assert engine.started[0][1] == "ghcr.io/someone/thing:v1"
-
 
 class TestOrdering:
     def test_the_oldest_job_goes_first(self, tmp_path: Path, textfile: Path) -> None:
@@ -215,42 +207,68 @@ class TestOrdering:
         assert a_runner(tmp_path, textfile).tick() is False
 
 
-class TestBuildFailure:
-    """Build-on-box path, exercised with image=None until Task 4 removes it."""
-
-    def test_a_broken_dockerfile_fails_only_its_own_job(
+class TestMissingPrerequisites:
+    def test_a_job_with_no_image_fails_without_starting(
         self, tmp_path: Path, textfile: Path
     ) -> None:
-        engine = FakeEngine(build_error="no such file: Dockerfile")
+        engine = FakeEngine()
         r = a_runner(tmp_path, textfile, engine)
-        broken = a_job(r.queue_dir, name="broken", when=1000.0, image=None)
-        healthy = a_job(r.queue_dir, name="healthy", when=2000.0, image=None)
+        entry = a_job(r.queue_dir, image="")
+        r.tick()
+        done = spool.load(entry.path)
+        assert done.state.state == spool.FAILED
+        assert "no image" in (done.state.detail or "")
+        assert engine.pulled == []
+        assert engine.started == []
+
+    def test_a_job_with_no_data_dir_fails_without_starting(
+        self, tmp_path: Path, textfile: Path
+    ) -> None:
+        engine = FakeEngine()
+        r = a_runner(tmp_path, textfile, engine)
+        entry = a_job(r.queue_dir, with_data=False)
+        r.tick()
+        done = spool.load(entry.path)
+        assert done.state.state == spool.FAILED
+        assert "data/" in (done.state.detail or "")
+        assert engine.pulled == []
+        assert engine.started == []
+
+
+class TestPullFailure:
+    def test_a_broken_pull_fails_only_its_own_job(
+        self, tmp_path: Path, textfile: Path
+    ) -> None:
+        engine = FakeEngine(pull_error="manifest unknown")
+        r = a_runner(tmp_path, textfile, engine)
+        broken = a_job(r.queue_dir, name="broken", when=1000.0)
+        healthy = a_job(r.queue_dir, name="healthy", when=2000.0)
         r.tick()
         assert spool.load(broken.path).state.state == spool.FAILED
-        engine.build_error = None
+        engine.pull_error = None
         r.tick()
         assert spool.load(healthy.path).state.state == spool.FINISHED
 
     def test_the_reason_is_kept_where_the_submitter_will_look(
         self, tmp_path: Path, textfile: Path
     ) -> None:
-        r = a_runner(tmp_path, textfile, FakeEngine(build_error="COPY failed"))
-        entry = a_job(r.queue_dir, image=None)
+        r = a_runner(tmp_path, textfile, FakeEngine(pull_error="manifest unknown"))
+        entry = a_job(r.queue_dir)
         r.tick()
-        assert "COPY failed" in (spool.load(entry.path).state.detail or "")
+        assert "manifest unknown" in (spool.load(entry.path).state.detail or "")
 
-    def test_a_failed_build_never_starts_a_container(
+    def test_a_failed_pull_never_starts_a_container(
         self, tmp_path: Path, textfile: Path
     ) -> None:
-        engine = FakeEngine(build_error="boom")
+        engine = FakeEngine(pull_error="boom")
         r = a_runner(tmp_path, textfile, engine)
-        a_job(r.queue_dir, image=None)
+        a_job(r.queue_dir)
         r.tick()
         assert engine.started == []
 
 
 class TestCancel:
-    def test_a_queued_job_cancels_without_ever_building(
+    def test_a_queued_job_cancels_without_ever_pulling(
         self, tmp_path: Path, textfile: Path
     ) -> None:
         engine = FakeEngine()
@@ -259,7 +277,7 @@ class TestCancel:
         spool.request(entry.path, spool.CANCEL)
         r.tick()
         assert spool.load(entry.path).state.state == spool.CANCELLED
-        assert engine.built == []
+        assert engine.pulled == []
 
     def test_aborting_a_job_that_has_not_started_cancels_it(
         self, tmp_path: Path, textfile: Path
@@ -494,7 +512,7 @@ class TestResilience:
         including the failures nothing here anticipated."""
 
         class Exploding(FakeEngine):
-            def build(self, context: Path, tag: str, log_path: Path) -> str:
+            def pull(self, image: str, log_path: Path) -> None:
                 raise RuntimeError("the daemon went away")
 
         r = a_runner(tmp_path, textfile, Exploding())
