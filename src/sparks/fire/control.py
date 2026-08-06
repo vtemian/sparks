@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 
 from sparks import box, spool
-from sparks.run import current_user
 
 LOG = logging.getLogger("sparks")
 
@@ -55,7 +54,7 @@ def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
             f"{entry.job.job_id} belongs to {entry.job.user}, and only they "
             "can retry it (retry clones their data directory)"
         )
-    who = current_user()
+    who = entry.job.user
     job_id, path = spool.reserve(queue_dir, entry.job.name, who)
     source = entry.data_dir
     if source.is_dir():

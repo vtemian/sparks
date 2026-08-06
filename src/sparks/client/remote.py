@@ -339,7 +339,9 @@ def submit_remote(
         name=name,
         sha=sha,
     )
-    reserved = remote_capture(host, ["reserve", "--name", name])
+    reserved = remote_capture(
+        host, ["reserve", "--name", name, "--user", who]
+    )
     if not reserved:
         raise ClientError(f"{host} did not say where to put the job")
     dest = f"{host}:{reserved}/{spool.DATA_DIR}/"

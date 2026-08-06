@@ -356,7 +356,9 @@ class TestReachingTheBox:
         argv = client.ssh_argv("box", ["queue", "--all"])
         assert argv[2] == "fire-ctl queue --all"
 
-    def test_ssh_argv_honours_SPARKS_REMOTE(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_ssh_argv_honours_SPARKS_REMOTE(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("SPARKS_REMOTE", "fire")
         assert client.ssh_argv("box", ["queue"])[2] == "fire queue"
 
@@ -448,7 +450,10 @@ class TestSubmitRemote:
             ["docker", "build", "-t", tag, str(project)],
         )
         assert calls[1] == ("run", ["docker", "push", tag])
-        assert calls[2] == ("remote", ["reserve", "--name", "exp"])
+        assert calls[2] == (
+            "remote",
+            ["reserve", "--name", "exp", "--user", "vlad"],
+        )
         assert calls[3][1][0] == "rsync"
         assert calls[3][1][-1] == f"box:/q/job-1/{spool.DATA_DIR}/"
         assert f"{data}/" in calls[3][1]

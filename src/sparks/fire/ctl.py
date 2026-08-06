@@ -105,9 +105,8 @@ def _cmd_retry(args: argparse.Namespace) -> int:
 
 
 def _cmd_remove(args: argparse.Namespace) -> int:
-    print(
-        f"removed {control.remove(control.queue_dir(args.shared_dir), args.job).job.job_id}"
-    )
+    entry = control.remove(control.queue_dir(args.shared_dir), args.job)
+    print(f"removed {entry.job.job_id}")
     return 0
 
 

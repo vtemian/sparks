@@ -13,7 +13,9 @@ def test_queue_lists_empty_shared_dir(
     assert "empty" in capsys.readouterr().out
 
 
-def test_reserve_prints_path(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_reserve_prints_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     (tmp_path / "queue").mkdir()
     assert cli.main(["reserve", "--name", "e0", "--shared-dir", str(tmp_path)]) == 0
     out = capsys.readouterr().out.strip()
