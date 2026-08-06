@@ -19,12 +19,16 @@ def docker(tmp_path: Path) -> engine.Docker:
     )
 
 
+IMAGE = "spark.local:5000/demo:1"
+
+
 def an_entry(tmp_path: Path, command: list[str] | None = None) -> spool.Entry:
     return spool.submit(
         tmp_path / "queue",
         name="e0",
         user="vlad",
         command=command or ["python", "train.py"],
+        image=IMAGE,
     )
 
 
@@ -166,6 +170,7 @@ class TestTheWholeCommand:
             name="e0",
             user="vlad",
             command=["true"],
+            image=IMAGE,
             git_sha="feedface",
         )
         argv = docker.argv(

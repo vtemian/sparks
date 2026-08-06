@@ -10,9 +10,54 @@ import pytest
 
 from sparks import spool
 
+IMAGE = "spark.local:5000/demo:1"
+
 
 def a_job(queue: Path, name: str = "e0", user: str = "vlad") -> spool.Entry:
-    return spool.submit(queue, name=name, user=user, command=["python", "train.py"])
+    return spool.submit(
+        queue, name=name, user=user, command=["python", "train.py"], image=IMAGE
+    )
+
+
+def test_job_requires_an_image() -> None:
+    with pytest.raises(TypeError):
+        spool.Job(
+            job_id="job-1",
+            name="n",
+            user="u",
+            command=["true"],
+            submitted_unix=1.0,
+            # image omitted
+        )
+
+
+def test_from_dict_requires_an_image() -> None:
+    with pytest.raises(KeyError, match="image"):
+        spool.Job.from_dict(
+            {
+                "job_id": "job-1",
+                "name": "n",
+                "user": "u",
+                "command": ["true"],
+                "submitted_unix": 1.0,
+            }
+        )
+
+
+def test_data_dir_is_beside_the_manifest(tmp_path: Path) -> None:
+    _, path = spool.reserve(tmp_path, "n", "u")
+    entry = spool.commit(
+        path,
+        spool.Job(
+            job_id=path.name,
+            name="n",
+            user="u",
+            command=["true"],
+            submitted_unix=1.0,
+            image="spark.local:5000/demo:1",
+        ),
+    )
+    assert entry.data_dir == path / "data"
 
 
 def test_a_submitted_job_is_queued_and_readable_back(tmp_path: Path) -> None:
@@ -33,9 +78,11 @@ def test_the_id_carries_who_and_what_so_a_listing_needs_no_lookup(
 
 
 def test_jobs_run_oldest_first(tmp_path: Path) -> None:
-    first = spool.submit(tmp_path, name="a", user="vlad", command=["true"], when=1000.0)
+    first = spool.submit(
+        tmp_path, name="a", user="vlad", command=["true"], image=IMAGE, when=1000.0
+    )
     second = spool.submit(
-        tmp_path, name="b", user="vlad", command=["true"], when=2000.0
+        tmp_path, name="b", user="vlad", command=["true"], image=IMAGE, when=2000.0
     )
     assert [e.job.job_id for e in spool.entries(tmp_path)] == [
         first.job.job_id,
@@ -122,6 +169,7 @@ def test_provenance_is_recorded_when_there_is_any(tmp_path: Path) -> None:
         name="e0",
         user="vlad",
         command=["true"],
+        image=IMAGE,
         git_sha="abc1234",
         git_dirty=True,
     )
@@ -137,6 +185,7 @@ def test_a_retry_says_what_it_is_a_retry_of(tmp_path: Path) -> None:
         name=original.job.name,
         user=original.job.user,
         command=original.job.command,
+        image=original.job.image,
         retry_of=original.job.job_id,
     )
     assert again.job.retry_of == original.job.job_id

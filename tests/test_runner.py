@@ -105,11 +105,14 @@ def a_runner(
     )
 
 
+IMAGE = "spark.local:5000/demo:1"
+
+
 def a_job(
     queue: Path,
     name: str = "e0",
     when: float | None = None,
-    image: str | None = None,
+    image: str | None = IMAGE,
 ) -> spool.Entry:
     return spool.submit(
         queue,
@@ -117,7 +120,7 @@ def a_job(
         user="vlad",
         command=["python", "train.py"],
         when=when,
-        image=image,
+        image=image,  # type: ignore[arg-type]
     )
 
 
@@ -137,8 +140,9 @@ class TestHappyPath:
         done = spool.load(entry.path)
         assert done.state.state == spool.FINISHED
         assert done.state.exit_code == 0
-        assert done.state.image == "sha256:abc"
-        assert engine.built == [entry.context_dir]
+        assert done.state.image == IMAGE
+        assert engine.built == []
+        assert engine.started[0][1] == IMAGE
 
     def test_the_run_id_is_recorded_so_the_job_joins_its_run(
         self, tmp_path: Path, textfile: Path
@@ -212,13 +216,15 @@ class TestOrdering:
 
 
 class TestBuildFailure:
+    """Build-on-box path, exercised with image=None until Task 4 removes it."""
+
     def test_a_broken_dockerfile_fails_only_its_own_job(
         self, tmp_path: Path, textfile: Path
     ) -> None:
         engine = FakeEngine(build_error="no such file: Dockerfile")
         r = a_runner(tmp_path, textfile, engine)
-        broken = a_job(r.queue_dir, name="broken", when=1000.0)
-        healthy = a_job(r.queue_dir, name="healthy", when=2000.0)
+        broken = a_job(r.queue_dir, name="broken", when=1000.0, image=None)
+        healthy = a_job(r.queue_dir, name="healthy", when=2000.0, image=None)
         r.tick()
         assert spool.load(broken.path).state.state == spool.FAILED
         engine.build_error = None
@@ -229,7 +235,7 @@ class TestBuildFailure:
         self, tmp_path: Path, textfile: Path
     ) -> None:
         r = a_runner(tmp_path, textfile, FakeEngine(build_error="COPY failed"))
-        entry = a_job(r.queue_dir)
+        entry = a_job(r.queue_dir, image=None)
         r.tick()
         assert "COPY failed" in (spool.load(entry.path).state.detail or "")
 
@@ -238,7 +244,7 @@ class TestBuildFailure:
     ) -> None:
         engine = FakeEngine(build_error="boom")
         r = a_runner(tmp_path, textfile, engine)
-        a_job(r.queue_dir)
+        a_job(r.queue_dir, image=None)
         r.tick()
         assert engine.started == []
 

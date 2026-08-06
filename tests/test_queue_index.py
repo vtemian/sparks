@@ -7,6 +7,9 @@ from sparks import index, spool
 from tests import promtool
 
 
+IMAGE = "spark.local:5000/demo:1"
+
+
 def an_entry(
     tmp_path: Path,
     name: str,
@@ -15,7 +18,12 @@ def an_entry(
     **fields: object,
 ) -> spool.Entry:
     entry = spool.submit(
-        tmp_path, name=name, user=user, command=["true"], when=1785849000.0
+        tmp_path,
+        name=name,
+        user=user,
+        command=["true"],
+        image=IMAGE,
+        when=1785849000.0,
     )
     if state != spool.QUEUED or fields:
         spool.set_state(entry.path, spool.State(state=state, **fields))  # type: ignore[arg-type]

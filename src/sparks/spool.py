@@ -41,6 +41,7 @@ LOG = logging.getLogger("sparks")
 JOB_FILE = "job.json"
 STATE_FILE = "state.json"
 CONTEXT_DIR = "context"
+DATA_DIR = "data"
 BUILD_LOG = "build.log"
 LAUNCH_LOG = "launch.log"
 """What `sparks run` said. Separate from `build.log` so a failed build's output
@@ -103,15 +104,14 @@ class Job:
     which the filesystem vouches for and this does not."""
     command: list[str]
     submitted_unix: float
+    image: str
+    """Registry ref the runner will pull."""
     git_sha: str = "unknown"
     git_dirty: bool = False
     """Whether the tree had uncommitted edits when it was shipped. Recorded
     rather than refused: experiments run dirty, and a submit that demanded a
     commit first would be the friction this whole design exists to remove."""
     retry_of: str | None = None
-    image: str | None = None
-    """A pre-built image to run instead of building `context/`. Absent for the
-    normal path, where the box builds the project's Dockerfile."""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -124,10 +124,10 @@ class Job:
             user=shared.clean(data["user"], "unknown"),
             command=list(data["command"]),
             submitted_unix=float(data["submitted_unix"]),
+            image=data["image"],
             git_sha=data.get("git_sha", "unknown"),
             git_dirty=bool(data.get("git_dirty", False)),
             retry_of=data.get("retry_of"),
-            image=data.get("image"),
         )
 
 
@@ -196,6 +196,10 @@ class Entry:
     def context_dir(self) -> Path:
         return self.path / CONTEXT_DIR
 
+    @property
+    def data_dir(self) -> Path:
+        return self.path / DATA_DIR
+
     def may_be_controlled_by(self, uid: int) -> bool:
         """Whether `uid` may cancel, abort or remove this job.
 
@@ -235,11 +239,11 @@ def submit(
     name: str,
     user: str,
     command: list[str],
+    image: str,
     when: float | None = None,
     git_sha: str = "unknown",
     git_dirty: bool = False,
     retry_of: str | None = None,
-    image: str | None = None,
 ) -> Entry:
     """Reserve and commit in one step, for a job whose context is already there
     or which does not need one."""
@@ -253,10 +257,10 @@ def submit(
             user=shared.clean(user, "unknown"),
             command=[shared.clean(arg, "", limit=4000) for arg in command],
             submitted_unix=submitted,
+            image=image,
             git_sha=git_sha,
             git_dirty=git_dirty,
             retry_of=retry_of,
-            image=image,
         ),
     )
 
