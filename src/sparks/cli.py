@@ -94,20 +94,26 @@ def _add_queue_commands(
     forwarded over ssh rather than each verb having a remote implementation.
     """
     submit = sub.add_parser(
-        "submit", help="queue a job on the box: ship the code, build, run"
+        "submit",
+        help="build, push, upload --data, and queue a job on the box",
     )
     submit.add_argument("--name", default="job")
+    submit.add_argument(
+        "--data",
+        type=Path,
+        required=True,
+        help="folder mounted at /data in the job",
+    )
     submit.add_argument(
         "--context",
         type=Path,
         default=Path.cwd(),
-        help="the project to build, which must contain a Dockerfile. "
+        help="Docker build context (must contain a Dockerfile). "
         "Defaults to the current directory",
     )
     submit.add_argument(
         "--image",
-        help="run this image instead of building anything. For a job whose "
-        "image is already published",
+        help="skip build/push; use this registry tag",
     )
     _add_host(submit)
     submit.add_argument("command", nargs="+", help="after a -- separator")
@@ -137,8 +143,8 @@ def _add_queue_commands(
         _add_host(parser)
         parser.set_defaults(func=func)
 
-    # Plumbing. `submit --host` is three steps against the box and these are two
-    # of them; they are not meant to be typed. See client.submit_remote.
+    # Plumbing. `submit --host` is several steps against the box and these are
+    # two of them; they are not meant to be typed. See client.submit_remote.
     reserve = sub.add_parser("reserve", help=argparse.SUPPRESS)
     reserve.add_argument("--name", default="job")
     reserve.add_argument("--shared-dir", type=Path, default=None)
@@ -150,7 +156,7 @@ def _add_queue_commands(
     commit.add_argument("--user", default=None)
     commit.add_argument("--git-sha", default="unknown")
     commit.add_argument("--git-dirty", action="store_true")
-    commit.add_argument("--image", default=None)
+    commit.add_argument("--image", required=True)
     commit.add_argument("command", nargs="+")
     commit.set_defaults(func=cmd_commit)
 
@@ -269,16 +275,23 @@ def cmd_submit(args: argparse.Namespace, argv: list[str]) -> int:
                 name=args.name,
                 command=args.command,
                 context=args.context,
+                data=args.data,
                 image=args.image,
             )
         )
         return 0
+    registry_url = None
+    if args.image is None:
+        contract = box.load()
+        registry_url = contract.registry_url if contract else None
     entry = client.submit(
         _queue_dir(args),
         name=args.name,
         command=args.command,
+        data=args.data,
         context=None if args.image else args.context,
         image=args.image,
+        registry_url=registry_url,
     )
     print(entry.job.job_id)
     return 0

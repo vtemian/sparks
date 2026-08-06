@@ -4,18 +4,20 @@ Everything here runs on whichever machine the person is sitting at. When that is
 not the box, one flag redirects the whole command over ssh rather than each verb
 growing its own remote path: `sparks queue --host spark.local` is
 `ssh spark.local sparks queue`, and the same is true of cancel, abort and
-remove. Only `submit` is more than that, because only submit has to carry code
-across.
+remove. Only `submit` is more than that, because only submit has to build an
+image, push it, and carry a data folder across.
 
-Submitting is three steps and they are in this order for a reason:
+Submitting is five steps and they are in this order for a reason:
 
-1. reserve a job directory on the box, which is `mkdir` and therefore the atomic
+1. build the image on the laptop (unless `--image` was given)
+2. push it to the box registry
+3. reserve a job directory on the box, which is `mkdir` and therefore the atomic
    part - two people submitting in the same second get two directories
-2. rsync the project into it, which takes as long as it takes
-3. write the manifest, which is what makes the job visible to the runner
+4. rsync `--data` into `job/data/`, which takes as long as it takes
+5. write the manifest with the image ref, which is what makes the job visible
 
-A runner that saw the job at step 2 would build half a source tree and record
-the result as a real run.
+A runner that saw the job at step 4 would mount a half-copied data tree and
+record the result as a real run.
 """
 
 import getpass
@@ -25,8 +27,10 @@ import shlex
 import shutil
 import subprocess
 import time
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 from sparks import spool
 from sparks.run import current_user, git_sha
@@ -34,6 +38,7 @@ from sparks.run import current_user, git_sha
 LOG = logging.getLogger("sparks")
 
 HOST_ENV = "SPARKS_HOST"
+REMOTE_BOX_CONFIG = "/etc/sparks/box.toml"
 
 DOCKERIGNORE = ".dockerignore"
 
@@ -59,27 +64,95 @@ class Submitted:
     path: str
 
 
+def tag_for(registry_url: str, user: str, name: str, ref: str) -> str:
+    """Docker tag `host:port/user/name:ref`, scheme stripped from registry_url."""
+    parsed = urlparse(registry_url)
+    host = parsed.netloc or parsed.path
+    host = host.rstrip("/")
+    if not host:
+        raise ClientError(f"registry_url {registry_url!r} has no host")
+    return f"{host}/{user}/{name}:{ref}"
+
+
+def build(context: Path, tag: str) -> None:
+    if not (context / "Dockerfile").is_file():
+        raise ClientError(f"{context}/Dockerfile is missing")
+    done = subprocess.run(
+        ["docker", "build", "-t", tag, str(context)],
+        check=False,
+    )
+    if done.returncode != 0:
+        raise ClientError(f"docker build failed for {tag}")
+
+
+def push(tag: str) -> None:
+    done = subprocess.run(["docker", "push", tag], check=False)
+    if done.returncode != 0:
+        raise ClientError(
+            f"docker push failed for {tag}. Is the registry in "
+            f"insecure-registries and is SPARKS_HOST reachable?"
+        )
+
+
+def fetch_registry_url(host: str) -> str:
+    """Read `registry_url` from the box contract over ssh."""
+    try:
+        done = subprocess.run(
+            ["ssh", host, "cat", REMOTE_BOX_CONFIG],
+            capture_output=True,
+            timeout=SSH_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except FileNotFoundError as e:
+        raise ClientError("ssh is not installed") from e
+    except subprocess.TimeoutExpired as e:
+        raise ClientError(f"timed out reading {REMOTE_BOX_CONFIG} from {host}") from e
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout).decode(errors="replace").strip()
+        raise ClientError(f"{host} refused: {detail}")
+    try:
+        data = tomllib.loads(done.stdout.decode())
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
+        raise ClientError(f"{host}:{REMOTE_BOX_CONFIG} is not valid TOML: {e}") from e
+    url = data.get("registry_url")
+    if not isinstance(url, str) or not url.strip():
+        raise ClientError(f"{host}:{REMOTE_BOX_CONFIG} has no registry_url")
+    return url.strip()
+
+
 def submit(
     queue_dir: Path,
     name: str,
     command: list[str],
+    data: Path,
     context: Path | None = None,
     image: str | None = None,
+    registry_url: str | None = None,
     retry_of: str | None = None,
     user: str | None = None,
 ) -> spool.Entry:
-    """Put a job on a queue this machine can see."""
-    if context is None and image is None:
-        raise ClientError(
-            "a job needs either a project to build (--context, which defaults "
-            "to the current directory) or an image to run (--image)"
-        )
+    """Put a job on a queue this machine can see.
+
+    Requires `--data`. Pass `--image` to skip build/push (useful when testing on
+    the box without a registry); otherwise build from `--context` and push to
+    `registry_url`.
+    """
+    if not data.is_dir():
+        raise ClientError(f"--data {data} is not a directory")
     who = user or current_user()
-    job_id, path = spool.reserve(queue_dir, name, who)
     sha, dirty = "unknown", False
     if context is not None:
         sha, dirty = provenance(context)
-        ship(context, path / spool.CONTEXT_DIR)
+    tag = _resolve_tag(
+        image=image,
+        context=context,
+        registry_url=registry_url,
+        user=who,
+        name=name,
+        sha=sha,
+    )
+    job_id, path = spool.reserve(queue_dir, name, who)
+    ship(data, path / spool.DATA_DIR)
     return spool.commit(
         path,
         spool.Job(
@@ -91,9 +164,37 @@ def submit(
             git_sha=sha,
             git_dirty=dirty,
             retry_of=retry_of,
-            image=image,
+            image=tag,
         ),
     )
+
+
+def _resolve_tag(
+    *,
+    image: str | None,
+    context: Path | None,
+    registry_url: str | None,
+    user: str,
+    name: str,
+    sha: str,
+) -> str:
+    if image is not None:
+        return image
+    if context is None:
+        raise ClientError(
+            "a job needs either an image to run (--image) or a project to "
+            "build (--context, which defaults to the current directory)"
+        )
+    if not registry_url:
+        raise ClientError(
+            "building an image needs a registry_url (from the box contract) "
+            "or pass --image to skip build/push"
+        )
+    ref = sha if sha != "unknown" else "latest"
+    tag = tag_for(registry_url, user, name, ref)
+    build(context, tag)
+    push(tag)
+    return tag
 
 
 def ship(context: Path, destination: Path) -> None:
@@ -157,7 +258,7 @@ def provenance(context: Path) -> tuple[str, bool]:
 
 
 def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
-    """Submit the same job again, reusing the context already on the box.
+    """Submit the same job again, reusing the image and data already on the box.
 
     A new job rather than a second attempt recorded inside the old one: "what
     did this job do" has to have one answer, and the link runs the other way,
@@ -170,9 +271,9 @@ def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
         )
     who = current_user()
     job_id, path = spool.reserve(queue_dir, entry.job.name, who)
-    source = entry.context_dir
+    source = entry.data_dir
     if source.is_dir():
-        _clone(source, path / spool.CONTEXT_DIR)
+        _clone(source, path / spool.DATA_DIR)
     return spool.commit(
         path,
         spool.Job(
@@ -355,27 +456,53 @@ def remote_capture(host: str, argv: list[str]) -> str:
 
 def submit_remote(
     host: str,
+    *,
     name: str,
     command: list[str],
     context: Path,
+    data: Path,
     image: str | None = None,
+    registry_url: str | None = None,
 ) -> str:
-    """Reserve on the box, ship the code, then commit. See the module docstring
-    for why the manifest goes last."""
+    """Build/push (unless image given), reserve, ship data, then commit.
+
+    See the module docstring for why the manifest goes last. Project `context/`
+    is never rsynced — the runner pulls the image.
+    """
+    if not data.is_dir():
+        raise ClientError(f"--data {data} is not a directory")
+    who = local_user()
+    sha, dirty = provenance(context)
+    url = registry_url
+    if image is None and url is None:
+        url = fetch_registry_url(host)
+    tag = _resolve_tag(
+        image=image,
+        context=context,
+        registry_url=url,
+        user=who,
+        name=name,
+        sha=sha,
+    )
     reserved = remote_capture(host, ["reserve", "--name", name])
     if not reserved:
         raise ClientError(f"{host} did not say where to put the job")
-    sha, dirty = provenance(context)
-    argv = rsync_argv(context, f"{host}:{reserved}/{spool.CONTEXT_DIR}/")
-    done = subprocess.run(
-        argv, capture_output=True, timeout=RSYNC_TIMEOUT_SECONDS, check=False
-    )
+    dest = f"{host}:{reserved}/{spool.DATA_DIR}/"
+    argv = rsync_argv(data, dest)
+    try:
+        done = subprocess.run(
+            argv, capture_output=True, timeout=RSYNC_TIMEOUT_SECONDS, check=False
+        )
+    except FileNotFoundError as e:
+        raise ClientError("rsync is not installed, and submitting needs it") from e
+    except subprocess.TimeoutExpired as e:
+        raise ClientError(f"copying {data} to {host} took over 30 minutes") from e
     if done.returncode != 0:
         raise ClientError(
-            f"could not copy the project to {host}: "
+            f"could not copy --data to {host}: "
             f"{done.stderr.decode(errors='replace').strip()}"
         )
-    return remote_capture(host, commit_argv(reserved, name, command, sha, dirty, image))
+    return remote_capture(host, commit_argv(reserved, name, command, sha, dirty, tag))
 
 
 def commit_argv(
@@ -384,9 +511,9 @@ def commit_argv(
     command: list[str],
     sha: str,
     dirty: bool,
-    image: str | None,
+    image: str,
 ) -> list[str]:
-    """The third step of a remote submit, as a pure function.
+    """The last step of a remote submit, as a pure function.
 
     Note what is NOT here: `--user`. Whoever ssh'd in owns the job's files, and
     ownership is what decides who may abort it; the account on this laptop
@@ -397,8 +524,7 @@ def commit_argv(
     argv = ["commit", reserved, "--name", name, "--git-sha", sha]
     if dirty:
         argv.append("--git-dirty")
-    if image:
-        argv += ["--image", image]
+    argv += ["--image", image]
     return [*argv, "--", *command]
 
 
