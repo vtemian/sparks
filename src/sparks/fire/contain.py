@@ -1,7 +1,7 @@
 """Create and wait on one training container via the Docker SDK.
 
-Invoked as the child of `python -m sparks.fire.supervise -- …` so energy
-sampling and cancel semantics stay outside the project's image.
+Runs as the child of `python -m sparks.fire.supervise`, so energy sampling and
+cancel semantics stay outside the project's image.
 """
 
 from __future__ import annotations
@@ -30,11 +30,6 @@ LOG = logging.getLogger("sparks")
 
 
 def container_environment() -> dict[str, str]:
-    """Environment passed into the training container.
-
-    SPARKS_RUN_ID and SPARKS_PROMETHEUS_URL are forwarded from this process the
-    same way `docker run --env NAME` without a value did when supervise set them.
-    """
     env: dict[str, str] = {
         "PYTHONUNBUFFERED": "1",
         "SPARKS_DATA": "/data",
@@ -58,7 +53,6 @@ def run_kwargs(
     gpus: str,
     environment: dict[str, str],
 ) -> dict[str, Any]:
-    """Pure mapping from job fields to `containers.run` kwargs."""
     kwargs: dict[str, Any] = {
         "image": image,
         "command": list(command),
@@ -97,7 +91,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 
 def stream(container: Container) -> None:
-    """Tee the container's combined stdout/stderr to this process's stdout."""
     chunks = container.logs(stream=True, follow=True, stdout=True, stderr=True)
     out = sys.stdout.buffer
     for chunk in chunks:
@@ -106,21 +99,13 @@ def stream(container: Container) -> None:
 
 
 def remove(container: Container | None, name: str) -> None:
-    """Force-remove the job container by handle or, failing that, by name.
-
-    The by-name path is not belt and braces: docker-py's `containers.run` is
-    `create()` then `start()` with no cleanup between them, so a start that
-    fails (no nvidia runtime for `--gpus all`, a uid the box does not have)
-    leaves a created container we never got a handle to. The cidfile is never
-    written in that case, so `engine.Process.finish` cannot reach it either and
-    the name stays taken until a human runs `docker rm`.
-    """
     handle = container
     if handle is None:
+        # `containers.run` is create() then start(): a failed start leaves a
+        # container we hold no handle to, and its name stays taken.
         LOG.debug("sparks: no handle for %s; asking the daemon by name", name)
-        # The client is built inside the guard on purpose: this runs in a
-        # finally, and a daemon that has gone away must not replace the real
-        # error with a connection one.
+        # Built inside the guard: we run in a finally, and a dead daemon must
+        # not replace the real error with a connection one.
         with contextlib.suppress(Exception):
             handle = dock.client().containers.get(name)
     if handle is not None:
@@ -135,14 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     aborted = False
 
     def stop_on_signal(_signum: int, _frame: FrameType | None) -> None:
-        """Shaped for `signal.signal`. Both the flag and the handle it stops
-        are main()'s locals, so a run cannot be aborted through anything but
-        the handler main() itself installed.
-
-        Nothing is logged from here: the handler runs between two bytecodes of
-        whatever the main thread was doing, and that thread may be holding the
-        logging lock. The narration lives at the checkpoints instead.
-        """
+        """Logs nothing: the main thread it interrupts may hold the log lock."""
         nonlocal aborted
         aborted = True
         if container is not None:
@@ -155,10 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     try:
         LOG.debug("sparks: starting container %s from %s", args.name, args.image)
-        # Binding this local is what publishes the handle to the handler and to
-        # the finally, and it happens before the id below is examined on
-        # purpose: a container the daemon created but we then refuse still
-        # exists, and one nothing supervises keeps the GPU.
+        # Bind before the id is examined: one we refuse still holds the GPU.
         container = dock.client().containers.run(
             **run_kwargs(
                 name=args.name,
@@ -172,15 +147,13 @@ def main(argv: list[str] | None = None) -> int:
                 environment=container_environment(),
             )
         )
-        # docker-py types the id as optional, but sets it for anything it
-        # started. A container we cannot name is one we cannot supervise.
+        # docker-py types the id optional; one we cannot name we cannot stop.
         if container.id is None:
             raise RuntimeError("docker created a container with no id")
         args.cidfile.write_text(f"{container.id}\n", encoding="utf-8")
         LOG.debug("sparks: container %s is running as %s", args.name, container.id[:12])
 
-        # SIGTERM during containers.run() sets the flag but cannot stop yet:
-        # the handle did not exist. Catch up before we stream logs.
+        # A signal during containers.run() had no handle to stop; catch up.
         if aborted:
             LOG.debug(
                 "sparks: abort arrived while %s was starting; stopping it now",
