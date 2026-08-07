@@ -31,7 +31,10 @@ SKIP_NAMES = frozenset({"check_banners.py", "check_names.py", "check_dashboard.p
 
 
 def is_banner(line: str) -> bool:
-    return BANNER.match(line.rstrip("\n")) is not None
+    # Stripped, not rstripped: an indented banner inside a class body is the
+    # same noise as one at column 0, and anchoring on `^#` let four of them
+    # sit in process.py unflagged.
+    return BANNER.match(line.strip()) is not None
 
 
 def violations_in(path: Path) -> list[str]:

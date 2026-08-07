@@ -128,12 +128,12 @@ rather than degrading. Terminal state lives on `training_run_end_timestamp_secon
   `emit.py:238` (`LOG.warning(..., exc_info=True)`), and `summary.py:201`, which is an
   `except BaseException:` with a bare `raise`. Adding a directive to any of them is the `RUF100`
   failure.
-- **`launch`, `Supervisor.run` and `contain.main` sit at exactly 15 statements, the cap.** There is
-  no headroom: the next line added to any of them fails `ruff check`, and the fix is another
-  extraction rather than a bigger cap. Ruff's counting is not lines — a docstring is one statement,
-  an `except` handler is two, a `finally` is two — so a one-line change can cost three. These three
-  are the functions with the most sequencing to protect, which is why they are the ones at the
-  limit.
+- **Ruff's statement counting is not lines**, so a one-line change can cost three: a docstring is
+  one statement, an `except` handler is two, a `finally` is two. `contain.main` sits at exactly 30
+  against the 30 cap, and `Supervisor.run` at 27, so adding narration to either forces something
+  else out. Reach for a wider cap before an extraction: these are the functions with the most
+  sequencing to protect, and the last time the cap won, splitting `contain.main` pushed its
+  signal-handler state into module globals and left a test-only hook in production code.
 - **Write the reason with ` -- `, not a colon.** `# noqa: BLE001: reason` is a malformed code list:
   that one directive suppresses nothing, so its violation comes back. Ruff is loud about it, on
   stderr and with a non-zero exit (`warning: Invalid # noqa directive ... expected code to consist

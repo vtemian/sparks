@@ -104,8 +104,6 @@ class RunMetrics:
         if autostart:
             self._start()
 
-    # -- public API ----------------------------------------------------------
-
     def begin(self) -> None:
         """Identity, start time, and the first heartbeat."""
         if not self._lifecycle:
@@ -172,8 +170,6 @@ class RunMetrics:
         tb: TracebackType | None,
     ) -> None:
         self.end("crashed" if exc_type else "finished")
-
-    # -- internals -----------------------------------------------------------
 
     def _sample(self, series: Series, value: float, when: float) -> None:
         self._buffer.add(series, value, int(when * 1000))
