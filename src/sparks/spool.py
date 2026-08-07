@@ -271,8 +271,8 @@ def load(path: Path) -> Entry:
     """One job directory. Raises if the manifest is missing or unreadable, which
     is how `entries` tells a job from any other directory."""
     manifest = path / JOB_FILE
-    with manifest.open(encoding="utf-8") as f:
-        job = Job.from_dict(json.load(f))
+    with manifest.open(encoding="utf-8") as handle:
+        job = Job.from_dict(json.load(handle))
     return Entry(
         job=job,
         state=_read_state(path),
@@ -293,8 +293,8 @@ def entries(queue_dir: Path) -> list[Entry]:
     for path in sorted(queue_dir.glob(f"*/{JOB_FILE}")):
         try:
             found.append(load(path.parent))
-        except (OSError, ValueError, KeyError, TypeError) as e:
-            LOG.warning("sparks: skipping unreadable job %s: %s", path.parent, e)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            LOG.warning("sparks: skipping unreadable job %s: %s", path.parent, exc)
     return sorted(found, key=lambda e: (e.job.submitted_unix, e.job.job_id))
 
 
@@ -304,7 +304,10 @@ def next_queued(queue_dir: Path) -> Entry | None:
     Strictly `QUEUED`: a job whose state file could not be parsed is skipped,
     because the states it might be hiding include `running`.
     """
-    return next((e for e in entries(queue_dir) if e.state.state == QUEUED), None)
+    return next(
+        (entry for entry in entries(queue_dir) if entry.state.state == QUEUED),
+        None,
+    )
 
 
 def publishable(
@@ -405,14 +408,14 @@ def _read_state(path: Path) -> State:
     running, which is the one mistake here with a hardware cost.
     """
     try:
-        with (path / STATE_FILE).open(encoding="utf-8") as f:
-            return State.from_dict(json.load(f))
+        with (path / STATE_FILE).open(encoding="utf-8") as handle:
+            return State.from_dict(json.load(handle))
     except FileNotFoundError:
         return State()
-    except (OSError, ValueError, TypeError) as e:
+    except (OSError, ValueError, TypeError) as exc:
         LOG.warning(
             "sparks: %s has an unreadable state, so it will not be started: %s",
             path.name,
-            e,
+            exc,
         )
         return State(state=UNKNOWN)

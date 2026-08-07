@@ -109,8 +109,8 @@ def build(context: Path, tag: str) -> None:
             rm=True,
         )
         _echo_build(stream, tag)
-    except dock.DockerException as e:
-        raise ClientError(f"docker build failed for {tag}: {e}") from e
+    except dock.DockerException as exc:
+        raise ClientError(f"docker build failed for {tag}: {exc}") from exc
 
 
 def push(tag: str) -> None:
@@ -123,8 +123,8 @@ def push(tag: str) -> None:
             ),
             tag,
         )
-    except dock.DockerException as e:
-        raise ClientError(f"docker push failed for {tag}. {PUSH_HINT}") from e
+    except dock.DockerException as exc:
+        raise ClientError(f"docker push failed for {tag}. {PUSH_HINT}") from exc
 
 
 def _failed(chunk: dict[str, Any]) -> bool:
@@ -164,10 +164,10 @@ def _box_config(host: str) -> bytes:
             timeout=SSH_TIMEOUT_SECONDS,
             check=False,
         )
-    except FileNotFoundError as e:
-        raise ClientError("ssh is not installed") from e
-    except subprocess.TimeoutExpired as e:
-        raise ClientError(f"timed out reading {REMOTE_BOX_CONFIG} from {host}") from e
+    except FileNotFoundError as exc:
+        raise ClientError("ssh is not installed") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ClientError(f"timed out reading {REMOTE_BOX_CONFIG} from {host}") from exc
     if done.returncode != 0:
         detail = (done.stderr or done.stdout).decode(errors="replace").strip()
         raise ClientError(f"{host} refused: {detail}")
@@ -177,8 +177,8 @@ def _box_config(host: str) -> bytes:
 def _registry_url(raw: bytes, where: str) -> str:
     try:
         data = tomllib.loads(raw.decode())
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
-        raise ClientError(f"{where} is not valid TOML: {e}") from e
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+        raise ClientError(f"{where} is not valid TOML: {exc}") from exc
     url = data.get("registry_url")
     if not isinstance(url, str) or not url.strip():
         raise ClientError(f"{where} has no registry_url")
@@ -277,10 +277,10 @@ def ship(source: Path, destination: Path) -> None:
         done = subprocess.run(
             argv, capture_output=True, timeout=RSYNC_TIMEOUT_SECONDS, check=False
         )
-    except FileNotFoundError as e:
-        raise ClientError("rsync is not installed, and submitting needs it") from e
-    except subprocess.TimeoutExpired as e:
-        raise ClientError(f"copying {source} took over 30 minutes") from e
+    except FileNotFoundError as exc:
+        raise ClientError("rsync is not installed, and submitting needs it") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ClientError(f"copying {source} took over 30 minutes") from exc
     if done.returncode != 0:
         raise ClientError(
             f"could not copy {source}: {done.stderr.decode(errors='replace').strip()}"
@@ -357,8 +357,8 @@ def run(host: str, argv: list[str]) -> int:
     """SSH `fire-ctl <argv>` on `host`; return the remote exit code."""
     try:
         return subprocess.run(ssh_argv(host, argv), check=False).returncode
-    except FileNotFoundError as e:
-        raise ClientError("ssh is not installed") from e
+    except FileNotFoundError as exc:
+        raise ClientError("ssh is not installed") from exc
 
 
 def capture(host: str, argv: list[str]) -> str:
@@ -437,10 +437,10 @@ def ship_to(data: Path, host: str, reserved: str) -> None:
         done = subprocess.run(
             argv, capture_output=True, timeout=RSYNC_TIMEOUT_SECONDS, check=False
         )
-    except FileNotFoundError as e:
-        raise ClientError("rsync is not installed, and submitting needs it") from e
-    except subprocess.TimeoutExpired as e:
-        raise ClientError(f"copying {data} to {host} took over 30 minutes") from e
+    except FileNotFoundError as exc:
+        raise ClientError("rsync is not installed, and submitting needs it") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ClientError(f"copying {data} to {host} took over 30 minutes") from exc
     if done.returncode != 0:
         raise ClientError(
             f"could not copy --data to {host}: "

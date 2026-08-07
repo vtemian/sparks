@@ -83,8 +83,8 @@ def launch(
     # after it started did exactly that on the box.
     try:
         opened = _open_window(sampler, baseline_seconds)
-    except _AbortError as e:
-        return _cancelled(run, baseline_seconds, e)
+    except _AbortError as exc:
+        return _cancelled(run, baseline_seconds, exc)
 
     metrics = _supervisor_metrics(run.id, run.rec.name, url, run.rec.sha)
     _begin(metrics)
@@ -92,8 +92,8 @@ def launch(
         completed = Supervisor(
             command, log_path=run.dir / "output.log", env=_child_env(run.id, url)
         ).run()
-    except Exception as e:  # noqa: BLE001 -- any failure to run still owes a record
-        return _crashed(run, metrics, command, e)
+    except Exception as exc:  # noqa: BLE001 -- any failure to run still owes a record
+        return _crashed(run, metrics, command, exc)
 
     return _recorded(run, completed, opened, metrics, baseline_seconds)
 
@@ -146,8 +146,8 @@ def _announce(
     # view of the world if this fails, but the run itself is unaffected.
     try:
         on_reserved(run_id, run_dir)
-    except Exception as e:  # noqa: BLE001 -- an observer's failure is not the run's
-        LOG.warning("sparks: could not announce %s: %s", run_id, e)
+    except Exception as exc:  # noqa: BLE001 -- an observer's failure is not the run's
+        LOG.warning("sparks: could not announce %s: %s", run_id, exc)
 
 
 def _reserved(
@@ -416,8 +416,8 @@ def _rebuild(shared_dir: Path) -> None:
         shared.make_dir(target.parent)
         written = index.rebuild(shared_dir / "runs", target)
         LOG.info("sparks: %d runs in %s", written, target)
-    except Exception as e:  # noqa: BLE001 -- the run itself still succeeded
-        LOG.warning("sparks: could not rebuild the run index: %s", e)
+    except Exception as exc:  # noqa: BLE001 -- the run itself still succeeded
+        LOG.warning("sparks: could not rebuild the run index: %s", exc)
 
 
 class _AbortError(Exception):

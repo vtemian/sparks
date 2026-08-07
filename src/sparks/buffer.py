@@ -45,7 +45,7 @@ class Buffer:
                 out.append(
                     {
                         "metric": series.as_metric(),
-                        "values": [samples[t] for t in stamps],
+                        "values": [samples[stamp] for stamp in stamps],
                         "timestamps": stamps,
                     }
                 )

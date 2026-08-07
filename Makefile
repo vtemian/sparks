@@ -29,6 +29,8 @@ fmt:
 lint:
 	uv run ruff format --check src tests
 	uv run ruff check src tests
+	# Ruff has no VNE001 yet; this is the noun/verb naming rule.
+	uv run python tests/check_names.py
 
 typecheck:
 	uv run mypy

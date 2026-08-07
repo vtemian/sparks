@@ -28,10 +28,10 @@ indentation inside a function body.
 A function does what its name says, all of it, and nothing else. `fetch_*`
 returns or raises; `find_*` may return None; `*_argv` builds argv and never
 runs it. No Manager/Service/Helper/Data names. Private helpers are `_` plus
-one or two terse domain words. Spell the word: `submit_parser`, never
-`submit_p`; `directory`, never `qd`. Letter-suffix abbreviations (`*_p`,
-`*_f`, …) and the few banned short locals (`p`, `q`, `qd`) fail
-`tests/test_naming.py`. pep8-naming (`N` in ruff) covers the rest.
+one or two terse domain words. Locals are a noun or a verb, never a letter:
+`parser` / `exc` / `handle`, not `p` / `e` / `f`; `submit_parser`, never
+`submit_p`. Ruff has no VNE001 yet — `tests/check_names.py` is the rule
+(`make lint`). pep8-naming (`N` in ruff) covers class/function shape.
 
 ### Fail fast, fail visible
 Catch specific exceptions. The only broad excepts are the deliberate ones

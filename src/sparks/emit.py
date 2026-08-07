@@ -235,8 +235,8 @@ class RunMetrics:
             try:
                 self._beat(time.time())
                 self._flush()
-            except Exception as e:  # deliberately broad: the pump must not die
-                LOG.warning("sparks: pump cycle failed: %s", e, exc_info=True)
+            except Exception as exc:  # deliberately broad: the pump must not die
+                LOG.warning("sparks: pump cycle failed: %s", exc, exc_info=True)
 
     def _flush(self) -> None:
         batch = self._buffer.drain()
@@ -244,8 +244,8 @@ class RunMetrics:
             return
         try:
             self._writer.send(batch)
-        except Exception as e:  # noqa: BLE001 -- telemetry never kills a run
-            LOG.warning("sparks: dropped %d series: %s", len(batch), e)
+        except Exception as exc:  # noqa: BLE001 -- telemetry never kills a run
+            LOG.warning("sparks: dropped %d series: %s", len(batch), exc)
 
     def _shutdown(self) -> None:
         if self._stop is None or self._stop.is_set():
@@ -283,8 +283,8 @@ class RunMetrics:
             return
         try:
             self._writer.send(batch)
-        except Exception as e:  # noqa: BLE001 -- telemetry never kills a run
-            LOG.warning("sparks: could not mark %d series stale: %s", len(batch), e)
+        except Exception as exc:  # noqa: BLE001 -- telemetry never kills a run
+            LOG.warning("sparks: could not mark %d series stale: %s", len(batch), exc)
 
     def _stale_batch(self) -> list[dict[str, Any]]:
         """The stale markers this run would write, separated out so a test can

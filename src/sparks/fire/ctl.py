@@ -155,9 +155,9 @@ def main(argv: list[str]) -> int:
     try:
         func = cast("Callable[[argparse.Namespace], int]", args.func)
         return func(args)
-    except control.ControlError as e:
-        print(f"fire: {e}", file=sys.stderr)
+    except control.ControlError as exc:
+        print(f"fire: {exc}", file=sys.stderr)
         return 1
-    except (box.NotProvisionedError, box.MalformedError) as e:
-        print(f"fire: {e}", file=sys.stderr)
+    except (box.NotProvisionedError, box.MalformedError) as exc:
+        print(f"fire: {exc}", file=sys.stderr)
         return os.EX_CONFIG

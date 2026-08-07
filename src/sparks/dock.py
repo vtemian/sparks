@@ -29,5 +29,5 @@ def remove_quietly(container_id: str) -> None:
         container.remove(force=True, v=True)
     except NotFound:
         return
-    except (APIError, DockerException, OSError) as e:
-        LOG.warning("sparks: docker remove %s failed: %s", container_id[:12], e)
+    except (APIError, DockerException, OSError) as exc:
+        LOG.warning("sparks: docker remove %s failed: %s", container_id[:12], exc)

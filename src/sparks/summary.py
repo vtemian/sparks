@@ -165,8 +165,8 @@ def load(path: Path) -> Summary:
 
     Takes the file rather than the run directory, because the index globs for
     the files directly."""
-    with path.open(encoding="utf-8") as f:
-        data: dict[str, Any] = json.load(f)
+    with path.open(encoding="utf-8") as handle:
+        data: dict[str, Any] = json.load(handle)
     return Summary.from_dict(data)
 
 
@@ -194,8 +194,8 @@ def write_atomically(
         dir=target.parent, prefix=f".{target.stem}.", suffix=".tmp"
     )
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(render())
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(render())
         os.chmod(tmp, mode)
         os.replace(tmp, target)
     except BaseException:

@@ -164,8 +164,8 @@ def load_all(runs_dir: Path) -> list[summary.Summary]:
     for path in sorted(runs_dir.glob(f"*/{summary.FILENAME}")):
         try:
             runs.append(summary.load(path))
-        except (OSError, ValueError, KeyError, TypeError) as e:
-            LOG.warning("sparks: skipping unreadable %s: %s", path, e)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            LOG.warning("sparks: skipping unreadable %s: %s", path, exc)
     return runs
 
 
@@ -176,7 +176,9 @@ def render(runs: Iterable[summary.Summary]) -> str:
     rewritten as `finished` stales one series and creates another, doubling
     churn for nothing.
     """
-    terminal = sorted((r for r in runs if r.is_terminal), key=lambda r: r.run_id)
+    terminal = sorted(
+        (run for run in runs if run.is_terminal), key=lambda run: run.run_id
+    )
     lines: list[str] = []
     if terminal:
         lines += _family(INFO, INFO_HELP)
@@ -184,25 +186,27 @@ def render(runs: Iterable[summary.Summary]) -> str:
             _sample(
                 INFO,
                 {
-                    "run_id": r.run_id,
-                    "user": r.user,
-                    "run_name": r.run_name,
-                    "status": r.status,
-                    "energy_sources": r.energy.gpu_sources,
+                    "run_id": run.run_id,
+                    "user": run.user,
+                    "run_name": run.run_name,
+                    "status": run.status,
+                    "energy_sources": run.energy.gpu_sources,
                 },
                 1.0,
             )
-            for r in terminal
+            for run in terminal
         ]
     for family in NUMERIC:
-        rows = [(r.run_id, family.value(r)) for r in terminal]
+        rows = [(run.run_id, family.value(run)) for run in terminal]
         # A family nothing has a value for is not declared at all: a bare TYPE
         # header with no samples under it is noise a scrape pays for forever.
-        present = [(run_id, v) for run_id, v in rows if v is not None]
+        present = [(run_id, value) for run_id, value in rows if value is not None]
         if not present:
             continue
         lines += _family(family.name, family.help)
-        lines += [_sample(family.name, {"run_id": run_id}, v) for run_id, v in present]
+        lines += [
+            _sample(family.name, {"run_id": run_id}, value) for run_id, value in present
+        ]
     return "".join(f"{line}\n" for line in lines)
 
 
@@ -248,19 +252,19 @@ def _job_rows(jobs: list["spool.Entry"]) -> list[str]:
         _sample(
             QUEUE_INFO,
             {
-                "job_id": e.job.job_id,
-                "name": e.job.name,
-                "user": e.job.user,
-                "state": e.state.state,
+                "job_id": entry.job.job_id,
+                "name": entry.job.name,
+                "user": entry.job.user,
+                "state": entry.state.state,
                 # Present and empty rather than omitted before a build:
                 # changing the label SET between scrapes creates a second
                 # series, and every join against the first then breaks.
-                "image": e.state.image or "",
-                "run_id": e.state.run_id or "",
+                "image": entry.state.image or "",
+                "run_id": entry.state.run_id or "",
             },
             1.0,
         )
-        for e in jobs
+        for entry in jobs
     ]
     return lines
 
@@ -268,7 +272,7 @@ def _job_rows(jobs: list["spool.Entry"]) -> list[str]:
 def _depth_rows(jobs: list["spool.Entry"]) -> list[str]:
     """The depth family, published even for an empty queue."""
     lines = _family(QUEUE_DEPTH, QUEUE_DEPTH_HELP)
-    counted = Counter(e.state.state for e in jobs)
+    counted = Counter(entry.state.state for entry in jobs)
     # The live states always, so an alert can say "queued > 0 and running == 0"
     # without `or vector(0)` in the one situation the expression exists for.
     for state in (*LIVE_STATES, *sorted(set(counted) - set(LIVE_STATES))):
@@ -279,17 +283,17 @@ def _depth_rows(jobs: list["spool.Entry"]) -> list[str]:
 def _stamp_rows(jobs: list["spool.Entry"]) -> list[str]:
     """The timestamp families, each declared only when some job has a value."""
     stamps: tuple[tuple[str, str, Callable[[spool.Entry], float | None]], ...] = (
-        (QUEUE_SUBMITTED, QUEUE_SUBMITTED_HELP, lambda e: e.job.submitted_unix),
-        (QUEUE_STARTED, QUEUE_STARTED_HELP, lambda e: e.state.started_unix),
+        (QUEUE_SUBMITTED, QUEUE_SUBMITTED_HELP, lambda entry: entry.job.submitted_unix),
+        (QUEUE_STARTED, QUEUE_STARTED_HELP, lambda entry: entry.state.started_unix),
     )
     lines: list[str] = []
     for name, help_text, when in stamps:
-        stamped = [(e.job.job_id, when(e)) for e in jobs]
-        present = [(job_id, v) for job_id, v in stamped if v is not None]
+        stamped = [(entry.job.job_id, when(entry)) for entry in jobs]
+        present = [(job_id, value) for job_id, value in stamped if value is not None]
         if not present:
             continue
         lines += _family(name, help_text)
-        lines += [_sample(name, {"job_id": job_id}, v) for job_id, v in present]
+        lines += [_sample(name, {"job_id": job_id}, value) for job_id, value in present]
     return lines
 
 
@@ -302,7 +306,7 @@ def _sample(name: str, labels: dict[str, str], value: float) -> str:
     which not every parser in the chain accepts."""
     if not labels:
         return f"{name} {_number(value)}"
-    pairs = ",".join(f'{key}="{_escape(v)}"' for key, v in labels.items())
+    pairs = ",".join(f'{key}="{_escape(value)}"' for key, value in labels.items())
     return f"{name}{{{pairs}}} {_number(value)}"
 
 

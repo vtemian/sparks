@@ -36,7 +36,9 @@ def serve(args: argparse.Namespace) -> int:
             shared_dir=shared_dir,
             url=url,
             gpus=args.gpus,
-            extra_groups=[g for g in [engine.docker_group()] if g is not None],
+            extra_groups=[
+                group for group in [engine.docker_group()] if group is not None
+            ],
         ),
         textfile_dir=textfile,
         poll_seconds=args.poll_seconds,
@@ -63,7 +65,7 @@ def _runner_url(contract: box.Box | None) -> str:
 
 
 def _unprovisioned(missing: list[str]) -> str:
-    flags = " ".join(f"{f} ..." for f in missing)
+    flags = " ".join(f"{flag} ..." for flag in missing)
     return (
         f"this box is not configured for sparks.\n\n"
         f"{box.config_path()} does not exist, so nothing here knows where the "
@@ -117,8 +119,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(given)
     try:
         return serve(args)
-    except (box.NotProvisionedError, box.MalformedError) as e:
-        print(f"fire: {e}", file=sys.stderr)
+    except (box.NotProvisionedError, box.MalformedError) as exc:
+        print(f"fire: {exc}", file=sys.stderr)
         return os.EX_CONFIG
 
 

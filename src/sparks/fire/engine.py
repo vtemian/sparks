@@ -176,8 +176,8 @@ class Docker:
                 stream = client.api.pull(image, stream=True, decode=True)
                 for chunk in _bounded(stream, deadline):
                     _pull_line(chunk, log, log_path)
-        except dock.DockerException as e:
-            raise PullFailedError(f"could not pull image: {e}") from e
+        except dock.DockerException as exc:
+            raise PullFailedError(f"could not pull image: {exc}") from exc
 
     def start(self, entry: spool.Entry, image: str, log_path: Path) -> Process:
         """Start the job, as its owner."""
@@ -342,8 +342,8 @@ def shared_group(shared_dir: Path) -> int | None:
     """
     try:
         return shared_dir.stat().st_gid
-    except OSError as e:
-        LOG.warning("sparks: cannot read %s: %s", shared_dir, e)
+    except OSError as exc:
+        LOG.warning("sparks: cannot read %s: %s", shared_dir, exc)
         return None
 
 
@@ -356,8 +356,8 @@ def docker_group() -> int | None:
     """
     try:
         return DOCKER_SOCKET.stat().st_gid
-    except OSError as e:
-        LOG.warning("sparks: cannot read %s: %s", DOCKER_SOCKET, e)
+    except OSError as exc:
+        LOG.warning("sparks: cannot read %s: %s", DOCKER_SOCKET, exc)
         return None
 
 

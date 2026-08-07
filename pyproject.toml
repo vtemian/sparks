@@ -38,8 +38,9 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-# N = pep8-naming (class/function shape). Letter-suffix abbreviations like
-# submit_p are not a ruff rule; tests/test_naming.py bans those.
+# N = pep8-naming (class/function shape). Single-letter locals (VNE001) and
+# letter-suffix abbreviations (submit_p) are not in ruff yet; tests/check_names.py
+# is the rule, wired into `make lint`.
 select = [
     "F", "E", "W", "I", "B", "C4", "UP", "SIM", "S", "T20",
     "N", "ANN", "A", "ARG", "ERA", "PLR", "PLW", "PLE", "PERF",
@@ -82,6 +83,7 @@ max-statements = 15
 ]
 # Makefile-invoked CLI scripts that live in tests/, not test modules.
 "tests/check_dashboard.py" = ["C901", "PLR0912", "T201"]
+"tests/check_names.py" = ["T201"]
 "tests/on_box.py" = ["BLE001", "C901", "PLR0912", "T201"]
 # The CLI surface prints; that is its output contract.
 "src/sparks/client/cli.py" = ["T201"]

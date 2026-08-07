@@ -59,7 +59,9 @@ def _settings(args: argparse.Namespace) -> _Settings:
 
     if contract is None:
         missing = [
-            n for n, v in (("--shared-dir", shared), ("--url", url)) if v is None
+            name
+            for name, value in (("--shared-dir", shared), ("--url", url))
+            if value is None
         ]
         if missing:
             raise box.NotProvisionedError(_unprovisioned(missing))
@@ -81,7 +83,7 @@ def _settings(args: argparse.Namespace) -> _Settings:
 
 
 def _unprovisioned(missing: list[str]) -> str:
-    flags = " ".join(f"{f} ..." for f in missing)
+    flags = " ".join(f"{flag} ..." for flag in missing)
     return (
         f"this box is not configured for sparks.\n\n"
         f"{box.config_path()} does not exist, so nothing here knows where runs "
@@ -95,7 +97,7 @@ def _unprovisioned(missing: list[str]) -> str:
 
 
 def _mismatched(complaints: list[str]) -> str:
-    problems = "\n".join(f"    {c}" for c in complaints)
+    problems = "\n".join(f"    {complaint}" for complaint in complaints)
     return (
         f"this box's sparks configuration does not match the box.\n\n"
         f"{box.config_path()} describes provisioning that is not there:\n"
@@ -198,8 +200,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return run(args)
-    except (box.NotProvisionedError, box.MalformedError) as e:
-        print(f"sparks: {e}", file=sys.stderr)
+    except (box.NotProvisionedError, box.MalformedError) as exc:
+        print(f"sparks: {exc}", file=sys.stderr)
         return os.EX_CONFIG
 
 

@@ -90,7 +90,7 @@ def resolve(queue_dir: Path, needle: str) -> spool.Entry:
     if not found:
         raise ControlError("there are no jobs in the queue")
 
-    exact = [e for e in found if e.job.job_id == needle]
+    exact = [entry for entry in found if entry.job.job_id == needle]
     if exact:
         return exact[0]
 
@@ -102,7 +102,11 @@ def resolve(queue_dir: Path, needle: str) -> spool.Entry:
 
 def _matches(found: list[spool.Entry], needle: str) -> list[spool.Entry]:
     """Every job whose id contains the needle, or whose name is exactly it."""
-    return [e for e in found if needle in e.job.job_id or e.job.name == needle]
+    return [
+        entry
+        for entry in found
+        if needle in entry.job.job_id or entry.job.name == needle
+    ]
 
 
 def _disambiguate(matches: list[spool.Entry], needle: str) -> spool.Entry:
@@ -113,12 +117,12 @@ def _disambiguate(matches: list[spool.Entry], needle: str) -> spool.Entry:
     """
     if len(matches) == 1:
         return matches[0]
-    live = [e for e in matches if not e.is_terminal]
+    live = [entry for entry in matches if not entry.is_terminal]
     # A name that matches one running job and six finished ones is not
     # ambiguous in any way the person meant it.
     if len(live) == 1:
         return live[0]
-    ids = "\n".join(f"    {e.job.job_id}  {e.state.state}" for e in matches)
+    ids = "\n".join(f"    {entry.job.job_id}  {entry.state.state}" for entry in matches)
     raise ControlError(f"{needle!r} matches several jobs:\n{ids}")
 
 
@@ -161,23 +165,26 @@ def render(entries: list[spool.Entry], now: float | None = None) -> str:
     moment = time.time() if now is None else now
     rows = [
         (
-            e.job.job_id,
-            e.job.user,
-            e.state.state,
-            _age(e, moment),
-            e.state.run_id or "",
+            entry.job.job_id,
+            entry.job.user,
+            entry.state.state,
+            _age(entry, moment),
+            entry.state.run_id or "",
         )
-        for e in entries
+        for entry in entries
     ]
     widths = [
-        max(len(str(row[i])) for row in (HEADINGS, *rows)) for i in range(len(HEADINGS))
+        max(len(str(row[index])) for row in (HEADINGS, *rows))
+        for index in range(len(HEADINGS))
     ]
-    lines = [_row(HEADINGS, widths), *(_row(r, widths) for r in rows)]
+    lines = [_row(HEADINGS, widths), *(_row(row, widths) for row in rows)]
     return "".join(f"{line}\n" for line in lines)
 
 
 def _row(values: tuple[str, ...], widths: list[int]) -> str:
-    return "  ".join(v.ljust(w) for v, w in zip(values, widths, strict=True)).rstrip()
+    return "  ".join(
+        value.ljust(width) for value, width in zip(values, widths, strict=True)
+    ).rstrip()
 
 
 def _age(entry: spool.Entry, now: float) -> str:
@@ -214,6 +221,6 @@ def _clone(source: Path, destination: Path) -> None:
     """
     try:
         shutil.copytree(source, destination, copy_function=os.link)
-    except OSError as e:
-        LOG.info("sparks: could not hardlink data (%s); copying instead", e)
+    except OSError as exc:
+        LOG.info("sparks: could not hardlink data (%s); copying instead", exc)
         shutil.copytree(source, destination, dirs_exist_ok=True)

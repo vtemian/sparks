@@ -76,13 +76,13 @@ def load(path: Path | None = None) -> Box | None:
         raw = path.read_bytes()
     except FileNotFoundError:
         return None
-    except OSError as e:
-        raise MalformedError(f"{path} cannot be read: {e}") from e
+    except OSError as exc:
+        raise MalformedError(f"{path} cannot be read: {exc}") from exc
     try:
         data = tomllib.loads(raw.decode())
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
-        raise MalformedError(f"{path} is not valid TOML: {e}") from e
-    missing = [f for f in (*PATHS, *STRINGS) if f not in data]
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
+        raise MalformedError(f"{path} is not valid TOML: {exc}") from exc
+    missing = [field for field in (*PATHS, *STRINGS) if field not in data]
     if missing:
         raise MalformedError(f"{path} is missing {', '.join(sorted(missing))}")
     return Box(
@@ -110,7 +110,11 @@ def preflight(target: Box) -> list[str]:
     cannot be written to is different in kind: the record of the run is lost,
     and recording the run is the whole job.
     """
-    return [c for c in (_usable(target.runs_dir), _usable(textfile_dir(target))) if c]
+    return [
+        complaint
+        for complaint in (_usable(target.runs_dir), _usable(textfile_dir(target)))
+        if complaint
+    ]
 
 
 def textfile_dir(target: Box | None = None) -> Path:

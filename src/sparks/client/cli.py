@@ -156,8 +156,8 @@ def main(argv: list[str] | None = None) -> int:
     command: Command = args.func
     try:
         return command(args, given)
-    except remote.ClientError as e:
-        print(f"sparks: {e}", file=sys.stderr)
+    except remote.ClientError as exc:
+        print(f"sparks: {exc}", file=sys.stderr)
         return 1
 
 

@@ -293,7 +293,7 @@ def _spbm_chip(root: Path = HWMON) -> Path | None:
         chips = sorted(root.glob("hwmon*"))
     except OSError:
         return None
-    return next((c for c in chips if _read(c / "name") == CHIP), None)
+    return next((chip for chip in chips if _read(chip / "name") == CHIP), None)
 
 
 def _channel(chip: Path | None, kind: str, labels: Sequence[str]) -> Path | None:

@@ -170,10 +170,10 @@ class Runner:
                 self.textfile_dir / index.QUEUE_FILENAME,
                 heartbeat=self.now(),
             )
-        except OSError as e:
+        except OSError as exc:
             # Losing the metrics file must not stop the queue: the jobs are the
             # point and the file is the view of them.
-            LOG.warning("sparks: could not publish the queue: %s", e)
+            LOG.warning("sparks: could not publish the queue: %s", exc)
 
     def process(self, entry: spool.Entry) -> None:
         """Pull and run one job, from queued to terminal."""
@@ -188,9 +188,9 @@ class Runner:
             return
         try:
             self.engine.pull(entry.job.image, entry.path / spool.PULL_LOG)
-        except PullFailedError as e:
-            LOG.warning("sparks: %s failed to pull: %s", entry.job.job_id, e)
-            self._fail(entry, f"pull failed: {e}")
+        except PullFailedError as exc:
+            LOG.warning("sparks: %s failed to pull: %s", entry.job.job_id, exc)
+            self._fail(entry, f"pull failed: {exc}")
             return
         self._run(entry, entry.job.image)
 
@@ -298,8 +298,8 @@ class Runner:
         )
         try:
             pending.path.unlink()
-        except OSError as e:
-            LOG.warning("sparks: could not clear the refused request: %s", e)
+        except OSError as exc:
+            LOG.warning("sparks: could not clear the refused request: %s", exc)
 
     @staticmethod
     def _outcome(code: int | None, aborted: bool) -> str:
