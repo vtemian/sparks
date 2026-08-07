@@ -153,6 +153,11 @@ def _echo_push(chunks: Iterable[dict[str, Any]]) -> None:
 
 def fetch_registry_url(host: str) -> str:
     """Read `registry_url` from the box contract over ssh."""
+    raw = _box_config(host)
+    return _registry_url(raw, f"{host}:{REMOTE_BOX_CONFIG}")
+
+
+def _box_config(host: str) -> bytes:
     try:
         done = subprocess.run(
             ["ssh", host, "cat", REMOTE_BOX_CONFIG],
@@ -167,13 +172,17 @@ def fetch_registry_url(host: str) -> str:
     if done.returncode != 0:
         detail = (done.stderr or done.stdout).decode(errors="replace").strip()
         raise ClientError(f"{host} refused: {detail}")
+    return done.stdout
+
+
+def _registry_url(raw: bytes, where: str) -> str:
     try:
-        data = tomllib.loads(done.stdout.decode())
+        data = tomllib.loads(raw.decode())
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
-        raise ClientError(f"{host}:{REMOTE_BOX_CONFIG} is not valid TOML: {e}") from e
+        raise ClientError(f"{where} is not valid TOML: {e}") from e
     url = data.get("registry_url")
     if not isinstance(url, str) or not url.strip():
-        raise ClientError(f"{host}:{REMOTE_BOX_CONFIG} has no registry_url")
+        raise ClientError(f"{where} has no registry_url")
     return url.strip()
 
 
@@ -389,23 +398,40 @@ def submit_remote(
 
     who = local_user()
     sha, dirty = provenance(context)
-    url = registry_url
-    if image is None and url is None:
-        url = fetch_registry_url(host)
-
     tag = _resolve_tag(
         image=image,
         context=context,
-        registry_url=url,
+        registry_url=_registry_for(host, image, registry_url),
         user=who,
         name=name,
         sha=sha,
     )
+    reserved = _reserve(host, name, who)
+    ship_to(data, host, reserved)
+    return capture(host, commit_argv(reserved, name, command, sha, dirty, tag))
 
+
+def _registry_for(host: str, image: str | None, registry_url: str | None) -> str | None:
+    """Ask the box for its registry only when there is something to push."""
+    if image is None and registry_url is None:
+        return fetch_registry_url(host)
+    return registry_url
+
+
+def _reserve(host: str, name: str, who: str) -> str:
     reserved = capture(host, ["reserve", "--name", name, "--user", who])
     if not reserved:
         raise ClientError(f"{host} did not say where to put the job")
+    return reserved
 
+
+def ship_to(data: Path, host: str, reserved: str) -> None:
+    """rsync `--data` into a job directory reserved on the box.
+
+    The remote counterpart of `ship`, not a variant of it: the box end of the
+    reserve/commit handshake already made the directory, and the failures name
+    the host rather than the destination path.
+    """
     dest = f"{host}:{reserved}/{spool.DATA_DIR}/"
     argv = rsync_argv(data, dest)
     try:
@@ -421,8 +447,6 @@ def submit_remote(
             f"could not copy --data to {host}: "
             f"{done.stderr.decode(errors='replace').strip()}"
         )
-
-    return capture(host, commit_argv(reserved, name, command, sha, dirty, tag))
 
 
 def commit_argv(
