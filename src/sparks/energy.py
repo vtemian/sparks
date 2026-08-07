@@ -150,15 +150,22 @@ class EnergyReading:
         misleading zero."""
         if self.total_joules is None:
             return None  # the run's own energy was never measured
-        if self.idle_watts <= 0:
-            return None  # no baseline was measured
-        if self.gpu_idle_watts > BUSY_GPU_WATTS:
-            return None  # the GPU rail was already busy: someone else's job
-        baseline_joules = self.idle_watts * self.seconds
+        baseline_joules = self._baseline_joules()
+        if baseline_joules is None:
+            return None
         if self.total_joules < baseline_joules * UNDER_BASELINE_FRACTION:
             return None  # the neighbour stopped mid-run; the baseline is stale
         # Within 10% under is measurement noise, not free energy: clamp to zero.
         return max(0.0, self.total_joules - baseline_joules)
+
+    def _baseline_joules(self) -> float | None:
+        """What idle would have cost over the window, or None when there is
+        no baseline the subtraction can trust."""
+        if self.idle_watts <= 0:
+            return None  # no baseline was measured
+        if self.gpu_idle_watts > BUSY_GPU_WATTS:
+            return None  # the GPU rail was already busy: someone else's job
+        return self.idle_watts * self.seconds
 
     @property
     def gpu_sources(self) -> str:
@@ -347,9 +354,7 @@ def _read_micro(path: Path | None) -> float | None:
     without raising, which is how a bare NaN token would otherwise reach
     json.dumps and produce a file every strict parser rejects.
     """
-    if path is None:
-        return None
-    raw = _read(path)
+    raw = _read(path) if path is not None else None
     if raw is None:
         return None
     try:
