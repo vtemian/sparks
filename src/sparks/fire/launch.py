@@ -140,7 +140,7 @@ def _announce(
     # view of the world if this fails, but the run itself is unaffected.
     try:
         on_reserved(run_id, run_dir)
-    except Exception as e:  # noqa: BLE001 — an observer's failure is not the run's
+    except Exception as e:  # noqa: BLE001 -- an observer's failure is not the run's
         LOG.warning("sparks: could not announce %s: %s", run_id, e)
 
 
@@ -294,7 +294,7 @@ def _supervised(
         return metrics, Supervisor(
             command, log_path=run_dir / "output.log", env=_child_env(run_id, url)
         ).run()
-    except Exception as e:  # noqa: BLE001 — any failure to run still owes a record
+    except Exception as e:  # noqa: BLE001 -- any failure to run still owes a record
         return metrics, _crashed(run_dir, run_id, rec, shared_dir, metrics, command, e)
 
 
@@ -431,7 +431,7 @@ def _rebuild(shared_dir: Path) -> None:
         shared.make_dir(target.parent)
         written = index.rebuild(shared_dir / "runs", target)
         LOG.info("sparks: %d runs in %s", written, target)
-    except Exception as e:  # noqa: BLE001 — the run itself still succeeded
+    except Exception as e:  # noqa: BLE001 -- the run itself still succeeded
         LOG.warning("sparks: could not rebuild the run index: %s", e)
 
 

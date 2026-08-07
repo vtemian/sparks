@@ -323,7 +323,7 @@ class Supervisor:
             self._deliver(signal.SIGKILL if self.escalated else self.interrupted_by)
 
         stdout = self.child.stdout
-        assert stdout is not None  # noqa: S101 — narrowing; stdout=PIPE
+        assert stdout is not None  # noqa: S101 -- narrowing; stdout=PIPE
         # `bufsize=0` hands back a raw FileIO, whose readline costs one
         # syscall per byte. Buffering here adds no latency -- readline
         # returns as soon as a newline is in the buffer -- and keeps 100k
@@ -460,7 +460,7 @@ class Supervisor:
         """Read once and cache: `getpgid` raises as soon as the child is reaped,
         and the group is exactly what the post-mortem sweep still needs."""
         child = self.child
-        assert child is not None  # noqa: S101 — narrowing; only called after Popen
+        assert child is not None  # noqa: S101 -- narrowing; only called after Popen
         try:
             pgid: int = os.getpgid(child.pid)
         except ProcessLookupError:
@@ -479,7 +479,7 @@ class Supervisor:
         """Detail 4: never blocks unboundedly, so the escalation deadline is
         reachable."""
         child = self.child
-        assert child is not None  # noqa: S101 — narrowing; only called after Popen
+        assert child is not None  # noqa: S101 -- narrowing; only called after Popen
         while True:
             try:
                 return child.wait(timeout=self.poll_seconds)

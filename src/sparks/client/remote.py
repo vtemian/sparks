@@ -483,5 +483,5 @@ def local_user() -> str:
     """
     try:
         return getpass.getuser()
-    except Exception:  # noqa: BLE001 — a missing account is not a failure
+    except Exception:  # noqa: BLE001 -- a missing account is not a failure
         return os.environ.get("USER", "unknown")
