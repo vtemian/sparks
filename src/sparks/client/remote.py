@@ -55,15 +55,13 @@ instead.
 RSYNC_TIMEOUT_SECONDS = 1800.0
 SSH_TIMEOUT_SECONDS = 120.0
 
-PUSH_HINT = (
-    "docker push failed. Is the registry in "
-    "insecure-registries and is SPARKS_HOST reachable?"
-)
+PUSH_HINT = "Is the registry in insecure-registries and is SPARKS_HOST reachable?"
 """One diagnosis for every way a push dies.
 
 The box registry is plain HTTP, so a Docker daemon that has not listed it in
 insecure-registries refuses it with an error that never says so; the only
-other likely cause is the box being unreachable.
+other likely cause is the box being unreachable. Carried separately from the
+tag so both raise sites can still say which tag failed.
 """
 
 
@@ -122,10 +120,11 @@ def push(tag: str) -> None:
         _echo_push(
             docker_client.images.push(
                 repository, tag=image_tag, stream=True, decode=True
-            )
+            ),
+            tag,
         )
     except dock.DockerException as e:
-        raise ClientError(PUSH_HINT) from e
+        raise ClientError(f"docker push failed for {tag}. {PUSH_HINT}") from e
 
 
 def _failed(chunk: dict[str, Any]) -> bool:
@@ -142,10 +141,10 @@ def _echo_build(chunks: Iterable[dict[str, Any]], tag: str) -> None:
             raise ClientError(f"docker build failed for {tag}")
 
 
-def _echo_push(chunks: Iterable[dict[str, Any]]) -> None:
+def _echo_push(chunks: Iterable[dict[str, Any]], tag: str) -> None:
     for line in chunks:
         if _failed(line):
-            raise ClientError(PUSH_HINT)
+            raise ClientError(f"docker push failed for {tag}. {PUSH_HINT}")
         status = line.get("status")
         if status:
             print(status)
