@@ -146,6 +146,41 @@ class TestMain:
         fake_client.containers.run.assert_called_once()
         fake_container.remove.assert_called_once_with(force=True, v=True)
 
+    def test_a_container_with_no_id_is_still_removed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """It exists on the daemon whether or not docker told us its id, and a
+        container nothing supervises keeps the GPU."""
+        fake_container = MagicMock()
+        fake_container.id = None
+
+        fake_client = MagicMock()
+        fake_client.containers.run.return_value = fake_container
+        monkeypatch.setattr("sparks.fire.contain.dock.client", lambda: fake_client)
+
+        with pytest.raises(RuntimeError, match="no id"):
+            contain.main(
+                [
+                    "--name",
+                    "sparks-job-1",
+                    "--cidfile",
+                    str(tmp_path / "container.id"),
+                    "--user",
+                    "1000:1000",
+                    "--shared-dir",
+                    "/shared",
+                    "--data-dir",
+                    str(tmp_path / "data"),
+                    "--workdir",
+                    "/shared",
+                    "img:t",
+                    "python",
+                    "train.py",
+                ]
+            )
+
+        fake_container.remove.assert_called_once_with(force=True, v=True)
+
     def test_stops_if_aborted_during_create(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

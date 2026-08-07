@@ -94,7 +94,7 @@ def launch(
             run_id,
             rec,
             completed,
-            _close_window(*started, completed, baseline_seconds),
+            _close_window(started, completed, baseline_seconds),
         )
     except Exception:
         # The child completed and its exit code is faithful; losing the record
@@ -322,9 +322,14 @@ def _crashed(
 
 
 def _close_window(
-    window: _Window, sampler: Sampler, completed: Completed, baseline_seconds: float
+    started: tuple[_Window, Sampler], completed: Completed, baseline_seconds: float
 ) -> summary.Energy:
-    """The window's end reads, folded with its start into the run's energy."""
+    """The window's end reads, folded with its start into the run's energy.
+
+    Takes the pair `_open_window` returned, so the sampler that took the start
+    reads is necessarily the one that takes the end reads.
+    """
+    window, sampler = started
     # The counters bracket a wider window than the child ran for: the end
     # read happens after the group sweep and the tee drain, measured at up
     # to 10s. Subtracting the idle baseline over the child's duration
@@ -379,7 +384,7 @@ def _record(
     run_id: str,
     rec: _Record,
     completed: Completed,
-    energy: summary.Energy,
+    reading: summary.Energy,
 ) -> None:
     record = summary.Summary(
         run_id=run_id,
@@ -394,7 +399,7 @@ def _record(
         exit_code=completed.outcome.exit_code,
         signal=completed.outcome.signal_name,
         escalated_to_sigkill=completed.outcome.escalated_to_sigkill,
-        energy=energy,
+        energy=reading,
     )
     summary.save(record, run_dir)
 

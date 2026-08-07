@@ -38,7 +38,7 @@ class MalformedError(Exception):
 @dataclass(frozen=True)
 class Box:
     """The provisioned box, exactly as declared. Never partially filled in: a
-    contract missing a field is MalformedError, because a default here is the same
+    contract missing a field is malformed, because a default here is the same
     guess this module refuses to make."""
 
     shared_dir: Path
@@ -59,7 +59,7 @@ class Box:
         Not a guess of the kind this module refuses to make: the box states
         where its shared tree is, and this is a fixed place inside it. Adding a
         field would make every box provisioned by an older sparkup read as
-        MalformedError for no gain.
+        malformed for no gain.
         """
         return self.shared_dir / "queue"
 

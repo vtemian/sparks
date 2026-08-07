@@ -102,16 +102,13 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return parser.parse_args(list(argv))
 
 
-def _request_abort(signum: int, abort: _Abort | None = None) -> None:
-    """Test hook: invoke the installed handler as if a signal arrived.
-
-    With no handler installed, fall back to marking the state passed in.
-    """
+def _request_abort(signum: int) -> None:
+    """Test hook: invoke the installed handler as if a signal arrived. Does
+    nothing when no handler is installed, which is the same as a signal
+    arriving before main() reached _install_signal_handlers."""
     handler = _signal_handlers.get(signum)
     if handler is not None and callable(handler):
         handler(signum, None)
-    elif abort is not None:
-        abort.requested = True
 
 
 _previous_signal_handlers: dict[int, signal.Handlers] = {}
@@ -141,6 +138,12 @@ def _restore_signal_handlers() -> None:
 
 
 def _create(client: docker.DockerClient, args: argparse.Namespace) -> Container:
+    """Start the container and hand it back unexamined.
+
+    Rejecting it is the caller's job, and must happen only once the handle is
+    published for cleanup: a container the daemon created but we refused still
+    exists, and one nothing supervises keeps the GPU.
+    """
     container: Container = client.containers.run(
         **run_kwargs(
             name=args.name,
@@ -154,13 +157,20 @@ def _create(client: docker.DockerClient, args: argparse.Namespace) -> Container:
             environment=container_environment(),
         )
     )
-    if container.id is None:
-        msg = "docker created a container with no id"
-        raise RuntimeError(msg)
     return container
 
 
-def _stop_and_wait(container: Container) -> int:
+def _cid(container: Container) -> str:
+    """The id docker-py types as optional but sets for anything it started."""
+    if container.id is None:
+        msg = "docker created a container with no id"
+        raise RuntimeError(msg)
+    return container.id
+
+
+def _aborted(container: Container) -> int:
+    """Stop the container, wait for it, and report what an aborted run exits
+    with. Always 1: the run was stopped, whatever the container made of it."""
     with contextlib.suppress(Exception):
         container.stop(timeout=int(process.GRACE_SECONDS))
     container.wait()
@@ -190,12 +200,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         container = _create(client, args)
         abort.container = container
-        args.cidfile.write_text(f"{container.id}\n", encoding="utf-8")
+        args.cidfile.write_text(f"{_cid(container)}\n", encoding="utf-8")
 
         # SIGTERM during containers.run() sets the flag but cannot stop yet:
         # the handle did not exist. Catch up before we stream logs.
         if abort.requested:
-            return _stop_and_wait(container)
+            return _aborted(container)
 
         _stream(container)
         status = int(container.wait()["StatusCode"])

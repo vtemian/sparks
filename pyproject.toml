@@ -46,7 +46,6 @@ select = [
 ignore = [
     "TRY003",             # long messages at the raise are the house style
     "EM101", "EM102",     # and they are raw or f-strings, deliberately
-    "TRY301",             # raise-then-translate inside try is the stream idiom
     "PLR0913", "PLR0917", # wide signatures are deliberate; both twins, or the
                           # ignore is inert because PLR0917 is the stricter one
     "S603", "S607",       # subprocess is this tool's job: argv is always a list
@@ -67,12 +66,13 @@ max-statements = 15
 [tool.ruff.lint.per-file-ignores]
 # Test modules: assertions, fixture arity, magic numbers, long arranges.
 "tests/**" = [
-    "ANN",     # fixtures and helpers read fine untyped
+    "ANN401",  # a monkeypatch or a **kwargs bag genuinely takes Any. The rest
+               # of ANN stays on: the suite is fully annotated today and a
+               # blanket ignore would quietly license new untyped helpers.
     "ARG",     # pytest fixtures are requested by name, not used by name
     "PLR2004", # magic values ARE the assertion
     "PLR0915", # a long arrange/act/assert is one thought
     "S101",    # assert
-    "S105", "S106",
     "S108",    # "/tmp/..." literals are argparse fixtures; nothing is created
 ]
 # Makefile-invoked CLI scripts that live in tests/, not test modules.

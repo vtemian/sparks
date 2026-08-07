@@ -122,9 +122,15 @@ rather than degrading. Terminal state lives on `training_run_end_timestamp_secon
   a laptop (or pass `--image` to reuse a tag already in the registry).
 - **Every deliberate broad `except` needs `# noqa: BLE001` AND a reason.** `BLE` is in the `select`
   list, so an unmarked `except Exception` fails `ruff check`; `RUF100` fails the opposite mistake, a
-  directive on a clause that no longer needs one. Ruff does not flag a handler that re-raises or
-  calls `LOG.exception`, so those carry no directive: `runner.py`'s queue guard and
-  `summary.py`'s cleanup-then-reraise are clean without one.
+  directive on a clause that does not need one. Ruff already treats a handler as non-blind when it
+  re-raises, calls `LOG.exception`, or passes `exc_info`, so three sites are clean **without** a
+  directive and must stay that way: `runner.py`'s queue guard (`LOG.exception`), `summary.py`'s
+  cleanup-then-reraise, and `emit.py`'s pump guard (`LOG.warning(..., exc_info=True)`). Adding a
+  directive to any of them is the `RUF100` failure.
+- **Write the reason with ` -- `, not a colon.** `# noqa: BLE001: reason` parses as a malformed code
+  list and silently suppresses **nothing**; the whole file's directives go inert while `ruff check`
+  still passes on the lines that had no violation. Caught once by re-running ruff after a
+  punctuation change, never by review.
 - **`prometheus_remote_writer` ships no `py.typed`**, so its import carries
   `# type: ignore[import-untyped]`. Do not relax `[tool.mypy]` to avoid this.
 - **A test using `autostart=False` cannot exercise `_shutdown`.** `_stop` is None and the method
