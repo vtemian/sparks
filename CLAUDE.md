@@ -13,8 +13,12 @@ INSTALL_CLAUDE.md; read that too, first.
 
 ## Code quality standards (mandatory, enforced by ruff)
 
-The gate is real: complexity 5, branches 4, returns 4, statements 15 per
-function, at most. Do not noqa your way past it; decompose.
+The gate is real: in `src`, no function exceeds complexity 5, 4 branches, 4
+returns or 15 statements. Do not noqa your way past it; decompose. Test modules
+are held to the same complexity and branch limits; only the two Makefile-invoked
+scripts in `tests/` (`check_dashboard.py`, `on_box.py`) are exempt, and
+`tests/**` may run long in statements because one arrange/act/assert is one
+thought.
 
 ### No nesting
 Flatten control flow with guard clauses and early returns. One level of
@@ -27,9 +31,12 @@ runs it. No Manager/Service/Helper/Data names. Private helpers are `_` plus
 one or two terse domain words.
 
 ### Fail fast, fail visible
-Catch specific exceptions. The only broad excepts are the marked, deliberate
-ones (telemetry never kills a run; a bad job never stops the queue); each
-carries `# noqa: BLE001` and a comment saying why. Never add one without both.
+Catch specific exceptions. The only broad excepts are the deliberate ones
+(telemetry never kills a run; a bad job never stops the queue), and each carries
+`# noqa: BLE001` and a comment saying why. Never add one without both. The
+exception is a handler that re-raises or logs a traceback: ruff does not call
+those blind, so a directive there fails the gate the other way. INSTALL_CLAUDE.md
+names the four sites that correctly carry none.
 
 ### Comments say why, never what
 The house style is prose that argues: the measured number, the rejected

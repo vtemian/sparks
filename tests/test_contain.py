@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 from docker.types import DeviceRequest
 
+from sparks import dock
 from sparks.fire import contain
 
 
@@ -180,6 +181,43 @@ class TestMain:
             )
 
         fake_container.remove.assert_called_once_with(force=True, v=True)
+
+    def test_a_container_that_failed_to_start_is_removed_by_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """docker-py's run() is create() then start() with no cleanup between,
+        so a start that fails leaves a created container we never got a handle
+        to. Nothing else in sparks can reach it: the cidfile was never written,
+        so the name stays taken and every retry of the job hits 409."""
+        fake_client = MagicMock()
+        fake_client.containers.run.side_effect = dock.APIError("no nvidia runtime")
+        monkeypatch.setattr("sparks.fire.contain.dock.client", lambda: fake_client)
+
+        with pytest.raises(dock.APIError):
+            contain.main(
+                [
+                    "--name",
+                    "sparks-job-1",
+                    "--cidfile",
+                    str(tmp_path / "container.id"),
+                    "--user",
+                    "1000:1000",
+                    "--shared-dir",
+                    "/shared",
+                    "--data-dir",
+                    str(tmp_path / "data"),
+                    "--workdir",
+                    "/shared",
+                    "img:t",
+                    "python",
+                    "train.py",
+                ]
+            )
+
+        fake_client.containers.get.assert_called_once_with("sparks-job-1")
+        fake_client.containers.get.return_value.remove.assert_called_once_with(
+            force=True, v=True
+        )
 
     def test_stops_if_aborted_during_create(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

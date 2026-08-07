@@ -183,22 +183,35 @@ def _stream(container: Container) -> None:
         sys.stdout.buffer.flush()
 
 
-def _cleanup(container: Container | None) -> None:
-    _restore_signal_handlers()
+def _remove(container: Container | None, name: str) -> None:
+    """Force-remove the job container, by handle or failing that by name.
+
+    The by-name path is not belt and braces: docker-py's `containers.run` is
+    `create()` then `start()` with no cleanup between them, so a start that
+    fails (no nvidia runtime for `--gpus all`, a uid the box does not have)
+    leaves a created container we never got a handle to. The cidfile is never
+    written in that case, so `engine.Process.finish` cannot reach it either and
+    the name stays taken until a human runs `docker rm`.
+    """
     if container is not None:
         with contextlib.suppress(Exception):
             container.remove(force=True, v=True)
+        return
+    # The client is built inside the guard on purpose: this runs in a finally,
+    # and a daemon that has gone away must not replace the real error with a
+    # connection one.
+    with contextlib.suppress(Exception):
+        dock.client().containers.get(name).remove(force=True, v=True)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
-    client = dock.client()
     abort = _Abort()
     container: Container | None = None
 
     _install_signal_handlers(abort)
     try:
-        container = _create(client, args)
+        container = _create(dock.client(), args)
         abort.container = container
         args.cidfile.write_text(f"{_cid(container)}\n", encoding="utf-8")
 
@@ -211,7 +224,8 @@ def main(argv: list[str] | None = None) -> int:
         status = int(container.wait()["StatusCode"])
         return 1 if abort.requested else status
     finally:
-        _cleanup(container)
+        _restore_signal_handlers()
+        _remove(container, args.name)
 
 
 if __name__ == "__main__":

@@ -97,7 +97,7 @@ def resolve(queue_dir: Path, needle: str) -> spool.Entry:
     matches = _matches(found, needle)
     if not matches:
         raise ControlError(f"no job matches {needle!r}")
-    return matches[0] if len(matches) == 1 else _disambiguate(matches, needle)
+    return _disambiguate(matches, needle)
 
 
 def _matches(found: list[spool.Entry], needle: str) -> list[spool.Entry]:
@@ -106,7 +106,13 @@ def _matches(found: list[spool.Entry], needle: str) -> list[spool.Entry]:
 
 
 def _disambiguate(matches: list[spool.Entry], needle: str) -> spool.Entry:
-    """The one job the person meant, or a refusal listing the candidates."""
+    """The one job the person meant, or a refusal listing the candidates.
+
+    Total over any non-empty list, so the caller does not have to know that a
+    single match would otherwise be reported as "matches several jobs".
+    """
+    if len(matches) == 1:
+        return matches[0]
     live = [e for e in matches if not e.is_terminal]
     # A name that matches one running job and six finished ones is not
     # ambiguous in any way the person meant it.
@@ -182,7 +188,11 @@ def _age(entry: spool.Entry, now: float) -> str:
     return _duration(max(0.0, now - since))
 
 
-_MINUTE, _HOUR, _DAY = 60, 3600, 86400
+_MINUTE = 60
+_HOUR = 60 * _MINUTE
+_DAY = 24 * _HOUR
+"""Thresholds for the queue's age column, which trades precision for width: a
+job is `45s`, `12m`, `3.4h` or `2d`, never a duration anyone has to parse."""
 
 
 def _duration(seconds: float) -> str:

@@ -123,14 +123,23 @@ rather than degrading. Terminal state lives on `training_run_end_timestamp_secon
 - **Every deliberate broad `except` needs `# noqa: BLE001` AND a reason.** `BLE` is in the `select`
   list, so an unmarked `except Exception` fails `ruff check`; `RUF100` fails the opposite mistake, a
   directive on a clause that does not need one. Ruff already treats a handler as non-blind when it
-  re-raises, calls `LOG.exception`, or passes `exc_info`, so three sites are clean **without** a
-  directive and must stay that way: `runner.py`'s queue guard (`LOG.exception`), `summary.py`'s
-  cleanup-then-reraise, and `emit.py`'s pump guard (`LOG.warning(..., exc_info=True)`). Adding a
-  directive to any of them is the `RUF100` failure.
-- **Write the reason with ` -- `, not a colon.** `# noqa: BLE001: reason` parses as a malformed code
-  list and silently suppresses **nothing**; the whole file's directives go inert while `ruff check`
-  still passes on the lines that had no violation. Caught once by re-running ruff after a
-  punctuation change, never by review.
+  re-raises, calls `LOG.exception`, or passes `exc_info`, so **four** sites are clean *without* a
+  directive and must stay that way: `runner.py:98` and `launch.py:93` (`LOG.exception`),
+  `emit.py:238` (`LOG.warning(..., exc_info=True)`), and `summary.py:201`, which is an
+  `except BaseException:` with a bare `raise`. Adding a directive to any of them is the `RUF100`
+  failure.
+- **`launch`, `Supervisor.run` and `contain.main` sit at exactly 15 statements, the cap.** There is
+  no headroom: the next line added to any of them fails `ruff check`, and the fix is another
+  extraction rather than a bigger cap. Ruff's counting is not lines — a docstring is one statement,
+  an `except` handler is two, a `finally` is two — so a one-line change can cost three. These three
+  are the functions with the most sequencing to protect, which is why they are the ones at the
+  limit.
+- **Write the reason with ` -- `, not a colon.** `# noqa: BLE001: reason` is a malformed code list:
+  that one directive suppresses nothing, so its violation comes back. Ruff is loud about it, on
+  stderr and with a non-zero exit (`warning: Invalid # noqa directive ... expected code to consist
+  of uppercase letters followed by digits`), and other directives in the same file keep working.
+  The one thing it will not tell you is a malformed directive on a line that has no violation:
+  `RUF100` only sees directives that parsed, so that one is dead weight nothing flags.
 - **`prometheus_remote_writer` ships no `py.typed`**, so its import carries
   `# type: ignore[import-untyped]`. Do not relax `[tool.mypy]` to avoid this.
 - **A test using `autostart=False` cannot exercise `_shutdown`.** `_stop` is None and the method

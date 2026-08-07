@@ -46,8 +46,10 @@ select = [
 ignore = [
     "TRY003",             # long messages at the raise are the house style
     "EM101", "EM102",     # and they are raw or f-strings, deliberately
-    "PLR0913", "PLR0917", # wide signatures are deliberate; both twins, or the
-                          # ignore is inert because PLR0917 is the stricter one
+    "PLR0913", "PLR0917", # wide signatures are deliberate. Both twins: PLR0913
+                          # counts every argument and PLR0917 only the
+                          # positional ones, so ignoring PLR0913 alone would
+                          # leave its subset still failing
     "S603", "S607",       # subprocess is this tool's job: argv is always a list
                           # and shell=True never appears; ssh, git and rsync
                           # resolve via PATH on purpose. ssh_argv still hands a
@@ -69,7 +71,8 @@ max-statements = 15
     "ANN401",  # a monkeypatch or a **kwargs bag genuinely takes Any. The rest
                # of ANN stays on: the suite is fully annotated today and a
                # blanket ignore would quietly license new untyped helpers.
-    "ARG",     # pytest fixtures are requested by name, not used by name
+    "ARG",     # a fixture is requested by name rather than used by name, and a
+               # stub or lambda takes the arity of the thing it stands in for
     "PLR2004", # magic values ARE the assertion
     "PLR0915", # a long arrange/act/assert is one thought
     "S101",    # assert

@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from docker.errors import APIError, NotFound
+from docker.errors import APIError, DockerException, NotFound
 
 from sparks import dock
 
@@ -17,7 +17,8 @@ def test_remove_quietly_force_removes() -> None:
     client = MagicMock()
     container = MagicMock()
     client.containers.get.return_value = container
-    dock.remove_quietly(client, "abc123")
+    with patch.object(dock, "client", return_value=client):
+        dock.remove_quietly("abc123")
     client.containers.get.assert_called_once_with("abc123")
     container.remove.assert_called_once_with(force=True, v=True)
 
@@ -25,11 +26,20 @@ def test_remove_quietly_force_removes() -> None:
 def test_remove_quietly_swallows_not_found() -> None:
     client = MagicMock()
     client.containers.get.side_effect = NotFound("missing")
-    dock.remove_quietly(client, "gone")
+    with patch.object(dock, "client", return_value=client):
+        dock.remove_quietly("gone")
 
 
 def test_remove_quietly_swallows_api_error(caplog: pytest.LogCaptureFixture) -> None:
     client = MagicMock()
     client.containers.get.side_effect = APIError("denied")
-    dock.remove_quietly(client, "abc123")
+    with patch.object(dock, "client", return_value=client):
+        dock.remove_quietly("abc123")
     assert "docker remove abc123" in caplog.text
+
+
+def test_remove_quietly_survives_a_daemon_that_has_gone_away() -> None:
+    """It is called from a finally that must still mark the job terminal, so a
+    dead socket has to be swallowed here rather than escape the cleanup."""
+    with patch.object(dock, "client", side_effect=DockerException("no socket")):
+        dock.remove_quietly("abc123")

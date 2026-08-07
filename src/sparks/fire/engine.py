@@ -112,7 +112,36 @@ class Process:
         container = self.container_id()
         if not container:
             return
-        dock.remove_quietly(dock.client(), container)
+        dock.remove_quietly(container)
+
+
+def _bounded(
+    stream: Iterable[dict[str, Any]], deadline: float
+) -> Iterator[dict[str, Any]]:
+    """Yield the pull stream's chunks until the deadline says stop.
+
+    The check runs per chunk, so this bounds a pull that is still streaming; a
+    stream that has gone silent is only noticed when its next chunk lands.
+    """
+    for chunk in stream:
+        if time.monotonic() > deadline:
+            raise PullFailedError(
+                f"the pull was still going after "
+                f"{PULL_TIMEOUT_SECONDS / 3600:g}h and was stopped"
+            )
+        yield chunk
+
+
+def _pull_line(chunk: dict[str, Any], log: IO[bytes], log_path: Path) -> None:
+    """Write one chunk's line to the pull log, failing on an error chunk.
+
+    The write comes before the raise on purpose: the failure message points the
+    reader at the log, so the error line has to be in it.
+    """
+    line = chunk.get("status") or chunk.get("error") or str(chunk)
+    log.write((line + "\n").encode())
+    if chunk.get("error") or chunk.get("errorDetail"):
+        raise PullFailedError(f"docker pull failed; the output is in {log_path.name}")
 
 
 @dataclass
@@ -297,7 +326,7 @@ class Docker:
         this a restart of the queue leaves the GPU held by a run whose record
         already says it ended.
         """
-        dock.remove_quietly(dock.client(), container_id)
+        dock.remove_quietly(container_id)
 
 
 def shared_group(shared_dir: Path) -> int | None:
@@ -343,32 +372,3 @@ def _first_line(path: Path) -> str | None:
     except OSError:
         return None
     return text.strip().splitlines()[0] if text.strip() else None
-
-
-def _bounded(
-    stream: Iterable[dict[str, Any]], deadline: float
-) -> Iterator[dict[str, Any]]:
-    """Yield the pull stream's chunks until the deadline says stop.
-
-    The check runs per chunk, so this bounds a pull that is still streaming; a
-    stream that has gone silent is only noticed when its next chunk lands.
-    """
-    for chunk in stream:
-        if time.monotonic() > deadline:
-            raise PullFailedError(
-                f"the pull was still going after "
-                f"{PULL_TIMEOUT_SECONDS / 3600:g}h and was stopped"
-            )
-        yield chunk
-
-
-def _pull_line(chunk: dict[str, Any], log: IO[bytes], log_path: Path) -> None:
-    """Write one chunk's line to the pull log, failing on an error chunk.
-
-    The write comes before the raise on purpose: the failure message points the
-    reader at the log, so the error line has to be in it.
-    """
-    line = chunk.get("status") or chunk.get("error") or str(chunk)
-    log.write((line + "\n").encode())
-    if chunk.get("error") or chunk.get("errorDetail"):
-        raise PullFailedError(f"docker pull failed; the output is in {log_path.name}")

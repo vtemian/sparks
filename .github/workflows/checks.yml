@@ -18,5 +18,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-      - run: uv sync
+      # --locked, so a PR that edits dependencies without relocking fails here
+      # rather than testing against versions uv.lock never recorded.
+      - run: uv sync --locked
       - run: make check

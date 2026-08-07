@@ -83,8 +83,8 @@ class RunMetrics:
         self._labels = {"run_id": run_id, **(labels or {})}
         # Fail here, on the caller's thread, rather than five seconds later on
         # the pump. _beat builds these same two Series every cycle, and an
-        # an InvalidLabelError raised there would kill telemetry for the whole
-        # run with nothing but a bare threading traceback to show for it.
+        # InvalidLabelError raised there would kill telemetry for the whole run
+        # with nothing but a bare threading traceback to show for it.
         Series("training_run_info", self._info)
         Series("training_run_heartbeat_timestamp_seconds", self._labels)
         self._buffer = Buffer()

@@ -75,30 +75,27 @@ def launch(
     though it were the training code's.
     """
     run = _reserved(command, name, shared_dir, on_reserved, sha)
-    started = _started(run, sampler, baseline_seconds)
-    if isinstance(started, Launched):
-        return started
-    metrics, completed = _supervised(command, run, url)
-    if isinstance(completed, Launched):
-        return completed
-
-    # The child is reaped. From here to the end everything runs under one
-    # try/finally so that the record cannot be lost: a full disk, a quota, or
-    # the other user owning the directory must not stop metrics.end(status)
-    # firing, or training_run_info (LIFECYCLE-exempt from stale marking) sits on
-    # the dashboard forever with no end and no status.
-    status = completed.outcome.status
+    # The minute before the child exists is the one window this wrapper does not
+    # otherwise defend. `Supervisor` installs its handlers when it runs, so a
+    # SIGTERM arriving during the baseline takes the default disposition and
+    # kills the wrapper outright -- leaving a reserved run directory with no
+    # summary, no index row and no explanation. A queued job aborted 25 seconds
+    # after it started did exactly that on the box.
     try:
-        _record(run, completed, _close_window(started, completed, baseline_seconds))
-    except Exception:
-        # The child completed and its exit code is faithful; losing the record
-        # must neither strand a phantom on the dashboard nor lie about $?.
-        LOG.exception("sparks: could not record %s", run.id)
-    finally:
-        _end(metrics, status)
-        _rebuild(run.shared_dir)
+        opened = _open_window(sampler, baseline_seconds)
+    except _AbortError as e:
+        return _cancelled(run, baseline_seconds, e)
 
-    return Launched(run.id, status, completed.outcome.wrapper_exit, run.dir)
+    metrics = _supervisor_metrics(run.id, run.rec.name, url, run.rec.sha)
+    _begin(metrics)
+    try:
+        completed = Supervisor(
+            command, log_path=run.dir / "output.log", env=_child_env(run.id, url)
+        ).run()
+    except Exception as e:  # noqa: BLE001 -- any failure to run still owes a record
+        return _crashed(run, metrics, command, e)
+
+    return _recorded(run, completed, opened, metrics, baseline_seconds)
 
 
 @dataclass(frozen=True)
@@ -173,11 +170,10 @@ def _reserved(
 class _Window:
     """The measurement window at the moment it opened.
 
-    Every field is the opening value of the identically named `EnergyReading`
-    field: the counters are the raw readings their deltas will close, `seconds`
-    is the monotonic instant the window opened, and the idle rates pass through
-    unchanged. Identical names mean pairing a start with the wrong end read
-    cannot happen silently.
+    The counters and the idle rates carry the name of the `EnergyReading` field
+    they will close, so pairing a start with the wrong end read cannot happen
+    silently. `opened_at` is the exception and is named apart deliberately: it
+    is a monotonic instant, while `EnergyReading.seconds` is a duration.
     """
 
     total_joules: float | None
@@ -185,7 +181,7 @@ class _Window:
     gpu_firmware_joules: float | None
     idle_watts: float
     gpu_idle_watts: float
-    seconds: float
+    opened_at: float
 
 
 def _open_window(
@@ -215,40 +211,27 @@ def _open_window(
             gpu_firmware_joules=sampler.gpu_firmware_joules(),
             idle_watts=base.idle_watts,
             gpu_idle_watts=base.gpu_watts,
-            seconds=opened_at,
+            opened_at=opened_at,
         ), sampler
-
-
-def _started(
-    run: _Run, sampler: Sampler | None, baseline_seconds: float
-) -> tuple[_Window, Sampler] | Launched:
-    """The opened measurement window, or the run recorded as cancelled.
-
-    The minute before the child exists is the one window this wrapper does not
-    otherwise defend. `Supervisor` installs its handlers when it runs, so a
-    SIGTERM arriving during the baseline takes the default disposition and
-    kills the wrapper outright -- leaving a reserved run directory with no
-    summary, no index row and no explanation. A queued job aborted 25 seconds
-    after it started did exactly that on the box.
-    """
-    try:
-        return _open_window(sampler, baseline_seconds)
-    except _AbortError as e:
-        return _cancelled(run, baseline_seconds, e)
 
 
 def _cancelled(run: _Run, baseline_seconds: float, abort: "_AbortError") -> Launched:
     LOG.warning("sparks: %s before the run started; recording it stopped", abort)
-    _record_failed_launch(
-        run,
-        f"stopped during the {baseline_seconds:.0f}s baseline",
-        status="cancelled",
-        # Nothing ran, so there is no exit code to report. `cancelled` with
-        # the signal that caused it is the whole truth about this run.
-        exit_code=None,
-        signal_name=str(abort),
-    )
-    _rebuild(run.shared_dir)
+    try:
+        _record_failed_launch(
+            run,
+            f"stopped during the {baseline_seconds:.0f}s baseline",
+            status="cancelled",
+            # Nothing ran, so there is no exit code to report. `cancelled` with
+            # the signal that caused it is the whole truth about this run.
+            exit_code=None,
+            signal_name=str(abort),
+        )
+    except Exception:
+        # An unwritable run directory must not also cost us the index row.
+        LOG.exception("sparks: could not record the stop of %s", run.id)
+    finally:
+        _rebuild(run.shared_dir)
     return Launched(run.id, "cancelled", 128 + abort.signum, run.dir)
 
 
@@ -273,21 +256,6 @@ def _child_env(run_id: str, url: str | None) -> dict[str, str]:
     return env
 
 
-def _supervised(
-    command: list[str], run: _Run, url: str | None
-) -> tuple[RunMetrics | None, Completed | Launched]:
-    """The supervisor's emitter and how the run ended: its `Completed`, or the
-    crashed record when the child could not run at all."""
-    metrics = _supervisor_metrics(run.id, run.rec.name, url, run.rec.sha)
-    _begin(metrics)
-    try:
-        return metrics, Supervisor(
-            command, log_path=run.dir / "output.log", env=_child_env(run.id, url)
-        ).run()
-    except Exception as e:  # noqa: BLE001 -- any failure to run still owes a record
-        return metrics, _crashed(run, metrics, command, e)
-
-
 def _crashed(
     run: _Run, metrics: RunMetrics | None, command: list[str], error: Exception
 ) -> Launched:
@@ -298,22 +266,56 @@ def _crashed(
     staled: a permanent phantom run on the dashboard that never ends and never
     gets a status.
     """
-    LOG.exception("sparks: could not run %s", command)
-    _record_failed_launch(run, str(error))
-    _end(metrics, "crashed")
-    _rebuild(run.shared_dir)
+    LOG.exception("sparks: could not run %s: %s", command, error)
+    try:
+        _record_failed_launch(run, str(error))
+    except Exception:
+        # metrics.begin() already pushed training_run_info, which is exempt
+        # from stale marking. Failing to write the summary must not also skip
+        # the end below, or that series is a phantom run with no end forever.
+        LOG.exception("sparks: could not record the failed launch of %s", run.id)
+    finally:
+        _end(metrics, "crashed")
+        _rebuild(run.shared_dir)
     return Launched(run.id, "crashed", 127, run.dir)
 
 
+def _recorded(
+    run: _Run,
+    completed: Completed,
+    opened: tuple[_Window, Sampler],
+    metrics: RunMetrics | None,
+    baseline_seconds: float,
+) -> Launched:
+    """The child is reaped; write everything down.
+
+    One try/finally so the record cannot be lost: a full disk, a quota, or the
+    other user owning the directory must not stop metrics.end(status) firing,
+    or training_run_info (LIFECYCLE-exempt from stale marking) sits on the
+    dashboard forever with no end and no status.
+    """
+    status = completed.outcome.status
+    try:
+        _record(run, completed, _close_window(opened, completed, baseline_seconds))
+    except Exception:
+        # The child completed and its exit code is faithful; losing the record
+        # must neither strand a phantom on the dashboard nor lie about $?.
+        LOG.exception("sparks: could not record %s", run.id)
+    finally:
+        _end(metrics, status)
+        _rebuild(run.shared_dir)
+    return Launched(run.id, status, completed.outcome.wrapper_exit, run.dir)
+
+
 def _close_window(
-    started: tuple[_Window, Sampler], completed: Completed, baseline_seconds: float
+    opened: tuple[_Window, Sampler], completed: Completed, baseline_seconds: float
 ) -> summary.Energy:
     """The window's end reads, folded with its start into the run's energy.
 
     Takes the pair `_open_window` returned, so the sampler that took the start
     reads is necessarily the one that takes the end reads.
     """
-    window, sampler = started
+    window, sampler = opened
     # The counters bracket a wider window than the child ran for: the end
     # read happens after the group sweep and the tee drain, measured at up
     # to 10s. Subtracting the idle baseline over the child's duration
@@ -324,7 +326,7 @@ def _close_window(
     # the child and closes after it is reaped, so it always brackets the
     # duration. Kept as a cheap guard against a misbehaving clock.
     measured_seconds = max(
-        completed.duration_seconds, time.monotonic() - window.seconds
+        completed.duration_seconds, time.monotonic() - window.opened_at
     )
     # A delta needs BOTH endpoints. Coalescing a failed read to 0.0 made a
     # glitched start read report the entire accumulator as this run's
