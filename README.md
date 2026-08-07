@@ -82,3 +82,6 @@ sparkup (`make apply` there), not from this deploy.
 make check   # lint, mypy strict, tests, dashboard
 make live    # the same against a real Prometheus in Docker
 ```
+
+`INSTALL_CLAUDE.md` is the full install-and-use reference. `docs/DECISIONS.md` records why the
+code is shaped the way it is, and the traps that come with changing it.

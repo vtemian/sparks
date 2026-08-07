@@ -1,7 +1,9 @@
 # CLAUDE.md
 
-Standing rules for working in sparks. Repo facts and traps live in
-INSTALL_CLAUDE.md; read that too, first.
+Standing rules for working in sparks. How to install it and run a job is
+INSTALL_CLAUDE.md. Why the code is shaped this way, and the traps that come with
+changing it, is docs/DECISIONS.md; read that before editing anything under
+`src/sparks/fire/` or `emit.py`.
 
 ## Before every commit
 
@@ -9,7 +11,7 @@ INSTALL_CLAUDE.md; read that too, first.
 - Work on a branch, never directly on main. Push after committing.
 - Anything touching the emitter's threading, shutdown, or the launch/supervise
   seam also needs `make live` (real Prometheus) before merge. No unit test can
-  catch a second writer; INSTALL_CLAUDE.md explains why.
+  catch a second writer; docs/DECISIONS.md explains why.
 
 ## Code quality standards (mandatory, enforced by ruff)
 
@@ -36,7 +38,7 @@ A rule that governs several call sites belongs in the module docstring that
 owns it, stated once, with the call sites naming only their local consequence.
 Re-deriving the same argument at every site is how this file reached 29% prose:
 one fact about remote-write rollback had been written out nine times. If the
-rule spans modules, it goes in INSTALL_CLAUDE.md and the code points at it.
+rule spans modules, it goes in docs/DECISIONS.md and the code points at it.
 
 ### No nesting, and no helper soup
 Flatten control flow with guard clauses and early returns. One level of
@@ -56,8 +58,10 @@ to remain whole.
 ### Names are contracts
 A function does what its name says, all of it, and nothing else. `fetch_*`
 returns or raises; `find_*` may return None; `*_argv` builds argv and never
-runs it. No Manager/Service/Helper/Data names. Private helpers are `_` plus
-one or two terse domain words. Locals are a noun or a verb, never a letter:
+runs it. No Manager/Service/Helper/Data names. A leading `_` means private to
+a class: module-level and nested functions take plain names, because privacy is
+modules and classes rather than punctuation (`tests/check_private_prefix.py`).
+Locals are a noun or a verb, never a letter:
 `parser` / `exc` / `handle`, not `p` / `e` / `f`; `submit_parser`, never
 `submit_p`. Ruff has no VNE001 yet — `tests/check_names.py` is the rule
 (`make lint`). pep8-naming (`N` in ruff) covers class/function shape.
@@ -67,8 +71,8 @@ Catch specific exceptions. The only broad excepts are the deliberate ones
 (telemetry never kills a run; a bad job never stops the queue), and each carries
 `# noqa: BLE001` and a comment saying why. Never add one without both. The
 exception is a handler that re-raises or logs a traceback: ruff does not call
-those blind, so a directive there fails the gate the other way. INSTALL_CLAUDE.md
-names the four sites that correctly carry none.
+those blind, so a directive there fails the gate the other way.
+docs/DECISIONS.md names the four sites that correctly carry none.
 
 ### Comments say why, never what
 The house style is prose that argues: the measured number, the rejected
@@ -97,7 +101,7 @@ looks like success is the worst outcome.
   and assert on what our code sent them.
 - A test that re-implements the logic it checks is vacuous; assert on what
   the code actually produced (see the `_stale_batch` story in
-  INSTALL_CLAUDE.md).
+  docs/DECISIONS.md).
 - Never delete a failing test. Never relax `[tool.mypy] strict`.
 - Error paths are behaviour: pin the message the user sees
   (`pytest.raises(match=...)`).
