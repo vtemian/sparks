@@ -439,6 +439,24 @@
                 "value": true
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "run"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open this run",
+                    "url": "/d/training-runs/training-runs?var-run_id=${__data.fields[\"run\"]}",
+                    "targetBlank": false
+                  }
+                ]
+              }
+            ]
           }
         ]
       },
@@ -484,6 +502,22 @@
           }
         }
       ]
+    }
+  ],
+  "links": [
+    {
+      "title": "Training runs",
+      "type": "dashboards",
+      "tags": [
+        "sparks"
+      ],
+      "asDropdown": true,
+      "includeVars": false,
+      "keepTime": true,
+      "targetBlank": false,
+      "icon": "external link",
+      "tooltip": "",
+      "url": ""
     }
   ]
 }
