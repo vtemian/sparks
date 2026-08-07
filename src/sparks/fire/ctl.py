@@ -51,9 +51,7 @@ def remove(args: argparse.Namespace) -> int:
 
 
 def reserve(args: argparse.Namespace) -> int:
-    _, path = spool.reserve(
-        control.queue_dir(args.shared_dir), args.name, args.user
-    )
+    _, path = spool.reserve(control.queue_dir(args.shared_dir), args.name, args.user)
     print(path)
     return 0
 

@@ -75,4 +75,3 @@ def test_submit_requires_host_and_never_runs_local(
     code = cli.main(["submit", "--data", str(data), "--", "true"])
     assert code == os.EX_CONFIG
     assert client.HOST_ENV in capsys.readouterr().err
-

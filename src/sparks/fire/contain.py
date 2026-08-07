@@ -168,9 +168,7 @@ def main(argv: list[str] | None = None) -> int:
             container.wait()
             return 1
 
-        for chunk in container.logs(
-            stream=True, follow=True, stdout=True, stderr=True
-        ):
+        for chunk in container.logs(stream=True, follow=True, stdout=True, stderr=True):
             sys.stdout.buffer.write(chunk)
             sys.stdout.buffer.flush()
 

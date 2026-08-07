@@ -113,9 +113,7 @@ class Process:
         container = self.container_id()
         if not container:
             return
-        dock.remove_quietly(
-            dock.client(), container, timeout=CLEANUP_TIMEOUT_SECONDS
-        )
+        dock.remove_quietly(dock.client(), container, timeout=CLEANUP_TIMEOUT_SECONDS)
 
 
 @dataclass

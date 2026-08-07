@@ -50,8 +50,7 @@ class TestRunKwargs:
         }
         device_requests = kwargs.get("device_requests") or []
         assert any(
-            getattr(d, "count", None) == -1
-            and d.capabilities == [["gpu"]]
+            getattr(d, "count", None) == -1 and d.capabilities == [["gpu"]]
             for d in device_requests
         )
 

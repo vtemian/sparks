@@ -165,9 +165,7 @@ class TestTheWholeCommand:
         after = argv[argv.index("--") + 1 :]
         assert after[:3] == [sys.executable, "-m", "sparks.fire.contain"]
 
-    def test_url_comes_before_name(
-        self, tmp_path: Path, docker: engine.Docker
-    ) -> None:
+    def test_url_comes_before_name(self, tmp_path: Path, docker: engine.Docker) -> None:
         """supervise has no subcommand; --url still precedes the rest so a
         stale compose or hand-built argv that put it after --name is caught."""
         argv = docker.argv(

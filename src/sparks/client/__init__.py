@@ -1,2 +1,1 @@
-"""Laptop client: submit work to the box queue.
-"""
+"""Laptop client: submit work to the box queue."""
