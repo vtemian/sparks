@@ -55,10 +55,9 @@ class Buffer:
         """Every series sent so far, mapped to its last timestamp.
 
         The timestamp is what lets a stale marker land strictly after the real
-        sample it ends. A marker sharing a millisecond with the last sample is
-        `duplicate sample for timestamp`, an HTTP 400, and remote-write 1.0
-        rolls back the whole request, so one collision means no series gets its
-        marker and every one of them flat-lines instead.
+        sample it ends. One marker sharing a millisecond with its last sample
+        costs every marker in that batch, and all of those series flat-line
+        instead of ending.
         """
         with self._lock:
             return dict(self._last)

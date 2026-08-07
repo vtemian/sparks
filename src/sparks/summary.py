@@ -44,9 +44,7 @@ class Energy:
     """What the run cost, with the derived figures frozen in rather than
     recomputed, because the index must not have to know the arithmetic.
 
-    Both GPU sources are kept. NVML and the firmware rail counter disagree by a
-    stable ~22.5% because they measure at different boundaries, so a single
-    "GPU energy" number is meaningless without saying which one it is, and
+    Both GPU sources are kept, for the reason energy.py's docstring gives, and
     `gpu_sources` records whether their ratio still says both are trustworthy.
 
     Every measured quantity is None, never 0.0, when it could not be measured:

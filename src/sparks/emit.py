@@ -22,6 +22,15 @@ Or as a context manager, which records `crashed` on an exception:
 
 Every push is wrapped in try/except. A metrics outage must never kill a run.
 
+One fact shapes most of what follows, so it is stated here once: remote-write
+1.0 has no partial write. One rejected sample rolls back the entire request, so
+a single bad timestamp destroys every other series travelling with it. That is
+why exactly one thread may call `send()`, why the supervisor and the training
+child must write disjoint series, and why a stale marker has to land strictly
+after the last real sample rather than beside it. Where those rules are
+enforced below, the comment names the local consequence and does not re-derive
+this.
+
 `prometheus_remote_writer` 1.1.3 ships no py.typed, so mypy cannot see into it
 and strict mode refuses the import outright (hence the ignore below). The
 writer is used through one method, `send()`.
@@ -71,12 +80,11 @@ class RunMetrics:
 
         `lifecycle=False` suppresses the run's own record of itself, for the
         training child. The supervisor and the child both hold a RunMetrics for
-        one run_id and MUST write disjoint series: two writers on the same
-        series choose timestamps independently, which is out of order, a 400,
-        and remote-write 1.0 rolls back the whole request, destroying the batch
-        that carried the loss. The supervisor owns metrics.LIFECYCLE because it
-        is the only process guaranteed to outlive the run; an OOM-killed child
-        never runs atexit and cannot write its own terminal status.
+        one run_id and MUST write disjoint series, or their independently chosen
+        timestamps take down the batch carrying the loss. The supervisor owns
+        metrics.LIFECYCLE because it is the only process guaranteed to outlive
+        the run; an OOM-killed child never runs atexit and cannot write its own
+        terminal status.
         """
         self._lifecycle = lifecycle
         self.run_id = run_id
@@ -173,9 +181,7 @@ class RunMetrics:
     def _refuse_if_not_ours(self, name: str) -> None:
         """Keep the supervisor and the child on disjoint series.
 
-        Two writers on one series choose timestamps independently, which is out
-        of order, a 400, and remote-write 1.0 rolls back the whole request. The
-        split is enforced here rather than by convention because the failure is
+        Enforced here rather than left to convention because the failure is
         silent: the batch that carried the loss simply never lands.
         """
         # Asymmetric on purpose. A standalone `RunMetrics` has no child and
@@ -258,10 +264,9 @@ class RunMetrics:
             # The pump is wedged inside send(). A stalled Prometheus that
             # accepts the connection and never answers costs 4 attempts at a 5s
             # read timeout, which outlives this join, and flushing here anyway
-            # would put a second writer on the wire. Remote-write 1.0 rolls back
-            # a whole request on one bad sample, so the two batches can destroy
-            # each other. Losing the terminal samples is the lesser harm, and
-            # the frozen heartbeat still says the run stopped.
+            # would put a second writer on the wire, where the two batches can
+            # destroy each other. Losing the terminal samples is the lesser
+            # harm, and the frozen heartbeat still says the run stopped.
             LOG.warning(
                 "sparks: pump still sending after %.0fs; skipping the final "
                 "flush rather than writing concurrently",
@@ -297,9 +302,9 @@ class RunMetrics:
             {
                 "metric": series.as_metric(),
                 "values": [STALE_NAN],
-                # Strictly after the last real sample. Sharing its millisecond
-                # is a 400 that rolls back every marker in the batch, and the
-                # measured margin here is single-digit milliseconds.
+                # Strictly after the last real sample: sharing its millisecond
+                # loses every marker in the batch, and the measured margin here
+                # is single-digit milliseconds.
                 "timestamps": [max(ended, last + 1)],
             }
             for series, last in self._buffer.seen().items()

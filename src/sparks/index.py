@@ -113,10 +113,9 @@ NUMERIC: tuple[Numeric, ...] = (
         "Idle baseline power measured before the run.",
         lambda s: s.energy.idle_watts,
     ),
-    # Both GPU sources, as separate families rather than one family split by a
-    # `source` label: they disagree by a stable ~22.5% because they measure at
-    # different boundaries, and the derived gpu/total ratio moves from 0.30 to
-    # 0.37 purely by switching source. A single unlabelled number is a trap.
+    # Separate families rather than one split by a `source` label: the derived
+    # gpu/total ratio moves from 0.30 to 0.37 purely by switching source, so a
+    # single unlabelled number is a trap.
     Numeric(
         "sparks_run_gpu_nvml_energy_joules",
         "GPU energy as NVML measures it.",
