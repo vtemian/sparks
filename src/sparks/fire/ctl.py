@@ -21,8 +21,8 @@ VERBS = frozenset(
 
 
 def queue(args: argparse.Namespace) -> int:
-    qd = control.queue_dir(args.shared_dir)
-    entries = spool.entries(qd) if args.all else spool.publishable(qd)
+    directory = control.queue_dir(args.shared_dir)
+    entries = spool.entries(directory) if args.all else spool.publishable(directory)
     print(control.render(entries), end="")
     return 0
 
@@ -40,8 +40,8 @@ def abort(args: argparse.Namespace) -> int:
 
 
 def retry(args: argparse.Namespace) -> int:
-    qd = control.queue_dir(args.shared_dir)
-    again = control.retry(qd, control.resolve(qd, args.job))
+    directory = control.queue_dir(args.shared_dir)
+    again = control.retry(directory, control.resolve(directory, args.job))
     print(again.job.job_id)
     return 0
 
@@ -77,18 +77,18 @@ def commit(args: argparse.Namespace) -> int:
 
 
 def contract(_args: argparse.Namespace) -> int:
-    c = box.load()
-    if c is None:
+    provisioned = box.load()
+    if provisioned is None:
         raise box.NotProvisionedError(
             f"{box.config_path()} does not exist; this box has no sparks contract"
         )
 
-    print(f"shared_dir = {c.shared_dir}")
-    print(f"shared_group = {c.shared_group}")
-    print(f"textfile_dir = {c.textfile_dir}")
-    print(f"prometheus_url = {c.prometheus_url}")
-    print(f"grafana_url = {c.grafana_url}")
-    print(f"registry_url = {c.registry_url}")
+    print(f"shared_dir = {provisioned.shared_dir}")
+    print(f"shared_group = {provisioned.shared_group}")
+    print(f"textfile_dir = {provisioned.textfile_dir}")
+    print(f"prometheus_url = {provisioned.prometheus_url}")
+    print(f"grafana_url = {provisioned.grafana_url}")
+    print(f"registry_url = {provisioned.registry_url}")
     return 0
 
 
@@ -99,53 +99,55 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fire", description=__doc__)
     shared = argparse.ArgumentParser(add_help=False)
     shared.add_argument("--shared-dir", type=Path, default=None)
-    sub = parser.add_subparsers(dest="verb", required=True)
-    _add_queue(sub, shared)
-    _add_control_verbs(sub, shared)
-    _add_rpc_verbs(sub, shared)
+    subparsers = parser.add_subparsers(dest="verb", required=True)
+    _add_queue(subparsers, shared)
+    _add_control_verbs(subparsers, shared)
+    _add_rpc_verbs(subparsers, shared)
     return parser
 
 
-def _add_queue(sub: Subparsers, shared: argparse.ArgumentParser) -> None:
-    q = sub.add_parser(
+def _add_queue(subparsers: Subparsers, shared: argparse.ArgumentParser) -> None:
+    queue_parser = subparsers.add_parser(
         "queue",
         parents=[shared],
         help="what is running and what is waiting",
     )
-    q.add_argument("--all", action="store_true")
-    q.set_defaults(func=queue)
+    queue_parser.add_argument("--all", action="store_true")
+    queue_parser.set_defaults(func=queue)
 
 
-def _add_control_verbs(sub: Subparsers, shared: argparse.ArgumentParser) -> None:
+def _add_control_verbs(subparsers: Subparsers, shared: argparse.ArgumentParser) -> None:
     for verb, help_text, func in (
         ("cancel", "drop a job that has not started yet", cancel),
         ("abort", "stop a job, whether it has started or not", abort),
         ("retry", "submit the same job again", retry),
         ("remove", "delete a finished job", remove),
     ):
-        p = sub.add_parser(verb, parents=[shared], help=help_text)
-        p.add_argument("job")
-        p.set_defaults(func=func)
+        verb_parser = subparsers.add_parser(verb, parents=[shared], help=help_text)
+        verb_parser.add_argument("job")
+        verb_parser.set_defaults(func=func)
 
 
-def _add_rpc_verbs(sub: Subparsers, shared: argparse.ArgumentParser) -> None:
-    reserve_p = sub.add_parser("reserve", parents=[shared], help=argparse.SUPPRESS)
-    reserve_p.add_argument("--name", default="job")
-    reserve_p.add_argument("--user", default="fire")
-    reserve_p.set_defaults(func=reserve)
+def _add_rpc_verbs(subparsers: Subparsers, shared: argparse.ArgumentParser) -> None:
+    reserve_parser = subparsers.add_parser(
+        "reserve", parents=[shared], help=argparse.SUPPRESS
+    )
+    reserve_parser.add_argument("--name", default="job")
+    reserve_parser.add_argument("--user", default="fire")
+    reserve_parser.set_defaults(func=reserve)
 
-    commit_p = sub.add_parser("commit", help=argparse.SUPPRESS)
-    commit_p.add_argument("path", type=Path)
-    commit_p.add_argument("--name", default="job")
-    commit_p.add_argument("--user", default="fire")
-    commit_p.add_argument("--git-sha", default="unknown")
-    commit_p.add_argument("--git-dirty", action="store_true")
-    commit_p.add_argument("--image", required=True)
-    commit_p.add_argument("command", nargs="+")
-    commit_p.set_defaults(func=commit)
+    commit_parser = subparsers.add_parser("commit", help=argparse.SUPPRESS)
+    commit_parser.add_argument("path", type=Path)
+    commit_parser.add_argument("--name", default="job")
+    commit_parser.add_argument("--user", default="fire")
+    commit_parser.add_argument("--git-sha", default="unknown")
+    commit_parser.add_argument("--git-dirty", action="store_true")
+    commit_parser.add_argument("--image", required=True)
+    commit_parser.add_argument("command", nargs="+")
+    commit_parser.set_defaults(func=commit)
 
-    contract_p = sub.add_parser("contract", help=argparse.SUPPRESS)
-    contract_p.set_defaults(func=contract)
+    contract_parser = subparsers.add_parser("contract", help=argparse.SUPPRESS)
+    contract_parser.set_defaults(func=contract)
 
 
 def main(argv: list[str]) -> int:

@@ -38,6 +38,8 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
+# N = pep8-naming (class/function shape). Letter-suffix abbreviations like
+# submit_p are not a ruff rule; tests/test_naming.py bans those.
 select = [
     "F", "E", "W", "I", "B", "C4", "UP", "SIM", "S", "T20",
     "N", "ANN", "A", "ARG", "ERA", "PLR", "PLW", "PLE", "PERF",

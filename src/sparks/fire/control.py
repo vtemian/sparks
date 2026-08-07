@@ -30,13 +30,13 @@ def queue_dir(shared_dir: Path | None = None) -> Path:
             f"{box.config_path()} does not exist; this box has no sparks contract"
         )
 
-    qd = contract.queue_dir
-    if not qd.is_dir():
+    directory = contract.queue_dir
+    if not directory.is_dir():
         raise ControlError(
             f"this box is provisioned for sparks but not for the queue: "
-            f"{qd} does not exist"
+            f"{directory} does not exist"
         )
-    return qd
+    return directory
 
 
 def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:

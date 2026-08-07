@@ -69,56 +69,56 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=f"the box to talk to over ssh. Defaults to ${remote.HOST_ENV}",
     )
-    sub = parser.add_subparsers(dest="command_name", required=True)
-    _add_submit(sub, host)
-    _add_queue(sub, host)
-    _add_job_verbs(sub, host)
+    subparsers = parser.add_subparsers(dest="command_name", required=True)
+    _add_submit(subparsers, host)
+    _add_queue(subparsers, host)
+    _add_job_verbs(subparsers, host)
     return parser
 
 
-def _add_submit(sub: Subparsers, host: argparse.ArgumentParser) -> None:
-    submit_p = sub.add_parser(
+def _add_submit(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
+    submit_parser = subparsers.add_parser(
         "submit",
         parents=[host],
         help="build, push, upload --data, and queue a job on the box",
     )
-    submit_p.add_argument("--name", default="job")
-    submit_p.add_argument(
+    submit_parser.add_argument("--name", default="job")
+    submit_parser.add_argument(
         "--data",
         type=Path,
         required=True,
         help="folder mounted at /data in the job",
     )
-    submit_p.add_argument(
+    submit_parser.add_argument(
         "--context",
         type=Path,
         default=Path.cwd(),
         help="Docker build context (must contain a Dockerfile). "
         "Defaults to the current directory",
     )
-    submit_p.add_argument(
+    submit_parser.add_argument(
         "--image",
         help="skip build/push; use this registry tag",
     )
-    submit_p.add_argument("command", nargs="+", help="after a -- separator")
-    submit_p.set_defaults(func=submit)
+    submit_parser.add_argument("command", nargs="+", help="after a -- separator")
+    submit_parser.set_defaults(func=submit)
 
 
-def _add_queue(sub: Subparsers, host: argparse.ArgumentParser) -> None:
-    listing = sub.add_parser(
+def _add_queue(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
+    queue_parser = subparsers.add_parser(
         "queue",
         parents=[host],
         help="what is running and what is waiting",
     )
-    listing.add_argument(
+    queue_parser.add_argument(
         "--all",
         action="store_true",
         help="include jobs that finished long enough ago to have aged out",
     )
-    listing.set_defaults(func=queue)
+    queue_parser.set_defaults(func=queue)
 
 
-def _add_job_verbs(sub: Subparsers, host: argparse.ArgumentParser) -> None:
+def _add_job_verbs(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
     for verb, helping, func in (
         ("cancel", "drop a job that has not started yet", cancel),
         ("abort", "stop a job, whether it has started or not", abort),
@@ -129,9 +129,11 @@ def _add_job_verbs(sub: Subparsers, host: argparse.ArgumentParser) -> None:
         ),
         ("remove", "delete a finished job and the code it kept", remove),
     ):
-        p = sub.add_parser(verb, parents=[host], help=helping)
-        p.add_argument("job", help="a job id, a unique part of one, or its name")
-        p.set_defaults(func=func)
+        verb_parser = subparsers.add_parser(verb, parents=[host], help=helping)
+        verb_parser.add_argument(
+            "job", help="a job id, a unique part of one, or its name"
+        )
+        verb_parser.set_defaults(func=func)
 
 
 def main(argv: list[str] | None = None) -> int:
