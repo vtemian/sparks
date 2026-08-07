@@ -58,6 +58,9 @@ def remove(args: argparse.Namespace, _argv: list[str]) -> int:
     return remote.run(args.host, ["remove", args.job])
 
 
+type Subparsers = argparse._SubParsersAction[argparse.ArgumentParser]
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sparks", description=__doc__)
     host = argparse.ArgumentParser(add_help=False)
@@ -67,7 +70,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"the box to talk to over ssh. Defaults to ${remote.HOST_ENV}",
     )
     sub = parser.add_subparsers(dest="command_name", required=True)
+    _submit_parser(sub, host)
+    _queue_parser(sub, host)
+    _job_parsers(sub, host)
+    return parser
 
+
+def _submit_parser(sub: Subparsers, host: argparse.ArgumentParser) -> None:
     submit_p = sub.add_parser(
         "submit",
         parents=[host],
@@ -94,6 +103,8 @@ def build_parser() -> argparse.ArgumentParser:
     submit_p.add_argument("command", nargs="+", help="after a -- separator")
     submit_p.set_defaults(func=submit)
 
+
+def _queue_parser(sub: Subparsers, host: argparse.ArgumentParser) -> None:
     listing = sub.add_parser(
         "queue",
         parents=[host],
@@ -106,6 +117,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     listing.set_defaults(func=queue)
 
+
+def _job_parsers(sub: Subparsers, host: argparse.ArgumentParser) -> None:
     for verb, helping, func in (
         ("cancel", "drop a job that has not started yet", cancel),
         ("abort", "stop a job, whether it has started or not", abort),
@@ -119,8 +132,6 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(verb, parents=[host], help=helping)
         p.add_argument("job", help="a job id, a unique part of one, or its name")
         p.set_defaults(func=func)
-
-    return parser
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -26,8 +26,10 @@ import shlex
 import subprocess
 import time
 import tomllib
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from sparks import dock, spool
@@ -53,6 +55,17 @@ instead.
 RSYNC_TIMEOUT_SECONDS = 1800.0
 SSH_TIMEOUT_SECONDS = 120.0
 
+PUSH_HINT = (
+    "docker push failed. Is the registry in "
+    "insecure-registries and is SPARKS_HOST reachable?"
+)
+"""One diagnosis for every way a push dies.
+
+The box registry is plain HTTP, so a Docker daemon that has not listed it in
+insecure-registries refuses it with an error that never says so; the only
+other likely cause is the box being unreachable.
+"""
+
 
 class ClientError(Exception):
     """Something the person can fix, reported without a traceback."""
@@ -74,6 +87,18 @@ def tag_for(registry_url: str, user: str, name: str, ref: str) -> str:
     return f"{host}/{user}/{name}:{ref}"
 
 
+def split_tag(tag: str) -> tuple[str, str]:
+    """Repository and image tag, `latest` when the tag names none.
+
+    Only a colon in the last path segment is a tag separator; the colon
+    before a registry port (`spark.local:5000/u/n`) must not split.
+    """
+    if ":" not in tag.rsplit("/", 1)[-1]:
+        return tag, "latest"
+    repository, image_tag = tag.rsplit(":", 1)
+    return repository, image_tag
+
+
 def build(context: Path, tag: str) -> None:
     if not (context / "Dockerfile").is_file():
         raise ClientError(f"{context}/Dockerfile is missing")
@@ -85,46 +110,54 @@ def build(context: Path, tag: str) -> None:
             decode=True,
             rm=True,
         )
-        for chunk in stream:
-            if "stream" in chunk:
-                print(chunk["stream"], end="")
-            if "error" in chunk or "errorDetail" in chunk:
-                raise ClientError(f"docker build failed for {tag}")
-    except ClientError:
-        raise
+        _echo_build(stream, tag)
     except dock.DockerException as e:
         raise ClientError(f"docker build failed for {tag}: {e}") from e
 
 
 def push(tag: str) -> None:
-    if ":" not in tag.rsplit("/", 1)[-1]:
-        repository, image_tag = tag, "latest"
-    else:
-        repository, image_tag = tag.rsplit(":", 1)
+    repository, image_tag = split_tag(tag)
     try:
         docker_client = dock.client()
-        for line in docker_client.images.push(
-            repository, tag=image_tag, stream=True, decode=True
-        ):
-            if line.get("error") or line.get("errorDetail"):
-                raise ClientError(
-                    f"docker push failed for {tag}. Is the registry in "
-                    f"insecure-registries and is SPARKS_HOST reachable?"
-                )
-            status = line.get("status")
-            if status:
-                print(status)
-    except ClientError:
-        raise
+        _echo_push(
+            docker_client.images.push(
+                repository, tag=image_tag, stream=True, decode=True
+            )
+        )
     except dock.DockerException as e:
-        raise ClientError(
-            f"docker push failed for {tag}. Is the registry in "
-            f"insecure-registries and is SPARKS_HOST reachable?"
-        ) from e
+        raise ClientError(PUSH_HINT) from e
+
+
+def _failed(chunk: dict[str, Any]) -> bool:
+    """Docker streams report failure as chunks, not exceptions."""
+    return bool(chunk.get("error") or chunk.get("errorDetail"))
+
+
+def _echo_build(chunks: Iterable[dict[str, Any]], tag: str) -> None:
+    for chunk in chunks:
+        if "stream" in chunk:
+            # No newline of our own: the chunks carry theirs.
+            print(chunk["stream"], end="")
+        if _failed(chunk):
+            raise ClientError(f"docker build failed for {tag}")
+
+
+def _echo_push(chunks: Iterable[dict[str, Any]]) -> None:
+    for line in chunks:
+        if _failed(line):
+            raise ClientError(PUSH_HINT)
+        status = line.get("status")
+        if status:
+            print(status)
 
 
 def fetch_registry_url(host: str) -> str:
     """Read `registry_url` from the box contract over ssh."""
+    raw = _box_config(host)
+    return _registry_url(raw, f"{host}:{REMOTE_BOX_CONFIG}")
+
+
+def _box_config(host: str) -> bytes:
     try:
         done = subprocess.run(
             ["ssh", host, "cat", REMOTE_BOX_CONFIG],
@@ -139,13 +172,17 @@ def fetch_registry_url(host: str) -> str:
     if done.returncode != 0:
         detail = (done.stderr or done.stdout).decode(errors="replace").strip()
         raise ClientError(f"{host} refused: {detail}")
+    return done.stdout
+
+
+def _registry_url(raw: bytes, where: str) -> str:
     try:
-        data = tomllib.loads(done.stdout.decode())
+        data = tomllib.loads(raw.decode())
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
-        raise ClientError(f"{host}:{REMOTE_BOX_CONFIG} is not valid TOML: {e}") from e
+        raise ClientError(f"{where} is not valid TOML: {e}") from e
     url = data.get("registry_url")
     if not isinstance(url, str) or not url.strip():
-        raise ClientError(f"{host}:{REMOTE_BOX_CONFIG} has no registry_url")
+        raise ClientError(f"{where} has no registry_url")
     return url.strip()
 
 
@@ -361,23 +398,40 @@ def submit_remote(
 
     who = local_user()
     sha, dirty = provenance(context)
-    url = registry_url
-    if image is None and url is None:
-        url = fetch_registry_url(host)
-
     tag = _resolve_tag(
         image=image,
         context=context,
-        registry_url=url,
+        registry_url=_registry_for(host, image, registry_url),
         user=who,
         name=name,
         sha=sha,
     )
+    reserved = _reserve(host, name, who)
+    ship_to(data, host, reserved)
+    return capture(host, commit_argv(reserved, name, command, sha, dirty, tag))
 
+
+def _registry_for(host: str, image: str | None, registry_url: str | None) -> str | None:
+    """Ask the box for its registry only when there is something to push."""
+    if image is None and registry_url is None:
+        return fetch_registry_url(host)
+    return registry_url
+
+
+def _reserve(host: str, name: str, who: str) -> str:
     reserved = capture(host, ["reserve", "--name", name, "--user", who])
     if not reserved:
         raise ClientError(f"{host} did not say where to put the job")
+    return reserved
 
+
+def ship_to(data: Path, host: str, reserved: str) -> None:
+    """rsync `--data` into a job directory reserved on the box.
+
+    The remote counterpart of `ship`, not a variant of it: the box end of the
+    reserve/commit handshake already made the directory, and the failures name
+    the host rather than the destination path.
+    """
     dest = f"{host}:{reserved}/{spool.DATA_DIR}/"
     argv = rsync_argv(data, dest)
     try:
@@ -393,8 +447,6 @@ def submit_remote(
             f"could not copy --data to {host}: "
             f"{done.stderr.decode(errors='replace').strip()}"
         )
-
-    return capture(host, commit_argv(reserved, name, command, sha, dirty, tag))
 
 
 def commit_argv(

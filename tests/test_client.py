@@ -70,6 +70,20 @@ class TestTagFor:
         )
 
 
+class TestSplitTag:
+    def test_split_tag_defaults_latest_without_splitting_the_port_colon(self) -> None:
+        """The registry's port colon lives in the host segment; only a colon in
+        the last path segment names a tag."""
+        assert client.split_tag("spark.local:5000/u/n") == (
+            "spark.local:5000/u/n",
+            "latest",
+        )
+        assert client.split_tag("spark.local:5000/u/n:abc") == (
+            "spark.local:5000/u/n",
+            "abc",
+        )
+
+
 class TestSubmitting:
     def test_the_data_travels_with_the_job(self, queue: Path, data: Path) -> None:
         entry = _submit(queue, data, command=["python", "train.py"])
