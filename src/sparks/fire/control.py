@@ -94,19 +94,10 @@ def resolve(queue_dir: Path, needle: str) -> spool.Entry:
     if exact:
         return exact[0]
 
-    matches = [e for e in found if needle in e.job.job_id or e.job.name == needle]
+    matches = _matches(found, needle)
     if not matches:
         raise ControlError(f"no job matches {needle!r}")
-    if len(matches) > 1:
-        live = [e for e in matches if not e.is_terminal]
-        # A name that matches one running job and six finished ones is not
-        # ambiguous in any way the person meant it.
-        if len(live) == 1:
-            return live[0]
-        ids = "\n".join(f"    {e.job.job_id}  {e.state.state}" for e in matches)
-        raise ControlError(f"{needle!r} matches several jobs:\n{ids}")
-
-    return matches[0]
+    return matches[0] if len(matches) == 1 else _disambiguate(matches, needle)
 
 
 def ask(queue_dir: Path, needle: str, action: str) -> spool.Entry:
@@ -200,3 +191,17 @@ def _clone(source: Path, destination: Path) -> None:
     except OSError as e:
         LOG.info("sparks: could not hardlink data (%s); copying instead", e)
         shutil.copytree(source, destination, dirs_exist_ok=True)
+
+
+def _matches(found: list[spool.Entry], needle: str) -> list[spool.Entry]:
+    return [e for e in found if needle in e.job.job_id or e.job.name == needle]
+
+
+def _disambiguate(matches: list[spool.Entry], needle: str) -> spool.Entry:
+    live = [e for e in matches if not e.is_terminal]
+    # A name that matches one running job and six finished ones is not
+    # ambiguous in any way the person meant it.
+    if len(live) == 1:
+        return live[0]
+    ids = "\n".join(f"    {e.job.job_id}  {e.state.state}" for e in matches)
+    raise ControlError(f"{needle!r} matches several jobs:\n{ids}")

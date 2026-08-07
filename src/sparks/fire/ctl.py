@@ -90,12 +90,21 @@ def contract(_args: argparse.Namespace) -> int:
     return 0
 
 
+type Subparsers = argparse._SubParsersAction[argparse.ArgumentParser]
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="fire", description=__doc__)
     shared = argparse.ArgumentParser(add_help=False)
     shared.add_argument("--shared-dir", type=Path, default=None)
     sub = parser.add_subparsers(dest="verb", required=True)
+    _add_queue(sub, shared)
+    _add_control_verbs(sub, shared)
+    _add_rpc_verbs(sub, shared)
+    return parser
 
+
+def _add_queue(sub: Subparsers, shared: argparse.ArgumentParser) -> None:
     q = sub.add_parser(
         "queue",
         parents=[shared],
@@ -104,6 +113,8 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--all", action="store_true")
     q.set_defaults(func=queue)
 
+
+def _add_control_verbs(sub: Subparsers, shared: argparse.ArgumentParser) -> None:
     for verb, help_text, func in (
         ("cancel", "drop a job that has not started yet", cancel),
         ("abort", "stop a job, whether it has started or not", abort),
@@ -114,6 +125,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("job")
         p.set_defaults(func=func)
 
+
+def _add_rpc_verbs(sub: Subparsers, shared: argparse.ArgumentParser) -> None:
     reserve_p = sub.add_parser("reserve", parents=[shared], help=argparse.SUPPRESS)
     reserve_p.add_argument("--name", default="job")
     reserve_p.add_argument("--user", default="fire")
@@ -131,8 +144,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     contract_p = sub.add_parser("contract", help=argparse.SUPPRESS)
     contract_p.set_defaults(func=contract)
-
-    return parser
 
 
 def main(argv: list[str]) -> int:
