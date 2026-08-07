@@ -6,12 +6,14 @@ import argparse
 import os
 import sys
 import time
-from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from sparks import box, spool
 from sparks.fire import control
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 VERBS = frozenset(
     {"queue", "cancel", "abort", "retry", "remove", "reserve", "commit", "contract"}

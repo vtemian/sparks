@@ -53,7 +53,7 @@ def current_user() -> str:
     database and then the environment, and both can be absent in a container."""
     try:
         return getpass.getuser()
-    except Exception:  # deliberately broad: a missing account is not a failure
+    except Exception:  # noqa: BLE001 — a missing account is not a failure
         return os.environ.get("USER", "unknown")
 
 

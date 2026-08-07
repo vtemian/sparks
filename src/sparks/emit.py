@@ -244,7 +244,7 @@ class RunMetrics:
             return
         try:
             self._writer.send(batch)
-        except Exception as e:  # deliberately broad: telemetry never kills a run
+        except Exception as e:  # noqa: BLE001 — telemetry never kills a run
             LOG.warning("sparks: dropped %d series: %s", len(batch), e)
 
     def _shutdown(self) -> None:
@@ -283,7 +283,7 @@ class RunMetrics:
             return
         try:
             self._writer.send(batch)
-        except Exception as e:  # deliberately broad: telemetry never kills a run
+        except Exception as e:  # noqa: BLE001 — telemetry never kills a run
             LOG.warning("sparks: could not mark %d series stale: %s", len(batch), e)
 
     def _stale_batch(self) -> list[dict[str, Any]]:

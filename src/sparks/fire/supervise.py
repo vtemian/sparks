@@ -70,7 +70,7 @@ def _settings(args: argparse.Namespace) -> _Settings:
         shared = shared or contract.shared_dir
         url = contract.prometheus_url if url is None else url
 
-    assert shared is not None  # unprovisioned path raised above when missing
+    assert shared is not None  # noqa: S101 — narrowing; unprovisioned raised above
     return _Settings(
         shared_dir=shared,
         url=url or "",

@@ -38,7 +38,52 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "UP", "B", "C4", "SIM", "RUF"]
+select = [
+    "F", "E", "W", "I", "B", "C4", "UP", "SIM", "S", "T20",
+    "N", "ANN", "A", "ARG", "ERA", "PLR", "PLW", "PLE", "PERF",
+    "RUF", "TRY", "BLE", "EM", "C90", "RET", "TC", "PIE",
+]
+ignore = [
+    "TRY003",             # long messages at the raise are the house style
+    "EM101", "EM102",     # and they are raw or f-strings, deliberately
+    "TRY301",             # raise-then-translate inside try is the stream idiom
+    "PLR0913", "PLR0917", # wide signatures are deliberate; both twins, or the
+                          # ignore is inert because PLR0917 is the stricter one
+    "S603", "S607",       # subprocess is this tool's job: argv is always a list
+                          # and shell=True never appears; ssh, git and rsync
+                          # resolve via PATH on purpose. ssh_argv still hands a
+                          # shlex-quoted string to the REMOTE shell by design,
+                          # which is not what S603 measures.
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 5
+
+[tool.ruff.lint.pylint]
+max-branches = 4
+max-returns = 4
+max-statements = 15
+
+[tool.ruff.lint.per-file-ignores]
+# Test modules: assertions, fixture arity, magic numbers, long arranges.
+"tests/**" = [
+    "ANN",     # fixtures and helpers read fine untyped
+    "ARG",     # pytest fixtures are requested by name, not used by name
+    "PLR2004", # magic values ARE the assertion
+    "PLR0915", # a long arrange/act/assert is one thought
+    "S101",    # assert
+    "S105", "S106",
+    "S108",    # "/tmp/..." literals are argparse fixtures; nothing is created
+]
+# Makefile-invoked CLI scripts that live in tests/, not test modules.
+"tests/check_dashboard.py" = ["C901", "PLR0912", "T201"]
+"tests/on_box.py" = ["BLE001", "C901", "PLR0912", "T201"]
+# The CLI surface prints; that is its output contract.
+"src/sparks/client/cli.py" = ["T201"]
+"src/sparks/client/remote.py" = ["T201"]
+"src/sparks/fire/cli.py" = ["T201"]
+"src/sparks/fire/ctl.py" = ["T201"]
+"src/sparks/fire/supervise.py" = ["T201"]
 
 [tool.mypy]
 strict = true

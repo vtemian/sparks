@@ -118,12 +118,13 @@ def _grab(fd: int, directory: Path, timeout: float) -> None:
     while True:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return
         except BlockingIOError:
             if time.monotonic() >= deadline:
                 msg = f"{directory} was locked for over {timeout:g}s"
                 raise TimeoutError(msg) from None
             time.sleep(0.05)
+        else:
+            return
 
 
 def clean(value: str, fallback: str = "unknown", limit: int = MAX_TEXT) -> str:

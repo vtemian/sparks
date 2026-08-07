@@ -120,8 +120,11 @@ rather than degrading. Terminal state lives on `training_run_end_timestamp_secon
 - **The box never builds a job image.** `job.image` is required; `fire` pulls it. Shipping
   project `context/` for `docker build` on the box is gone. To change code, rebuild and submit from
   a laptop (or pass `--image` to reuse a tag already in the registry).
-- **`# noqa: BLE001` fails `ruff check` here.** `BLE` is not in the `select` list, so `RUF100` flags
-  the directive as unused. The broad `except` clauses carry plain comments instead.
+- **Every deliberate broad `except` needs `# noqa: BLE001` AND a reason.** `BLE` is in the `select`
+  list, so an unmarked `except Exception` fails `ruff check`; `RUF100` fails the opposite mistake, a
+  directive on a clause that no longer needs one. Ruff does not flag a handler that re-raises or
+  calls `LOG.exception`, so those carry no directive: `runner.py`'s queue guard and
+  `summary.py`'s cleanup-then-reraise are clean without one.
 - **`prometheus_remote_writer` ships no `py.typed`**, so its import carries
   `# type: ignore[import-untyped]`. Do not relax `[tool.mypy]` to avoid this.
 - **A test using `autostart=False` cannot exercise `_shutdown`.** `_stop` is None and the method

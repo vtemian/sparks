@@ -234,8 +234,8 @@ class Sampler:
             return None
         try:
             value = self.nvml() / 1000.0
-        except Exception:  # NVML's own error type, and a reload invalidates the
-            return None  # handle mid-run; either way the reading is degraded.
+        except Exception:  # noqa: BLE001 — NVML's own error type, and a reload
+            return None  # invalidates the handle mid-run; the reading is degraded.
         return value if math.isfinite(value) else None
 
     def baseline(self, seconds: float) -> Baseline:
@@ -376,7 +376,7 @@ def _nvml_counter() -> Callable[[], float] | None:
         nvml = importlib.import_module("pynvml")
         nvml.nvmlInit()
         device = nvml.nvmlDeviceGetHandleByIndex(0)
-    except Exception:  # NVML raises its own error type, which needs the import
+    except Exception:  # noqa: BLE001 — NVML's own error type needs the import
         return None
 
     def counter() -> float:

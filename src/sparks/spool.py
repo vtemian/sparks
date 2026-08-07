@@ -339,7 +339,7 @@ def set_state(path: Path, state: State) -> None:
 
 # `**changes` goes straight into dataclasses.replace, whose field types are
 # heterogeneous; `object` would break that call under mypy strict.
-def advance(path: Path, **changes: Any) -> State:
+def advance(path: Path, **changes: Any) -> State:  # noqa: ANN401
     """Update some fields of a job's state, leaving the rest alone."""
     state = replace(_read_state(path), **changes)
     set_state(path, state)

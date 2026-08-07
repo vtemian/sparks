@@ -148,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
         return os.EX_CONFIG
 
     host = remote.host_from(args.host)
-    assert host is not None
+    assert host is not None  # noqa: S101 — narrowing; the None case returned above
     args.host = host
 
     command: Command = args.func
