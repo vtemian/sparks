@@ -155,7 +155,8 @@ class Supervisor:
         started_wall, started_mono = time.time(), time.monotonic()
         oom_before = oom_kills(self.cgroup)
         log = self.log_path.open("wb")
-        # 0600 whatever the umask; EPERM if the directory is someone else's.
+        # Group-readable whatever the umask, so the other account can read a
+        # run's log; EPERM if the directory is someone else's.
         with contextlib.suppress(OSError):
             os.chmod(self.log_path, FILE_MODE)
         reader: io.BufferedReader | None = None
