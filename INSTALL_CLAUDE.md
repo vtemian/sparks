@@ -124,8 +124,9 @@ rather than degrading. Terminal state lives on `training_run_end_timestamp_secon
   list, so an unmarked `except Exception` fails `ruff check`; `RUF100` fails the opposite mistake, a
   directive on a clause that does not need one. Ruff already treats a handler as non-blind when it
   re-raises, calls `LOG.exception`, or passes `exc_info`, so **four** sites are clean *without* a
-  directive and must stay that way: `runner.py:98` and `launch.py:93` (`LOG.exception`),
-  `emit.py:238` (`LOG.warning(..., exc_info=True)`), and `summary.py:201`, which is an
+  directive and must stay that way: the queue guard in `runner.py` and the record-failed handler
+  in `launch.py` (both `LOG.exception`), the pump guard in `emit.py`
+  (`LOG.warning(..., exc_info=True)`), and the cleanup in `summary.py`, which is an
   `except BaseException:` with a bare `raise`. Adding a directive to any of them is the `RUF100`
   failure.
 - **Ruff's statement counting is not lines**, so a one-line change can cost three: a docstring is
