@@ -28,9 +28,10 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 from sparks import dock, spool
 from sparks.fire.runner import PullFailedError
@@ -143,20 +144,9 @@ class Docker:
         try:
             client = dock.client()
             with log_path.open("wb") as log:
-                for chunk in client.api.pull(image, stream=True, decode=True):
-                    if time.monotonic() > deadline:
-                        raise PullFailedError(
-                            f"the pull was still going after "
-                            f"{PULL_TIMEOUT_SECONDS / 3600:g}h and was stopped"
-                        )
-                    line = chunk.get("status") or chunk.get("error") or str(chunk)
-                    log.write((line + "\n").encode())
-                    if chunk.get("error") or chunk.get("errorDetail"):
-                        raise PullFailedError(
-                            f"docker pull failed; the output is in {log_path.name}"
-                        )
-        except PullFailedError:
-            raise
+                stream = client.api.pull(image, stream=True, decode=True)
+                for chunk in _bounded(stream, deadline):
+                    _pull_line(chunk, log, log_path)
         except dock.DockerException as e:
             raise PullFailedError(f"could not pull image: {e}") from e
 
@@ -353,3 +343,32 @@ def _first_line(path: Path) -> str | None:
     except OSError:
         return None
     return text.strip().splitlines()[0] if text.strip() else None
+
+
+def _bounded(
+    stream: Iterable[dict[str, Any]], deadline: float
+) -> Iterator[dict[str, Any]]:
+    """Yield the pull stream's chunks until the deadline says stop.
+
+    The check runs per chunk, so this bounds a pull that is still streaming; a
+    stream that has gone silent is only noticed when its next chunk lands.
+    """
+    for chunk in stream:
+        if time.monotonic() > deadline:
+            raise PullFailedError(
+                f"the pull was still going after "
+                f"{PULL_TIMEOUT_SECONDS / 3600:g}h and was stopped"
+            )
+        yield chunk
+
+
+def _pull_line(chunk: dict[str, Any], log: IO[bytes], log_path: Path) -> None:
+    """Write one chunk's line to the pull log, failing on an error chunk.
+
+    The write comes before the raise on purpose: the failure message points the
+    reader at the log, so the error line has to be in it.
+    """
+    line = chunk.get("status") or chunk.get("error") or str(chunk)
+    log.write((line + "\n").encode())
+    if chunk.get("error") or chunk.get("errorDetail"):
+        raise PullFailedError(f"docker pull failed; the output is in {log_path.name}")
