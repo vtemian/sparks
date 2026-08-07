@@ -1,5 +1,3 @@
-"""sparks.fire.supervise: wrap a training command and record what it cost."""
-
 import os
 from pathlib import Path
 

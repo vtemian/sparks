@@ -59,6 +59,7 @@ class Process:
         container = self.container_id()
         if not container:
             return
+
         dock.remove_quietly(container)
 
 
@@ -134,6 +135,7 @@ class Docker:
                     uid,
                 )
             return Credentials()
+
         return Credentials(
             user=uid,
             group=gid,

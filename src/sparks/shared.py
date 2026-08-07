@@ -44,6 +44,7 @@ def reserve_dir(
         with contextlib.suppress(OSError):
             os.chmod(directory, DIR_MODE)
         return reserved, directory
+
     raise RuntimeError(f"no free {prefix} id under {parent} for {name!r}")
 
 

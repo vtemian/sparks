@@ -56,6 +56,7 @@ def runner_url(contract: box.Box | None) -> str:
     for loopback in ("127.0.0.1", "localhost", "::1"):
         if loopback in url:
             return url.replace(loopback, "host.docker.internal")
+
     return url
 
 

@@ -121,6 +121,7 @@ def reserved(
     LOG.debug("sparks: reserved %s in %s", run.id, run.dir)
     if on_reserved is None:
         return run
+
     try:
         on_reserved(run.id, run.dir)
     except Exception as exc:  # noqa: BLE001 -- an observer's failure is not the run's

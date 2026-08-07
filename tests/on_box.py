@@ -1,29 +1,3 @@
-"""The checks that need the real box, in one runnable pass.
-
-Three things cannot be verified from a laptop, and all three were left open
-when the multi-user-safety plan shipped:
-
-  permissions   the one-time `chmod -R 2775` migration. Measured: a second user
-                cannot chmod the first's 2700 tree and cannot create anything
-                inside it, so new code cannot self-heal this for them. The tree
-                has to be corrected once by its owner or root.
-  acceptance    the plan's definition of done for tier 1, which is written in
-                terms of two accounts, three umasks and a real filesystem.
-  calibration   BUSY_GPU_WATTS, MIN_COUNTER_WINDOW_SECONDS and RATIO_TOLERANCE
-                are calibrated to one box and were guessed for every other one.
-                Each is measured here rather than argued about.
-
-Every check prints PASS, FAIL or SKIP and says what it observed, and the script
-exits non-zero if anything failed, so it can be a gate rather than a report.
-Nothing here writes outside `--shared-dir`, and `--fix-permissions` is the only
-flag that changes anything it did not create.
-
-    uv run python tests/on_box.py --shared-dir /srv/bbm
-    uv run python tests/on_box.py --shared-dir /srv/bbm --fix-permissions
-    uv run python tests/on_box.py --shared-dir /srv/bbm --other-user alice \
-        --url http://127.0.0.1:9090
-"""
-
 import argparse
 import contextlib
 import itertools
@@ -71,9 +45,6 @@ class Report:
     def expect(
         self, condition: bool, check: str, detail: str = "", passed: str = ""
     ) -> bool:
-        """`detail` explains a failure; `passed` is shown instead when it holds,
-        so a green line does not print the empty list of things that went
-        wrong."""
         if condition:
             self.ok(check, passed)
         else:
@@ -103,14 +74,6 @@ def mode_of(path: Path) -> int:
 
 
 def explain_mode(path: Path) -> str:
-    """Why a directory is not 2775, in the terms that decide what to do next.
-
-    The common non-bug is the setgid bit alone: POSIX has chmod clear S_ISGID
-    when the caller is unprivileged and the directory's group is not one of its
-    own, so a dry run against /tmp (root:wheel on macOS) reports 0775 and looks
-    like a failure. On the real shared tree, whose group every user is in, it
-    sticks -- and if it does not, that is the defect this tier is about.
-    """
     actual = mode_of(path)
     wanted = shared.DIR_MODE
     only_setgid_missing = actual & 0o777 == wanted & 0o777 and not actual & stat.S_ISGID
@@ -129,9 +92,6 @@ def explain_mode(path: Path) -> str:
 
 @contextmanager
 def umask(value: int) -> Iterator[None]:
-    """os.umask is process-global and returns the old value rather than scoping,
-    which is exactly why the launcher must never call it. A verification script
-    is the one place it is legitimate, and it is restored on every path."""
     previous = os.umask(value)
     try:
         yield
@@ -143,13 +103,6 @@ def umask(value: int) -> Iterator[None]:
 
 
 def check_contract(report: Report, shared_dir: Path) -> None:
-    """What sparkup's `sparks` role promised, checked against the box and against
-    the shared tree this script was pointed at.
-
-    The last of those matters most. Two sources of truth for one path is how a
-    run ends up recorded where nobody reads it, and this script taking
-    --shared-dir is itself a second source.
-    """
     heading("contract: what sparkup declared this box provides")
     try:
         contract = box.load()
@@ -271,9 +224,6 @@ def check_acceptance(
 
 
 def _umask_matrix(report: Report, shared_dir: Path) -> None:
-    """Three runs at three umasks. The failure this catches is total: at umask
-    077 the other user cannot listdir runs/, so their load_all sees zero
-    summaries and the rebuild writes an empty index, wiping shared history."""
     made = []
     for value in (0o077, 0o022, 0o027):
         with umask(value):
@@ -314,9 +264,6 @@ def _umask_matrix(report: Report, shared_dir: Path) -> None:
 
 
 def _same_cause(paths: list[Path], labels: list[str]) -> str:
-    """One explanation when every offender has the same one, which is the usual
-    case: three umasks hitting one filesystem fail three times identically, and
-    printing that verbatim three times buries the sentence that matters."""
     if not paths:
         return ""
     reasons = {explain_mode(p).split(": ", 1)[-1] for p in paths}
@@ -328,8 +275,6 @@ def _same_cause(paths: list[Path], labels: list[str]) -> str:
 
 
 def _same_second_collision(report: Report, shared_dir: Path) -> None:
-    """The only hard uniqueness guarantee is mkdir raising EEXIST. Two reserves
-    in one second must produce two directories, not one shared one."""
     runs = shared_dir / "runs"
     first_id, first = shared.reserve_dir(runs, "onbox-collide", "tester")
     second_id, second = shared.reserve_dir(runs, "onbox-collide", "tester")
@@ -341,10 +286,6 @@ def _same_second_collision(report: Report, shared_dir: Path) -> None:
 
 
 def _hostile_name(report: Report, shared_dir: Path) -> None:
-    """A non-UTF-8 --name must neither crash the wrapper nor freeze the index.
-    Proven failure mode: json.dumps escapes the lone surrogate so the write
-    succeeds, then every later rebuild raises UnicodeEncodeError and is
-    swallowed as a warning, so the colleague's runs stop appearing forever."""
     try:
         result = launcher.launch(
             ["true"],
@@ -395,8 +336,6 @@ def _promtool(report: Report, target: Path) -> None:
 
 
 def _exit_code(report: Report, shared_dir: Path) -> None:
-    """A queue or a shell && reads $?. The whole suite once passed while the
-    wrapper returned 0 for a crashed run."""
     from sparks.fire import supervise
 
     code = supervise.main(
@@ -417,11 +356,6 @@ def _exit_code(report: Report, shared_dir: Path) -> None:
 
 
 def _unwritable_run_dir(report: Report, shared_dir: Path, url: str | None) -> None:
-    """A failure while saving must not lose the record. The child chmods its own
-    run directory read-only as its last act, which is what a full disk or a
-    quota does to the save that follows. launch() must still return the child's
-    status rather than raising, and with a url the run must still land a
-    terminal status rather than sitting on the dashboard forever."""
     runs = shared_dir / "runs"
     script = f'chmod 500 "{runs}/$SPARKS_RUN_ID"; exit 0'
     run_dir = None
@@ -450,7 +384,6 @@ def _unwritable_run_dir(report: Report, shared_dir: Path, url: str | None) -> No
 
 
 def _second_account(report: Report, shared_dir: Path, other_user: str | None) -> None:
-    """The motivating case: two real accounts in one group on one tree."""
     if other_user is None:
         report.skip(
             "a second account can run and see the shared history",
@@ -516,8 +449,6 @@ def check_calibration(report: Report, window: float) -> None:
 
 
 def _idle_gpu_rail(report: Report, sampler: Sampler, window: float) -> None:
-    """BUSY_GPU_WATTS is 2.6x the idle rail on the box it was calibrated on.
-    Measuring idle here is what turns it from a guess into a number."""
     if sampler.gpu_energy is None:
         report.skip("GPU rail idle draw", "no gpu energy counter on this chip")
         return
@@ -539,10 +470,6 @@ def _idle_gpu_rail(report: Report, sampler: Sampler, window: float) -> None:
 
 
 def _counter_tick(report: Report, sampler: Sampler) -> None:
-    """MIN_COUNTER_WINDOW_SECONDS is set by the slowest counter's tick, and the
-    plan's instruction is exactly this: read at 10 Hz for 20 s and time the
-    steps. A window shorter than the tick catches one update from one source
-    and two from the other, which reads as the sources disagreeing."""
     if sampler.gpu_energy is None:
         report.skip("counter tick granularity", "no gpu energy counter on this chip")
         return
@@ -576,9 +503,6 @@ def _counter_tick(report: Report, sampler: Sampler) -> None:
 
 
 def _source_ratio(report: Report, sampler: Sampler, window: float) -> None:
-    """RATIO_TOLERANCE is relative because the firmware/NVML ratio moved only
-    2.1% across every regime observed. It is only meaningful under load: at
-    idle both deltas are near zero and their ratio is noise."""
     if sampler.nvml is None:
         report.skip("firmware/NVML ratio", "no NVML counter; the driver lacks it")
         return

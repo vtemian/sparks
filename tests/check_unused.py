@@ -1,18 +1,3 @@
-"""Lint: no unused code in src/.
-
-Ruff catches unused imports (F) and assigned-but-unread locals (F841). It does
-not catch unused classes, functions, or signature slots the protocol still
-requires. Vulture does. Scavenge `src/sparks` and `tests` together so a public
-name the suite exercises is not reported, then fail on hits under `src/` at
-min_confidence 60.
-
-Schema fields that are persisted and never attributed in Python today go in
-IGNORE_NAMES with a why — do not grow that set without the same kind of
-argument.
-
-Run: uv run python tests/check_unused.py
-"""
-
 from __future__ import annotations
 
 import subprocess

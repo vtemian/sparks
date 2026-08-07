@@ -39,7 +39,5 @@ def test_remove_quietly_swallows_api_error(caplog: pytest.LogCaptureFixture) -> 
 
 
 def test_remove_quietly_survives_a_daemon_that_has_gone_away() -> None:
-    """It is called from a finally that must still mark the job terminal, so a
-    dead socket has to be swallowed here rather than escape the cleanup."""
     with patch.object(dock, "client", side_effect=DockerException("no socket")):
         dock.remove_quietly("abc123")

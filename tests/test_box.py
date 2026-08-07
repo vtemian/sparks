@@ -16,8 +16,6 @@ registry_url   = "http://spark.local:5000"
 
 
 def a_box(tmp_path: Path, *, runs: bool = True, textfile: bool = True) -> Path:
-    """A contract file describing a provisioned box, with the directories it
-    claims actually present unless a test asks otherwise."""
     shared = tmp_path / "srv" / "spark"
     tiles = tmp_path / "textfile"
     if runs:

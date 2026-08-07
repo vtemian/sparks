@@ -1,5 +1,3 @@
-"""The filesystem primitives that let two accounts share one box safely."""
-
 import stat
 from pathlib import Path
 

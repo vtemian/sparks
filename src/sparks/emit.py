@@ -49,6 +49,7 @@ class RunMetrics:
     def begin(self) -> None:
         if not self._lifecycle:
             return
+
         now = time.time()
         self._sample(Series("training_run_info", self._info), 1.0, now)
         self._sample(
@@ -79,6 +80,7 @@ class RunMetrics:
         if not self._lifecycle:
             self._shutdown()
             return
+
         now = time.time()
         self._sample(
             Series("training_run_end_timestamp_seconds", self._labels), now, now
@@ -108,6 +110,7 @@ class RunMetrics:
         # both halves, so only the child side is constrained.
         if self._lifecycle:
             return
+
         if name in LIFECYCLE or name == "training_run_active":
             raise KeyError(
                 f"{name} belongs to the supervisor; a child emitter writing it "
@@ -117,6 +120,7 @@ class RunMetrics:
     def _beat(self, now: float) -> None:
         if not self._lifecycle:
             return
+
         self._sample(
             Series("training_run_heartbeat_timestamp_seconds", self._labels), now, now
         )
@@ -155,6 +159,7 @@ class RunMetrics:
         batch = self._buffer.drain()
         if not batch:
             return
+
         try:
             self._writer.send(batch)
         except Exception as exc:  # noqa: BLE001 -- telemetry never kills a run
@@ -163,6 +168,7 @@ class RunMetrics:
     def _shutdown(self) -> None:
         if self._stop is None or self._stop.is_set():
             return
+
         self._stop.set()
         self._thread.join(timeout=FLUSH_SECONDS * 2)
         if self._thread.is_alive():
@@ -175,6 +181,7 @@ class RunMetrics:
                 FLUSH_SECONDS * 2,
             )
             return
+
         self._flush()
         self._mark_stale()
 
@@ -182,6 +189,7 @@ class RunMetrics:
         batch = self._stale_batch()
         if not batch:
             return
+
         try:
             self._writer.send(batch)
         except Exception as exc:  # noqa: BLE001 -- telemetry never kills a run
@@ -207,4 +215,5 @@ def from_env(autostart: bool = True, **labels: str) -> RunMetrics | None:
     url = os.environ.get("SPARKS_PROMETHEUS_URL")
     if not run_id or not url:
         return None
+
     return RunMetrics(run_id, url, labels=labels, autostart=autostart, lifecycle=False)

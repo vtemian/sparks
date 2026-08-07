@@ -1,14 +1,3 @@
-"""Lint: variable names must be a noun or a verb, not a letter.
-
-Ruff has no VNE001 yet (https://github.com/astral-sh/ruff/issues/3463). Until
-it does, this is the rule: no `p =`, no `as e`, no `submit_p`. A name is one
-or more snake_case words; each word is at least two letters. `_` alone is the
-only single-letter form allowed (discard).
-
-Run: uv run python tests/check_names.py
-Exit 1 on the first file that fails, listing every hit.
-"""
-
 from __future__ import annotations
 
 import ast

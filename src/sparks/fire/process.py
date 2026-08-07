@@ -33,6 +33,7 @@ Handler = Callable[[int, FrameType | None], Any] | int | None
 def clamp_exit(code: int) -> int:
     if code == 0:
         return 0
+
     return min(255, max(1, code))
 
 
@@ -63,8 +64,10 @@ def classify(returncode: int, interrupted_by: int | None) -> Outcome:
                 signal_name=signal.Signals(interrupted_by).name,
                 wrapper_exit=clamp_exit(128 + interrupted_by),
             )
+
         if returncode == 0:
             return Outcome("finished", exit_code=0, wrapper_exit=0)
+
         return Outcome(
             "crashed", exit_code=returncode, wrapper_exit=clamp_exit(returncode)
         )
@@ -81,8 +84,10 @@ def classify(returncode: int, interrupted_by: int | None) -> Outcome:
 def status_for_signal(signum: int, interrupted_by: int | None) -> str:
     if interrupted_by is not None:
         return "cancelled"  # an escalated Ctrl-C lands as SIGKILL; still ours
+
     if signum == signal.SIGKILL:
         return "killed"  # may be OOM; only the cgroup counter decides
+
     return "crashed"
 
 
@@ -96,12 +101,14 @@ def oom_kills(cgroup: Path | None) -> int:
                 return int(value)
             except ValueError:
                 return 0
+
     return 0
 
 
 def events_text(cgroup: Path | None) -> str:
     if cgroup is None:
         return ""
+
     events = cgroup / "memory.events.local"
     try:
         return events.read_text()
@@ -280,6 +287,7 @@ class Supervisor:
         child = self.child
         if child is None or child.returncode is not None:
             return
+
         if self._in_group(child.pid):
             return  # killpg already delivered it
         # send_signal already guards the pid-reuse race by re-polling.
@@ -289,6 +297,7 @@ class Supervisor:
     def _in_group(self, pid: int) -> bool:
         if self.pgid is None:
             return False
+
         try:
             return os.getpgid(pid) == self.pgid
         except OSError:
@@ -297,6 +306,7 @@ class Supervisor:
     def _group(self, signum: int) -> None:
         if self.pgid is None:
             return
+
         with contextlib.suppress(OSError):
             os.killpg(self.pgid, signum)
 
@@ -322,6 +332,7 @@ class Supervisor:
             LOG.error("sparks: child shares the wrapper's process group")
             self.pgid = None
             return
+
         self.pgid = pgid
 
     def _wait_for_child(self) -> int:
@@ -334,6 +345,7 @@ class Supervisor:
                 pass
             except KeyboardInterrupt:
                 continue  # our handler already forwarded it
+
             if (
                 self._deadline is not None
                 and not self.escalated
@@ -349,6 +361,7 @@ class Supervisor:
     def _sweep(self) -> None:
         if not self._group_alive():
             return
+
         LOG.info("sparks: sweeping survivors in process group %s", self.pgid)
         self._group(signal.SIGTERM)
         self._group(signal.SIGCONT)
@@ -357,6 +370,7 @@ class Supervisor:
             if not self._group_alive():
                 LOG.debug("sparks: the group is empty; nothing survived the sweep")
                 return
+
             time.sleep(self.poll_seconds)
         LOG.warning("sparks: survivors ignore the sweep; sending SIGKILL")
         self._group(signal.SIGKILL)
@@ -364,6 +378,7 @@ class Supervisor:
     def _group_alive(self) -> bool:
         if self.pgid is None:
             return False
+
         try:
             os.killpg(self.pgid, 0)
         except ProcessLookupError:

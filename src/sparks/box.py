@@ -76,6 +76,7 @@ def textfile_dir(target: Box | None = None) -> Path:
     override = os.environ.get("SPARKS_TEXTFILE_DIR")
     if override:
         return Path(override)
+
     target = target or load()
     if target is None:
         raise NotProvisionedError(
@@ -88,6 +89,8 @@ def textfile_dir(target: Box | None = None) -> Path:
 def usable(path: Path) -> str:
     if not path.is_dir():
         return f"{path} does not exist"
+
     if not os.access(path, os.W_OK | os.X_OK, effective_ids=True):
         return f"{path} is not writable by this account"
+
     return ""

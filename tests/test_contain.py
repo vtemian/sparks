@@ -1,5 +1,3 @@
-"""Unit tests for the SDK-backed training container driver."""
-
 from __future__ import annotations
 
 import os
@@ -151,8 +149,6 @@ class TestMain:
     def test_a_container_with_no_id_is_still_removed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """It exists on the daemon whether or not docker told us its id, and a
-        container nothing supervises keeps the GPU."""
         fake_container = MagicMock()
         fake_container.id = None
 
@@ -186,10 +182,6 @@ class TestMain:
     def test_a_container_that_failed_to_start_is_removed_by_name(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """docker-py's run() is create() then start() with no cleanup between,
-        so a start that fails leaves a created container we never got a handle
-        to. Nothing else in sparks can reach it: the cidfile was never written,
-        so the name stays taken and every retry of the job hits 409."""
         fake_client = MagicMock()
         fake_client.containers.run.side_effect = dock.APIError("no nvidia runtime")
         monkeypatch.setattr("sparks.fire.contain.dock.client", lambda: fake_client)
@@ -231,9 +223,6 @@ class TestMain:
         fake_client = MagicMock()
 
         def run_then_signal(*_a: object, **_k: object) -> MagicMock:
-            """A real SIGTERM, delivered while main() has no handle yet. The
-            handler runs on this thread before the next statement, so by the
-            time run() returns the flag is set and nothing was stopped."""
             os.kill(os.getpid(), signal.SIGTERM)
             return fake_container
 
@@ -290,8 +279,6 @@ class TestMain:
         fake_container.id = "abc123deadbeef"
 
         def logs_then_signal(*_args: object, **_kwargs: object) -> list[bytes]:
-            """A real SIGTERM, delivered once main() holds the handle, so the
-            handler is the thing that stops the container."""
             os.kill(os.getpid(), signal.SIGTERM)
             return [b"partial\n"]
 
@@ -361,9 +348,6 @@ class TestMain:
     def test_signal_handlers_are_restored_even_when_the_run_raises(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """contain runs as a child of supervise, so the handlers it borrows for
-        the length of one container belong to whoever installed them first. A
-        run that dies holding them would silently disarm the process."""
         fake_client = MagicMock()
         fake_client.containers.run.side_effect = RuntimeError("boom")
         monkeypatch.setattr("sparks.fire.contain.dock.client", lambda: fake_client)

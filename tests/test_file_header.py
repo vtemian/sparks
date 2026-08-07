@@ -1,5 +1,3 @@
-"""File-header comment lint — see tests/check_file_header.py."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

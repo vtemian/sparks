@@ -72,10 +72,12 @@ in `runner.py`, the record-failed handler in `launch.py`, the pump guard in
 `emit.py` and the cleanup in `summary.py` correctly carry none.
 
 ### Write almost none
-**There are no docstrings in `src`.** Not on modules, not on classes, not on
-functions. The only exceptions are the five modules whose `__doc__` argparse
-prints as `--help` text, and those are one line. Do not add one back: the name
-and the signature are the documentation, and if they are not enough, fix them.
+**There are no docstrings anywhere.** Not in `src`, not in `tests`, not on
+modules, classes or functions. The only exceptions are the five modules whose
+`__doc__` argparse prints as `--help` text, and those are one line.
+`tests/check_no_docstrings.py` enforces it from `make lint`, so adding one
+fails the build. The name and the signature are the documentation; if they are
+not enough, fix them rather than writing prose about them.
 
 `src` runs at 3.4% prose, all of it comments. That is the ceiling, not a floor
 to grow toward. What earns a comment is one short line, on the statement it
@@ -86,6 +88,13 @@ it is a `LOG.debug` line instead.
 No section banners (`# -- title ---`, `# ====`) and no `#` comments before the
 first top-level `def`/`class` (`tests/check_banners.py`,
 `tests/check_file_header.py`, both from `make lint`).
+
+### Let it breathe
+A block ending in `return` gets a blank line after it, so a guard clause is not
+welded to the code it guards (`tests/check_blank_after_return.py`). Beyond that
+rule, use blank lines freely between statements: a function is a few paragraphs,
+not one. Vertical space is the cheapest thing in the file and the formatter
+keeps whatever you write.
 
 ### Classes only where state is the point
 Dataclasses for structured data, exceptions, protocols, and stateful

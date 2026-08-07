@@ -1,6 +1,3 @@
-"""Submitting, listing and the four lifecycle verbs, from the side a person
-touches."""
-
 import os
 import subprocess
 from pathlib import Path
@@ -72,8 +69,6 @@ class TestTagFor:
 
 class TestSplitTag:
     def test_split_tag_defaults_latest_without_splitting_the_port_colon(self) -> None:
-        """The registry's port colon lives in the host segment; only a colon in
-        the last path segment names a tag."""
         assert client.split_tag("spark.local:5000/u/n") == (
             "spark.local:5000/u/n",
             "latest",
@@ -121,7 +116,6 @@ class TestSubmitting:
     def test_the_manifest_is_written_after_the_data(
         self, queue: Path, data: Path
     ) -> None:
-        """Anything else lets the runner mount a half-copied tree."""
         entry = _submit(queue, data)
         manifest = entry.path / spool.JOB_FILE
         assert (
@@ -131,7 +125,6 @@ class TestSubmitting:
     def test_git_metadata_is_recorded_when_there_is_a_checkout(
         self, queue: Path, data: Path, project: Path
     ) -> None:
-        """Nothing here is a git repo, so this is the honest 'unknown' path."""
         entry = client.submit(
             queue,
             name="e0",
@@ -148,7 +141,6 @@ class TestWhatIsShipped:
     def test_the_git_directory_is_never_copied(
         self, data: Path, tmp_path: Path
     ) -> None:
-        """It is the biggest thing in most checkouts and no job needs it."""
         (data / ".git").mkdir()
         (data / ".git" / "enormous.pack").write_bytes(b"x" * 4096)
         dest = tmp_path / "dest"
@@ -157,8 +149,6 @@ class TestWhatIsShipped:
         assert (dest / "corpus.txt").is_file()
 
     def test_dockerignore_is_honoured(self, project: Path, tmp_path: Path) -> None:
-        """So a project that already excludes its datasets does not have them
-        copied when shipping a tree that uses .dockerignore."""
         (project / ".dockerignore").write_text("data/\n")
         (project / "data").mkdir()
         (project / "data" / "huge.bin").write_bytes(b"x" * 4096)
@@ -168,8 +158,6 @@ class TestWhatIsShipped:
         assert (dest / "train.py").is_file()
 
     def test_the_source_slash_is_not_lost(self, project: Path) -> None:
-        """Without the trailing slash rsync nests the directory inside the
-        destination, and `/data` would then be one level too deep."""
         argv = client.rsync_argv(project, "/dest")
         assert argv[-2] == f"{project}/"
 
@@ -180,14 +168,12 @@ class TestFindingAJob:
         assert control.resolve(queue, entry.job.job_id).job.job_id == entry.job.job_id
 
     def test_a_unique_fragment_matches(self, queue: Path, data: Path) -> None:
-        """Job ids are long and nobody retypes them."""
         entry = _submit(queue, data, name="distinctive")
         assert control.resolve(queue, "distinctive").job.job_id == entry.job.job_id
 
     def test_an_ambiguous_name_is_refused_rather_than_guessed(
         self, queue: Path, data: Path
     ) -> None:
-        """Guessing wrong here aborts somebody's training."""
         for _ in range(3):
             entry = _submit(queue, data, name="same")
             spool.set_state(entry.path, spool.State(state=spool.FINISHED))
@@ -197,7 +183,6 @@ class TestFindingAJob:
     def test_one_live_job_among_finished_ones_is_not_ambiguous(
         self, queue: Path, data: Path
     ) -> None:
-        """`sparks abort e0` after six finished attempts means the one running."""
         old = _submit(queue, data)
         spool.set_state(old.path, spool.State(state=spool.FINISHED))
         live = _submit(queue, data)
@@ -260,7 +245,6 @@ class TestRetry:
     def test_retrying_something_still_going_is_refused(
         self, queue: Path, data: Path
     ) -> None:
-        """It would run the same thing twice at once, on one GPU."""
         entry = _submit(queue, data)
         spool.set_state(entry.path, spool.State(state=spool.RUNNING))
         with pytest.raises(control.ControlError, match=r"twice at once"):
@@ -329,15 +313,11 @@ class TestReachingTheBox:
         assert "spark.local:5000/vlad/n:deadbeef" in argv
 
     def test_commit_argv_passes_local_user_for_display(self) -> None:
-        """The laptop person is recorded in job.json for the queue listing;
-        file ownership on the box still decides who may abort."""
         argv = client.commit_argv("/q/job-1", "e0", ["true"], "abc", False, IMAGE)
         assert "--user" in argv
         assert argv[argv.index("--user") + 1] == client.local_user()
 
     def test_the_command_survives_the_separator(self) -> None:
-        """Everything after `--` is the job's, and flags in it must reach the
-        job rather than being read by the commit itself."""
         argv = client.commit_argv(
             "/q/job-1",
             "e0",
@@ -351,9 +331,6 @@ class TestReachingTheBox:
         assert "--image" in argv[: argv.index("--")]
 
     def test_a_quoted_command_survives_the_trip(self) -> None:
-        """ssh joins its arguments and hands them to a shell on the far side, so
-        passing them separately only looks safe. A real submit came back as a
-        bash syntax error because the job's own semicolon was executed there."""
         argv = client.ssh_argv("box", ["submit", "--", "sh", "-c", "echo a; echo b"])
         assert argv[:2] == ["ssh", "box"]
         # One argument to ssh, and the dangerous parts are inert inside it.
@@ -361,8 +338,6 @@ class TestReachingTheBox:
         assert "'echo a; echo b'" in argv[2]
 
     def test_a_command_with_no_metacharacters_stays_readable(self) -> None:
-        """Quoting everything unconditionally would make every command in the
-        logs unreadable for the sake of the rare one that needs it."""
         argv = client.ssh_argv("box", ["queue", "--all"])
         assert argv[2] == "fire-ctl queue --all"
 

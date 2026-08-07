@@ -159,6 +159,7 @@ def publish_queue(
 def job_rows(jobs: list["spool.Entry"]) -> list[str]:
     if not jobs:
         return []
+
     lines = family(QUEUE_INFO, QUEUE_INFO_HELP)
     lines += [
         sample(
@@ -212,6 +213,7 @@ def family(name: str, help_text: str) -> list[str]:
 def sample(name: str, labels: dict[str, str], value: float) -> str:
     if not labels:
         return f"{name} {number(value)}"
+
     pairs = ",".join(f'{key}="{escape(value)}"' for key, value in labels.items())
     return f"{name}{{{pairs}}} {number(value)}"
 
@@ -225,8 +227,11 @@ def escape(value: str) -> str:
 def number(value: float) -> str:
     if math.isnan(value):
         return "NaN"
+
     if math.isinf(value):
         return "+Inf" if value > 0 else "-Inf"
+
     if value.is_integer():
         return str(int(value))
+
     return repr(value)

@@ -1,5 +1,3 @@
-"""The noun/verb naming lint — see tests/check_names.py."""
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

@@ -23,10 +23,6 @@ def a_reading(
     gpu_idle_watts: float = 3.8,
     seconds: float = 50.0,
 ) -> EnergyReading:
-    """A plausible reading from this box, with one field overridden per test.
-
-    The three counters are optional because an unmeasured run records None for
-    them; the baseline and window are not, since 0 already spells "absent"."""
     return EnergyReading(
         total_joules=total_joules,
         gpu_nvml_joules=gpu_nvml_joules,
@@ -38,11 +34,6 @@ def a_reading(
 
 
 def fake_chip(root: Path, index: int, name: str, **channels: tuple[str, str]) -> Path:
-    """A hwmon chip directory of the shape the kernel presents: a `name`, and
-    channels whose meaning lives only in their `*_label` file.
-
-    Channels are given as `power3=("sys_total", "13060000")`, raw sysfs values
-    in micro units."""
     chip = root / f"hwmon{index}"
     chip.mkdir(parents=True)
     (chip / "name").write_text(f"{name}\n")
@@ -53,8 +44,6 @@ def fake_chip(root: Path, index: int, name: str, **channels: tuple[str, str]) ->
 
 
 def spbm(root: Path) -> Path:
-    """The box's chip as measured: `sys_total` is not channel 1, the GPU energy
-    counter is `energy4`, and there is no `sys_total` energy accumulator."""
     return fake_chip(
         root,
         3,

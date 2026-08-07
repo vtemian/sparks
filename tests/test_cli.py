@@ -1,5 +1,3 @@
-"""The laptop client surface: queue verbs only, no run/runner/demo."""
-
 import os
 from pathlib import Path
 from unittest.mock import patch

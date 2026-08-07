@@ -90,6 +90,7 @@ class Runner:
         entry = spool.next_queued(self.queue_dir)
         if entry is None:
             return False
+
         self.process(entry)
         self.pump()
         return True
@@ -122,9 +123,11 @@ class Runner:
                 "job has no image; rebuild and submit from a laptop",
             )
             return
+
         if not entry.data_dir.is_dir():
             self._fail(entry, "job data/ directory is missing")
             return
+
         try:
             self.engine.pull(entry.job.image, entry.path / spool.PULL_LOG)
         except PullFailedError as exc:
@@ -194,6 +197,7 @@ class Runner:
                 continue
             if entry.may_be_controlled_by(pending.uid):
                 return pending.uid
+
             self._refuse(entry, pending)
         return None
 
@@ -228,4 +232,5 @@ class Runner:
     def _outcome(code: int | None, aborted: bool) -> str:
         if aborted:
             return spool.ABORTED
+
         return spool.FINISHED if code == 0 else spool.FAILED

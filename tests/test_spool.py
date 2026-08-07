@@ -1,6 +1,3 @@
-"""The job record: what survives between a submit on the laptop and a runner on
-the box picking the job up, possibly after a reboot."""
-
 import json
 import os
 import time
@@ -93,9 +90,6 @@ def test_jobs_run_oldest_first(tmp_path: Path) -> None:
 
 
 def test_a_half_written_submission_is_invisible(tmp_path: Path) -> None:
-    """The client creates the directory, streams a build context into it, and
-    writes job.json last. A runner that picked the job up mid-rsync would build
-    half a source tree, so the manifest's presence is the commit point."""
     _, path = spool.reserve(tmp_path, name="e0", user="vlad")
     (path / "context").mkdir()
     (path / "context" / "half.py").write_text("incomplete\n")
@@ -104,9 +98,6 @@ def test_a_half_written_submission_is_invisible(tmp_path: Path) -> None:
 
 
 def test_state_is_absent_until_the_runner_writes_it(tmp_path: Path) -> None:
-    """Two writers on one file is the bug this layout exists to avoid: the
-    client owns job.json and the runner owns state.json, so neither ever has to
-    lock against the other."""
     entry = a_job(tmp_path)
     assert not (entry.path / spool.STATE_FILE).exists()
     assert entry.state.state == spool.QUEUED
@@ -142,9 +133,6 @@ def test_a_finished_job_is_terminal_and_a_running_one_is_not(tmp_path: Path) -> 
 
 
 def test_one_unreadable_job_does_not_hide_the_others(tmp_path: Path) -> None:
-    """The runner lists the queue on every tick. An exception here would stop it
-    picking anything up ever again, which is the failure the whole heartbeat
-    metric exists to make visible - better not to need it."""
     good = a_job(tmp_path, name="good")
     broken = a_job(tmp_path, name="broken")
     (broken.path / spool.JOB_FILE).write_text("{not json")
@@ -155,8 +143,6 @@ def test_one_unreadable_job_does_not_hide_the_others(tmp_path: Path) -> None:
 def test_a_state_file_from_a_future_version_leaves_the_job_alone(
     tmp_path: Path,
 ) -> None:
-    """A job whose state cannot be read must not read as queued: the runner
-    would start a second container for something already running."""
     entry = a_job(tmp_path)
     (entry.path / spool.STATE_FILE).write_text("{not json")
     assert spool.load(entry.path).state.state == spool.UNKNOWN
@@ -193,9 +179,6 @@ def test_a_retry_says_what_it_is_a_retry_of(tmp_path: Path) -> None:
 
 
 class TestRequests:
-    """Cancel and abort are asked for, not done. The runner is the only writer
-    of state, so a request is how a client reaches it."""
-
     def test_a_request_carries_who_made_it(self, tmp_path: Path) -> None:
         entry = a_job(tmp_path)
         spool.request(entry.path, spool.ABORT)
@@ -206,8 +189,6 @@ class TestRequests:
         assert pending[0].uid == os.getuid()
 
     def test_two_people_can_ask_at_once(self, tmp_path: Path) -> None:
-        """One file per requester. A single `requests/abort` would let whoever
-        got there first stop anyone else from asking."""
         entry = a_job(tmp_path)
         spool.request(entry.path, spool.ABORT)
         spool.request(entry.path, spool.CANCEL)
@@ -217,7 +198,6 @@ class TestRequests:
         }
 
     def test_asking_twice_is_not_an_error(self, tmp_path: Path) -> None:
-        """A user who does not see the job stop will press it again."""
         entry = a_job(tmp_path)
         spool.request(entry.path, spool.ABORT)
         spool.request(entry.path, spool.ABORT)
@@ -240,7 +220,6 @@ class TestRequests:
         assert not entry.may_be_controlled_by(os.getuid() + 1)
 
     def test_root_may_control_anything(self, tmp_path: Path) -> None:
-        """The runner acts on behalf of whoever asked, and it runs as root."""
         assert a_job(tmp_path).may_be_controlled_by(0)
 
 
@@ -254,9 +233,6 @@ class TestRetention:
         assert spool.entries(tmp_path) == []
 
     def test_recently_finished_jobs_stay_visible(self, tmp_path: Path) -> None:
-        """Bounding what the metrics file publishes: a finished job's run is in
-        sparks_runs.prom forever, so the queue only has to answer "what just
-        happened", not "what ever happened"."""
         now = time.time()
         fresh = a_job(tmp_path, name="fresh")
         stale = a_job(tmp_path, name="stale")
@@ -272,8 +248,6 @@ class TestRetention:
     def test_a_job_that_is_still_going_is_always_published(
         self, tmp_path: Path
     ) -> None:
-        """Whatever its age. A week-old job still running is the single most
-        important row in the table."""
         now = time.time()
         entry = a_job(tmp_path)
         spool.set_state(
@@ -283,8 +257,6 @@ class TestRetention:
 
 
 def test_the_queue_directory_is_group_writable_but_sticky(tmp_path: Path) -> None:
-    """Sticky is what stops a colleague deleting your queued job: without it,
-    group-write on the directory is enough to unlink anything inside it."""
     queue = spool.make_queue_dir(tmp_path / "queue")
     assert queue.stat().st_mode & 0o7777 == spool.QUEUE_MODE
     assert spool.QUEUE_MODE & 0o1000, "sticky"

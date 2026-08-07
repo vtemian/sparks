@@ -1,17 +1,3 @@
-"""Lint: no 1-2 statement private helpers or nested functions.
-
-Ruff caps *maximum* size (PLR0915 / C901); it has no minimum. Tiny `_helpers`
-and nested `def`s are noise — inline them. Exempt:
-
-- class methods (the object's public shape, including Protocol stubs)
-- module-level public names (CLI verbs, `main`, …)
-- `@property` / `@abstractmethod`
-- dunder methods
-- bodies that are only `...` / `pass` / `NotImplementedError`
-
-Run: uv run python tests/check_short_funcs.py
-"""
-
 from __future__ import annotations
 
 import ast

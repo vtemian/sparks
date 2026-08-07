@@ -53,18 +53,23 @@ class EnergyReading:
     def marginal_joules(self) -> float | None:
         if self.total_joules is None:
             return None
+
         baseline_joules = self._baseline_joules()
         if baseline_joules is None:
             return None
+
         if self.total_joules < baseline_joules * UNDER_BASELINE_FRACTION:
             return None
+
         return max(0.0, self.total_joules - baseline_joules)
 
     def _baseline_joules(self) -> float | None:
         if self.idle_watts <= 0:
             return None
+
         if self.gpu_idle_watts > BUSY_GPU_WATTS:
             return None
+
         return self.idle_watts * self.seconds
 
     @property
@@ -72,8 +77,10 @@ class EnergyReading:
         nvml, firmware = self.gpu_nvml_joules, self.gpu_firmware_joules
         if nvml is None or firmware is None or nvml <= 0 or firmware <= 0:
             return SOURCES_UNMEASURED
+
         if self.seconds < MIN_COUNTER_WINDOW_SECONDS:
             return SOURCES_UNMEASURED
+
         ratio = firmware / nvml
         agree = abs(ratio / SOURCE_RATIO - 1.0) <= RATIO_TOLERANCE
         return SOURCES_AGREE if agree else SOURCES_DISAGREE
@@ -124,6 +131,7 @@ class Sampler:
     def gpu_nvml_joules(self) -> float | None:
         if self.nvml is None:
             return None
+
         try:
             value = self.nvml() / 1000.0
         except Exception:  # noqa: BLE001 -- NVML's own error type, and a driver
@@ -133,6 +141,7 @@ class Sampler:
     def baseline(self, seconds: float) -> Baseline:
         if seconds <= 0:
             return Baseline(0.0, 0.0)
+
         if self.has_energy_counter:
             box0, gpu0 = self.total_joules(), self.gpu_firmware_joules()
             time.sleep(seconds)
@@ -143,11 +152,13 @@ class Sampler:
                 0.0 if box_delta is None else box_delta / seconds,
                 0.0 if gpu_delta is None else gpu_delta / seconds,
             )
+
         return Baseline(self._gauge_watts(seconds), 0.0)
 
     def _gauge_watts(self, seconds: float) -> float:
         if self.total_power is None:
             return 0.0
+
         samples: list[float] = []
         deadline = time.monotonic() + seconds
         while (remaining := deadline - time.monotonic()) > 0:
@@ -162,6 +173,7 @@ class Sampler:
 def channel(chip: Path | None, kind: str, labels: Sequence[str]) -> Path | None:
     if chip is None:
         return None
+
     inputs: dict[str, Path] = {}
     for label_file in sorted(chip.glob(f"{kind}*_label")):
         reading = label_file.with_name(
@@ -179,12 +191,14 @@ def channel(chip: Path | None, kind: str, labels: Sequence[str]) -> Path | None:
 def delta(start: float | None, end: float | None) -> float | None:
     if start is None or end is None or end < start:
         return None
+
     return end - start
 
 
 def read_micro(path: Path | None) -> float | None:
     if path is None:
         return None
+
     try:
         micro = float(path.read_text().strip())
     except (OSError, ValueError):
@@ -192,6 +206,7 @@ def read_micro(path: Path | None) -> float | None:
     # Sentinel before the divide, so it means the same for power and for energy.
     if not math.isfinite(micro) or micro == U32_SENTINEL:
         return None
+
     return micro / MICRO
 
 

@@ -1,10 +1,3 @@
-"""Against a real Prometheus from tests/harness-up.sh. No mocks: the thing
-under test is the wire format and the receiver's opinion of it, and a fake
-would only ever confirm our own assumptions.
-
-    make live
-"""
-
 import sys
 import time
 from pathlib import Path
@@ -129,15 +122,6 @@ def test_the_receiver_dropped_nothing_silently() -> None:
 
 
 def test_a_crashed_run_still_lands_its_whole_record(tmp_path: Path) -> None:
-    """The regression test for the bug a unit test could not catch.
-
-    An out-of-order sample makes Prometheus reject the WHOLE request, so a
-    second writer racing the pump silently destroyed the batch carrying
-    training_run_info, the start and end timestamps and the status. Every
-    non-finished run lost its entire record: exactly the runs the wrapper
-    exists to report on. summary.json said `crashed` and Prometheus held
-    nothing at all.
-    """
     result = launcher.launch(
         ["sh", "-c", "exit 3"],
         name="live-crash",

@@ -51,6 +51,7 @@ def tag_for(registry_url: str, user: str, name: str, ref: str) -> str:
 def split_tag(tag: str) -> tuple[str, str]:
     if ":" not in tag.rsplit("/", 1)[-1]:
         return tag, "latest"
+
     repository, image_tag = tag.rsplit(":", 1)
     return repository, image_tag
 
@@ -185,6 +186,7 @@ def resolve_tag(
 ) -> str:
     if image is not None:
         return image
+
     if context is None:
         raise ClientError(
             "a job needs either an image to run (--image) or a project to "
@@ -235,6 +237,7 @@ def provenance(context: Path) -> tuple[str, bool]:
     sha = git_sha(context)
     if sha == "unknown":
         return sha, False
+
     try:
         done = subprocess.run(
             ["git", "status", "--porcelain"],

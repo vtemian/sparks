@@ -1,5 +1,3 @@
-"""fire: queue daemon entry point (flags, no subcommand)."""
-
 from pathlib import Path
 
 import pytest

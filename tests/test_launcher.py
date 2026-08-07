@@ -1,9 +1,3 @@
-"""The launcher, wired end to end against real child processes.
-
-No mocks: the thing under test is whether four modules agree about how a run
-ended, and a fake would only confirm our own assumptions.
-"""
-
 import json
 import os
 import signal
@@ -142,18 +136,7 @@ def test_energy_deltas_land_in_the_right_fields_with_an_injected_sampler(
 
 
 class TestStoppedBeforeItStarted:
-    """The baseline is a minute long and the child does not exist yet.
-
-    `Supervisor` installs its signal handlers when it runs, so until then a
-    SIGTERM takes the default disposition and kills the wrapper outright. A job
-    aborted 25 seconds after starting did exactly that on the box: the run
-    directory was reserved, then left empty -- no summary, no index row, and
-    nothing to say why. The queue called it aborted; the run said nothing.
-    """
-
     class StoppedMidBaseline(Sampler):
-        """Sends the signal from inside the baseline, where the abort landed."""
-
         def __init__(self, signum: int) -> None:
             super().__init__(nvml=lambda: 0.0, hwmon=None)
             self.signum = signum
@@ -182,7 +165,6 @@ class TestStoppedBeforeItStarted:
     def test_nothing_measured_is_reported_as_unknown_not_zero(
         self, tmp_path: Path
     ) -> None:
-        """A measured zero and an absent measurement are different claims."""
         result = launch(
             ["true"],
             name="stopped",
@@ -211,9 +193,6 @@ class TestStoppedBeforeItStarted:
         assert read_summary(tmp_path / "runs" / result.run_id)["signal"] == "SIGINT"
 
     def test_the_handlers_do_not_outlive_the_baseline(self, tmp_path: Path) -> None:
-        """`Supervisor` must install its own over a clean slate: its handler
-        forwards to the child and must never raise, which is the opposite of
-        what the baseline needs."""
         before = signal.getsignal(signal.SIGTERM)
         launch(
             ["true"],

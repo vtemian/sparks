@@ -1,11 +1,3 @@
-"""The runner, with Docker faked out.
-
-Everything asserted here is the runner's own judgement: what runs next, what a
-pull failure does to the job behind it, who is allowed to stop what, and
-whether a job that ends still leaves a truthful record. None of it needs a
-daemon, which is the point of the Engine seam.
-"""
-
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -17,9 +9,6 @@ from sparks.fire import runner
 
 
 class FakeHandle:
-    """A job in flight. `alive_for` is how many polls it survives, so a test can
-    make a job long enough to abort without any real time passing."""
-
     def __init__(
         self,
         code: int = 0,
@@ -128,7 +117,6 @@ def a_job(
 
 
 def ask_to_abort(entry: spool.Entry) -> None:
-    """What a person does from the CLI once they see the job running."""
     spool.request(entry.path, spool.ABORT)
 
 
@@ -150,8 +138,6 @@ class TestHappyPath:
     def test_the_run_id_is_recorded_so_the_job_joins_its_run(
         self, tmp_path: Path, textfile: Path
     ) -> None:
-        """Without this the queue and the run index are two lists of the same
-        events with nothing connecting them."""
         r = a_runner(tmp_path, textfile)
         entry = a_job(r.queue_dir)
         r.tick()
@@ -170,8 +156,6 @@ class TestHappyPath:
     def test_the_job_is_always_cleaned_up_after(
         self, tmp_path: Path, textfile: Path
     ) -> None:
-        """A container that outlives its supervisor keeps the GPU, and the next
-        job in the queue would then contend with a run nobody is watching."""
         handle = FakeHandle()
         r = a_runner(tmp_path, textfile, FakeEngine(handle))
         a_job(r.queue_dir)
@@ -193,8 +177,6 @@ class TestOrdering:
         ]
 
     def test_only_one_job_runs_per_pass(self, tmp_path: Path, textfile: Path) -> None:
-        """Exclusivity is structural here: there is one runner and it is busy.
-        No lock to get wrong, which is why the per-user design was dropped."""
         engine = FakeEngine()
         r = a_runner(tmp_path, textfile, engine)
         a_job(r.queue_dir, name="a")
@@ -283,8 +265,6 @@ class TestCancel:
     def test_aborting_a_job_that_has_not_started_cancels_it(
         self, tmp_path: Path, textfile: Path
     ) -> None:
-        """The verb the user reaches for depends on what they last saw on the
-        dashboard, which may already be out of date. Both mean stop it."""
         r = a_runner(tmp_path, textfile)
         entry = a_job(r.queue_dir)
         spool.request(entry.path, spool.ABORT)
@@ -314,8 +294,6 @@ class TestAbort:
     def test_an_abort_beats_the_exit_code_it_causes(
         self, tmp_path: Path, textfile: Path
     ) -> None:
-        """A terminated job exits non-zero, and calling that `failed` would
-        blame the training for something a person did."""
         handle = FakeHandle(alive_for=3, code=137)
         engine = FakeEngine(handle, on_start=ask_to_abort)
         r = a_runner(tmp_path, textfile, engine)
@@ -338,9 +316,6 @@ class TestAbort:
 
 
 class TestAuthorisation:
-    """Ownership comes from the filesystem, so these are the tests that would
-    catch somebody deciding to read a `user` field instead."""
-
     def test_a_stranger_may_not_cancel_your_job(
         self, tmp_path: Path, textfile: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -394,8 +369,6 @@ class TestPublishing:
     def test_the_queue_is_published_before_a_long_job_finishes(
         self, tmp_path: Path, textfile: Path
     ) -> None:
-        """Six hours of silence from a healthy runner would trip every alarm
-        the heartbeat exists to avoid."""
         published: list[str] = []
         r = a_runner(tmp_path, textfile, FakeEngine(FakeHandle(alive_for=3)))
         a_job(r.queue_dir)
@@ -412,8 +385,6 @@ class TestPublishing:
     def test_an_unwritable_textfile_directory_does_not_stop_the_queue(
         self, tmp_path: Path, textfile: Path
     ) -> None:
-        """Telemetry never kills a run. That rule is why the box contract
-        preflights the run directory and not Prometheus."""
         r = a_runner(tmp_path, textfile)
         r.textfile_dir = tmp_path / "does-not-exist"
         entry = a_job(r.queue_dir)
@@ -422,13 +393,6 @@ class TestPublishing:
 
 
 class TestReconciliation:
-    """What a runner does about the mess the last one left.
-
-    Every case here was found by running the thing for real: a crash between
-    "mark it running" and "start the container" left a job that `next_queued`
-    skipped forever, so the queue accepted work and silently never ran any of it.
-    """
-
     @pytest.mark.parametrize("stuck", [spool.BUILDING, spool.RUNNING])
     def test_a_job_left_mid_flight_is_failed_not_left_hanging(
         self, tmp_path: Path, textfile: Path, stuck: str
@@ -451,7 +415,6 @@ class TestReconciliation:
     def test_a_container_that_outlived_its_supervisor_is_removed(
         self, tmp_path: Path, textfile: Path
     ) -> None:
-        """It is still holding the GPU, and its job already reads as ended."""
         engine = FakeEngine()
         r = a_runner(tmp_path, textfile, engine)
         entry = a_job(r.queue_dir)
@@ -475,8 +438,6 @@ class TestReconciliation:
     def test_serving_reconciles_before_it_takes_new_work(
         self, tmp_path: Path, textfile: Path
     ) -> None:
-        """Otherwise the queue's first act after a reboot is to start a second
-        container for something it thinks is already running."""
         engine = FakeEngine()
         r = a_runner(tmp_path, textfile, engine)
         orphan = a_job(r.queue_dir, name="orphan", when=1000.0)
@@ -489,8 +450,6 @@ class TestReconciliation:
     def test_a_release_that_fails_does_not_stop_the_reconcile(
         self, tmp_path: Path, textfile: Path
     ) -> None:
-        """The daemon may not have come back yet. Leaving the job stuck because
-        of that is the bug this whole method exists to fix."""
 
         class Stubborn(FakeEngine):
             def release(self, container_id: str) -> None:
@@ -509,8 +468,6 @@ class TestResilience:
     def test_a_job_that_explodes_does_not_stop_the_runner(
         self, tmp_path: Path, textfile: Path
     ) -> None:
-        """`serve` is a loop that must survive anything one job can do to it,
-        including the failures nothing here anticipated."""
 
         class Exploding(FakeEngine):
             def pull(self, image: str, log_path: Path) -> None:

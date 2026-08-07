@@ -1,14 +1,3 @@
-"""Lint: no `#` comments before the first top-level def/class.
-
-Ruff has nothing for this. The head of a module is the docstring (optional),
-imports, and bindings — not a second essay in `#` lines. Argue next to the
-binding (a docstring on the constant) or in the module docstring.
-
-Shebang and coding cookies are allowed. Module docstrings are allowed.
-
-Run: uv run python tests/check_file_header.py
-"""
-
 from __future__ import annotations
 
 import ast

@@ -1,17 +1,3 @@
-"""How runs end, exercised with real child processes and no mocks anywhere.
-
-Every status here is produced by a real fork, a real signal and a real reap,
-because the entire value of `sparks.fire.process` is what the kernel actually does to
-a process rather than what a stand-in was told to report. Several of these tests
-signal the *test runner itself*, which is the only faithful way to reproduce
-the supervisor being killed from another terminal: the child raises the signal
-against its own parent, so there is no sleep racing the handler.
-
-The grace and sweep periods come from the constructor. The 30 s production grace
-is correct for a checkpointing training script and would make this suite
-unusable.
-"""
-
 import contextlib
 import os
 import signal
@@ -33,7 +19,6 @@ POLL = 0.05
 
 
 def child(tmp_path: Path, name: str, body: str, *args: str) -> list[str]:
-    """A real script, run by this interpreter."""
     path = tmp_path / f"{name}.py"
     path.write_text(textwrap.dedent(body).lstrip())
     return [sys.executable, str(path), *args]
@@ -67,11 +52,6 @@ def log_of(tmp_path: Path) -> str:
 
 
 def group_empty(pgid: int, timeout: float = 5.0) -> bool:
-    """True once nothing is left in the process group.
-
-    Polled rather than asserted once: by then the strays are orphans, so they
-    are zombies until init reaps them, and init is not instantaneous.
-    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -83,7 +63,6 @@ def group_empty(pgid: int, timeout: float = 5.0) -> bool:
 
 
 def is_stopped(pid: int) -> bool:
-    """`T` in ps state, on both macOS and Linux."""
     out = subprocess.run(
         ["ps", "-o", "state=", "-p", str(pid)],
         capture_output=True,
@@ -124,8 +103,6 @@ def test_an_uncaught_exception_is_crashed_and_its_traceback_is_kept(
 def test_a_genuine_exit_137_and_an_external_sigkill_are_told_apart(
     tmp_path: Path,
 ) -> None:
-    """Both hand the caller $? = 137. Only these fields distinguish them, which
-    is the entire reason status, exit_code and signal are three fields."""
     genuine = run(tmp_path, "exit137", "import sys; sys.exit(137)")
     killed = run(
         tmp_path,
@@ -151,8 +128,6 @@ def test_a_genuine_exit_137_and_an_external_sigkill_are_told_apart(
 def test_a_signalled_wrapper_is_cancelled_even_when_the_child_exits_zero(
     tmp_path: Path,
 ) -> None:
-    """The bug worth naming. A script that traps SIGTERM, checkpoints and exits
-    0 did not run to completion, and `finished` would be the dashboard lying."""
     done = run(
         tmp_path,
         "complies",
@@ -171,17 +146,6 @@ def test_a_signalled_wrapper_is_cancelled_even_when_the_child_exits_zero(
 
 
 def test_a_signal_reaches_the_child_exactly_once(tmp_path: Path) -> None:
-    """The group and the pid are two routes to the same process, and a child
-    that has not left the group is on both. Measured: it received both copies
-    in 6 runs out of 10, and the duplicate lands after its handler has called
-    exit(), when CPython has restored SIG_DFL -- so a run that checkpointed and
-    exited 0 gets recorded `cancelled / null / SIGTERM`. That is the wrapper
-    corrupting the record it exists to keep, and it showed up first as the test
-    above failing one run in four.
-
-    Sampled rather than asserted once, because a duplicate that arrives before
-    the child dequeues the first is coalesced by the kernel and leaves no trace.
-    """
     deliveries = 0
     for i in range(5):
         counted = tmp_path / f"deliveries{i}"
@@ -234,10 +198,6 @@ def test_a_child_that_ignores_sigterm_is_escalated_to_sigkill(tmp_path: Path) ->
 def test_a_stopped_child_is_revived_by_sigcont_and_shuts_down_cleanly(
     tmp_path: Path,
 ) -> None:
-    """A child stopped by SIGTSTP never runs its SIGTERM handler. Without the
-    SIGCONT chaser it burns the whole grace period stopped and dies to SIGKILL
-    with its checkpoint unwritten, so `not escalated` is the assertion that
-    matters here."""
     marker = tmp_path / "handled"
     command = child(
         tmp_path,
@@ -277,15 +237,6 @@ def test_a_stopped_child_is_revived_by_sigcont_and_shuts_down_cleanly(
 
 
 def launcher(tmp_path: Path) -> list[str]:
-    """Three workers that ignore SIGTERM, and a launcher that exits as soon as
-    they do.
-
-    The workers inherit the launcher's stdout, which is what holds the pipe open
-    after it is gone. The launcher waits for all three to have *installed* their
-    handler before exiting: a worker still in interpreter startup dies to the
-    sweep's SIGTERM like anything else, and the test would then pass without
-    ever reaching the escalation it exists to check.
-    """
     ready = tmp_path / "ready"
     ready.mkdir()
     worker = tmp_path / "worker.py"
@@ -329,10 +280,6 @@ def test_a_launcher_whose_workers_ignore_sigterm_leaves_no_survivors(
 
 
 def test_the_duration_excludes_the_wait_for_orphaned_writers(tmp_path: Path) -> None:
-    """A 1.5 s run was measured as 6.5 s because the orphans held the stdout
-    pipe open, so the tee never saw EOF and its join ran the full timeout. The
-    end of the run is when the child was reaped, not when the cleanup finished.
-    """
     sup = supervisor(tmp_path, launcher(tmp_path), sweep=1.0)
     started = time.monotonic()
     done = sup.run()
@@ -345,11 +292,6 @@ def test_the_duration_excludes_the_wait_for_orphaned_writers(tmp_path: Path) -> 
 def test_a_stray_the_sweep_cannot_reach_never_holds_the_wrapper_open(
     tmp_path: Path,
 ) -> None:
-    """A grandchild in its own session inherits the stdout pipe and is out of
-    reach of the group sweep, so the tee never sees EOF. The drain is bounded
-    for exactly this, and so is everything after it: closing the reader under a
-    live tee waits on the same lock the blocked read holds, which held a 0.1 s
-    run open for the stray's full 60 s before it was caught."""
     drain = 1.0
     pidfile = tmp_path / "stray.pid"
     stray = tmp_path / "stray.py"
@@ -415,10 +357,6 @@ def test_large_output_survives_a_sigkill(tmp_path: Path) -> None:
 def test_output_reaches_the_log_while_the_child_is_still_running(
     tmp_path: Path,
 ) -> None:
-    """A pipe switches CPython from line to block buffering: five lines printed
-    at 0.3 s intervals arrived in one burst at t=1.54 s until PYTHONUNBUFFERED
-    was set. Over tens of minutes that is a dead terminal against a live feed.
-    """
     seen_at: list[float] = []
     log = tmp_path / "stdout.log"
 
@@ -451,10 +389,6 @@ def test_output_reaches_the_log_while_the_child_is_still_running(
 
 
 def test_a_synthesised_exit_code_is_clamped_to_eight_bits(tmp_path: Path) -> None:
-    """`sys.exit(256)` is reported by the kernel as returncode 0: a failing
-    child observed as a success. That mask is already applied by the time the
-    wrapper sees it and cannot be undone, so the guarantee this test pins is the
-    other half -- that nothing the wrapper synthesises can go the same way."""
     done = run(tmp_path, "masked", "import sys; sys.exit(256)")
     assert done.outcome.exit_code == 0
 
@@ -473,10 +407,6 @@ def test_classification_is_decided_by_the_wrapper_not_by_the_child() -> None:
 
 
 def test_a_kill_with_cgroup_proof_is_oom(tmp_path: Path) -> None:
-    """`killed` plus a cgroup that counted an oom_kill. The counter is bumped by
-    the child itself here, because the kernel's OOM killer is not something a
-    test suite may provoke on a shared box; the file, its format and the delta
-    across the run are the real thing."""
     cgroup = tmp_path / "cgroup"
     cgroup.mkdir()
     (cgroup / "memory.events.local").write_text(
@@ -503,8 +433,6 @@ def test_a_kill_with_cgroup_proof_is_oom(tmp_path: Path) -> None:
 
 
 def test_a_kill_without_cgroup_proof_stays_killed(tmp_path: Path) -> None:
-    """Degrade rather than guess: on a plain SSH login the cgroup is the whole
-    session's, so a non-zero delta means `something in my session was killed`."""
     cgroup = tmp_path / "cgroup"
     cgroup.mkdir()
     (cgroup / "memory.events.local").write_text("oom 0\noom_kill 0\n")

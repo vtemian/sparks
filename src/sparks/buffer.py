@@ -14,6 +14,7 @@ class Buffer:
         with self._lock:
             if ts_ms <= self._last.get(series, -1):
                 return
+
             slot = self._pending.setdefault(series, {})
             # First value wins: the earlier reading is the truthful one.
             slot.setdefault(ts_ms, value)

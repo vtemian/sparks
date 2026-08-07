@@ -1,15 +1,3 @@
-"""Lint: only class methods may use a leading-underscore name.
-
-Ruff's pep8-naming allows `_helper` everywhere; that is not the house rule.
-A leading `_` means "private to this class". Module-level and nested functions
-get plain names — privacy is modules and classes, not punctuation.
-
-Dunder methods (`__init__`, `__exit__`) are exempt. Discard parameters
-(`_tb`) are not functions and are not checked here.
-
-Run: uv run python tests/check_private_prefix.py
-"""
-
 from __future__ import annotations
 
 import ast

@@ -1,5 +1,3 @@
-"""Short-function lint — see tests/check_short_funcs.py."""
-
 from __future__ import annotations
 
 import ast

@@ -1,5 +1,3 @@
-"""Section-banner lint — see tests/check_banners.py."""
-
 from __future__ import annotations
 
 from pathlib import Path

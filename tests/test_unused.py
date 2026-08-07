@@ -1,5 +1,3 @@
-"""Unused-code lint — see tests/check_unused.py."""
-
 from __future__ import annotations
 
 from tests.check_unused import findings

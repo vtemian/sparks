@@ -1,13 +1,3 @@
-"""Every panel query names a metric something actually emits.
-
-sparkup's equivalent cannot check this board: it hardcodes one file path,
-asserts the uid matches the Grafana home page, derives its allowlist only from
-node_exporter's collectors, and refuses any expression containing a Grafana
-variable. This is the same rule applied to a pushed dashboard.
-
-    uv run python tests/check_dashboard.py
-"""
-
 import json
 import re
 import sys
@@ -73,8 +63,7 @@ KEYWORDS = {
 }
 
 
-class CheckError(Exception):
-    """A panel query this dashboard should not ship with."""
+class CheckError(Exception): ...
 
 
 def substitute(expr: str) -> str:
@@ -86,12 +75,6 @@ def substitute(expr: str) -> str:
 
 
 def metric_names(expr: str) -> set[str]:
-    """Every identifier left once the non-metric ones are removed.
-
-    Verified against every expression the shipped dashboard contains, including
-    `... group_left(run_name, git_sha) max by (run_id, ...) (training_run_info)`,
-    where the metric sits inside a parenthesised group that a naive scan skips.
-    """
     # `{__name__="foo"}` names a metric from inside the label set, so it has to
     # be read out before the label set is stripped. Otherwise the whole
     # expression reduces to nothing and a panel querying an invented metric
@@ -114,13 +97,6 @@ def allowed(name: str) -> bool:
 
 
 def walk_panels(panels: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
-    """Every panel, including the children of a collapsed row.
-
-    Grafana moves a row's children *inside* that row's own `panels` array when
-    the row is collapsed, so a one-level walk stops seeing them the moment
-    somebody collapses a row in the UI and re-exports. That is a silent loss of
-    coverage rather than a failure, which is the worst kind.
-    """
     for panel in panels:
         yield panel
         yield from walk_panels(panel.get("panels", []))
@@ -150,9 +126,6 @@ def expressions(dashboard: dict[str, Any]) -> list[str]:
 
 
 def dashboards() -> list[Path]:
-    """Every board this repo ships. A hardcoded single path is how a second
-    dashboard ends up shipping unvalidated, which is the gap in sparkup's
-    equivalent."""
     return sorted(DASHBOARDS.glob("*.json"))
 
 

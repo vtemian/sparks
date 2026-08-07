@@ -99,10 +99,12 @@ def resolve(queue_dir: Path, needle: str) -> spool.Entry:
 def disambiguate(matches: list[spool.Entry], needle: str) -> spool.Entry:
     if len(matches) == 1:
         return matches[0]
+
     live = [entry for entry in matches if not entry.is_terminal]
     # One running job among six finished ones is not ambiguous.
     if len(live) == 1:
         return live[0]
+
     ids = "\n".join(f"    {entry.job.job_id}  {entry.state.state}" for entry in matches)
     raise ControlError(f"{needle!r} matches several jobs:\n{ids}")
 
@@ -181,8 +183,11 @@ _DAY = 24 * _HOUR
 def duration(seconds: float) -> str:
     if seconds < _MINUTE:
         return f"{int(seconds)}s"
+
     if seconds < _HOUR:
         return f"{int(seconds // _MINUTE)}m"
+
     if seconds < _DAY:
         return f"{seconds / _HOUR:.1f}h"
+
     return f"{int(seconds // _DAY)}d"

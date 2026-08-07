@@ -64,6 +64,7 @@ def read_settings(args: argparse.Namespace) -> _Settings:
 def require_provisioned(missing: list[str]) -> None:
     if not missing:
         return
+
     flags = " ".join(f"{flag} ..." for flag in missing)
     raise box.NotProvisionedError(
         f"this box is not configured for sparks.\n\n"
@@ -80,6 +81,7 @@ def require_provisioned(missing: list[str]) -> None:
 def require_matching(complaints: list[str]) -> None:
     if not complaints:
         return
+
     problems = "\n".join(f"    {complaint}" for complaint in complaints)
     raise box.NotProvisionedError(
         f"this box's sparks configuration does not match the box.\n\n"

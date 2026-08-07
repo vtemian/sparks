@@ -1,15 +1,3 @@
-"""Lint: no decorative section-banner comments.
-
-Ruff has nothing for this. A line like
-
-    # -- reaching a box you are not sitting at -----------------------------------
-
-is a table of contents pretending to be a comment. Structure is modules and
-functions; comments argue why. Dashed underlines and `# ====` bars fail here.
-
-Run: uv run python tests/check_banners.py
-"""
-
 from __future__ import annotations
 
 import re

@@ -1,11 +1,3 @@
-"""The alert file is inert today, but a typo in it is still a latent bug.
-
-Nothing else validates alerts/*.yml: it is not in any Prometheus config and
-`make deploy` does not ship it, so a rule querying a metric nobody emits, or an
-expression promtool rejects, would sit here undetected until the day someone
-wires it up. This applies the dashboard checker's rule to the rules file.
-"""
-
 import re
 from pathlib import Path
 

@@ -1,6 +1,3 @@
-"""The queue's `.prom` file: what is running, what is waiting, and whether the
-thing that should be picking jobs up is alive."""
-
 from pathlib import Path
 
 from sparks import index, spool
@@ -37,9 +34,6 @@ def test_a_queued_job_shows_up_with_its_identity(tmp_path: Path) -> None:
 
 
 def test_depth_is_published_at_zero_so_the_series_exists(tmp_path: Path) -> None:
-    """A gauge that only appears when non-zero cannot be alerted on without
-    `or vector(0)` in every expression, and the one time it matters is exactly
-    when there is nothing to report."""
     rendered = index.render_queue([], heartbeat=1785849100.0)
     for state in (spool.QUEUED, spool.BUILDING, spool.RUNNING):
         assert f'sparks_queue_depth{{state="{state}"}} 0' in rendered
@@ -57,15 +51,11 @@ def test_depth_counts_what_is_there(tmp_path: Path) -> None:
 
 
 def test_the_heartbeat_is_always_written(tmp_path: Path) -> None:
-    """The one series that must exist on an empty queue. Without it, a runner
-    that died and a box with nothing to do look identical."""
     rendered = index.render_queue([], heartbeat=1785849100.0)
     assert "sparks_queue_runner_heartbeat_timestamp_seconds 1785849100" in rendered
 
 
 def test_timestamps_are_values_not_prometheus_timestamps(tmp_path: Path) -> None:
-    """An explicit timestamp on a sample makes the collector skip the ENTIRE
-    file, so when a job was submitted has to ride as a value."""
     entry = an_entry(tmp_path, "e0", state=spool.RUNNING, started_unix=1785849050.0)
     rendered = index.render_queue([entry], heartbeat=1785849100.0)
     assert "sparks_queue_job_submitted_timestamp_seconds{" in rendered
@@ -75,8 +65,6 @@ def test_timestamps_are_values_not_prometheus_timestamps(tmp_path: Path) -> None
 
 
 def test_a_job_that_never_started_has_no_start_timestamp(tmp_path: Path) -> None:
-    """Rather than a zero, which would put it at the epoch on every panel that
-    plots it."""
     rendered = index.render_queue([an_entry(tmp_path, "e0")], heartbeat=1.0)
     assert "sparks_queue_job_started_timestamp_seconds" not in rendered
 
@@ -84,8 +72,6 @@ def test_a_job_that_never_started_has_no_start_timestamp(tmp_path: Path) -> None
 def test_the_image_label_is_present_but_empty_before_a_build(
     tmp_path: Path,
 ) -> None:
-    """Empty, not absent. Changing the label SET between scrapes creates a
-    second series and breaks any join on the first."""
     queued = index.render_queue([an_entry(tmp_path, "e0")], heartbeat=1.0)
     built = index.render_queue(
         [an_entry(tmp_path, "e1", state=spool.RUNNING, image="sha256:abc")],
@@ -133,8 +119,6 @@ def test_promtool_accepts_a_full_queue(tmp_path: Path) -> None:
 
 
 def test_a_hostile_job_name_cannot_poison_the_file(tmp_path: Path) -> None:
-    """The name reaches this file as a label value, and a job is named by
-    whoever submits it."""
     entry = an_entry(tmp_path, 'evil"} 1\nsparks_queue_depth{state="queued')
     rendered = index.render_queue([entry], heartbeat=1.0)
     promtool.check_metrics(rendered)

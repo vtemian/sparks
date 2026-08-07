@@ -1,15 +1,3 @@
-"""Only one thread may ever be inside send().
-
-Remote-write 1.0 has no partial write: one bad sample rolls back every series in
-the request, measured. So two concurrent requests can destroy each other's
-batches. The failure mode that breaks this is not an unreachable Prometheus, it
-is a *stalled* one, which accepts the connection and never answers - the common
-shared-box case, and exactly when the client's retry policy is active.
-
-The server here is a real HTTP server exhibiting a real failure mode, not a
-stand-in for the code under test.
-"""
-
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer

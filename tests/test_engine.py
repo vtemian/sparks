@@ -1,10 +1,3 @@
-"""What the engine actually asks Docker to do.
-
-The command it builds is a security boundary, not a formality: the flags here
-are the difference between a colleague running a training job and a colleague
-being root on the box. They are asserted individually and on purpose.
-"""
-
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -60,8 +53,6 @@ class TestTheContainerCommand:
     def test_the_job_cannot_choose_its_own_mounts(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
-        """A job that could name a volume could mount / and be root. The only
-        mount paths are the ones the queue picked."""
         entry = an_entry(tmp_path, ["--volume", "/:/host", "sh"])
         argv = docker.container_argv(
             entry, "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
@@ -83,8 +74,6 @@ class TestTheContainerCommand:
     def test_the_command_is_passed_after_the_image_so_flags_are_inert(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
-        """Everything a job supplies lands after the image name, where contain
-        treats it as the container's argv rather than as its own options."""
         entry = an_entry(tmp_path, ["--privileged", "sh"])
         argv = docker.container_argv(
             entry, "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
@@ -122,8 +111,6 @@ class TestTheContainerCommand:
     def test_host_gateway_is_configured_inside_contain_not_in_argv(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
-        """host.docker.internal is set in contain's HostConfig, not as a CLI
-        flag the job could influence."""
         argv = docker.container_argv(
             an_entry(tmp_path), "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
         )
@@ -132,7 +119,6 @@ class TestTheContainerCommand:
     def test_flag_like_image_cannot_override_contain_options(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
-        """`--` before the image keeps argparse from treating it as a flag."""
         entry = an_entry(tmp_path, ["/", "real/img", "sh"])
         argv = docker.container_argv(
             entry, "--shared-dir", tmp_path / "cid", uid=1001, gid=1002
@@ -149,7 +135,6 @@ class TestTheWholeCommand:
     def test_job_is_supervised_via_python_minus_m_fire_supervise(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
-        """The nesting that keeps sparks out of everybody's Dockerfile."""
         argv = docker.argv(
             an_entry(tmp_path),
             "sha256:abc",
@@ -165,8 +150,6 @@ class TestTheWholeCommand:
         assert after[:3] == [sys.executable, "-m", "sparks.fire.contain"]
 
     def test_url_comes_before_name(self, tmp_path: Path, docker: engine.Docker) -> None:
-        """supervise has no subcommand; --url still precedes the rest so a
-        stale compose or hand-built argv that put it after --name is caught."""
         argv = docker.argv(
             an_entry(tmp_path),
             "sha256:abc",
@@ -190,9 +173,6 @@ class TestTheWholeCommand:
     def test_the_projects_commit_is_recorded_not_the_frameworks(
         self, tmp_path: Path, docker: engine.Docker
     ) -> None:
-        """The runner runs from sparks' own directory, so the default would
-        record sparks' commit as though it were the training code's - a wrong
-        answer that looks exactly like a right one."""
         entry = spool.submit(
             tmp_path / "queue",
             name="e0",
@@ -224,8 +204,6 @@ class TestPull:
     def test_api_error_is_a_pull_failure(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A pull failure fails one job. An exception out of here would be
-        caught by the runner's blanket handler and fail it far less legibly."""
         log = tmp_path / "pull.log"
         fake = MagicMock()
         fake.api.pull.side_effect = dock.APIError("boom")
@@ -241,8 +219,6 @@ class TestDroppingPrivilege:
     def test_only_root_can_become_somebody_else(
         self, docker: engine.Docker, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Asking for it as a normal user is EPERM, which crashed the runner
-        before this was a check rather than an attempt."""
         monkeypatch.setattr("sparks.fire.engine.os.geteuid", lambda: 501)
         assert docker.credentials(uid=501, gid=20) == engine.Credentials()
 
@@ -259,10 +235,6 @@ class TestDroppingPrivilege:
     def test_the_shared_group_comes_along(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """setuid hands over the primary group and drops every supplementary
-        one, so without this a job cannot write its own run directory. The box
-        found this; no test before it could, because they all ran as a user who
-        already owned the tree."""
         monkeypatch.setattr("sparks.fire.engine.os.geteuid", lambda: 0)
         docker = engine.Docker(shared_dir=tmp_path, url="", extra_groups=[999])
         groups = docker.credentials(uid=1001, gid=1002).extra_groups or []
@@ -280,7 +252,6 @@ class TestDroppingPrivilege:
     def test_an_unreadable_shared_tree_is_not_fatal(
         self, docker: engine.Docker, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """docker.shared_dir is /srv/spark, which does not exist here."""
         monkeypatch.setattr("sparks.fire.engine.os.geteuid", lambda: 0)
         assert docker.credentials(uid=1, gid=1).user == 1
 
@@ -290,8 +261,6 @@ class TestDroppingPrivilege:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Silently recording somebody else's run under your own name is how a
-        colleague ends up unable to read their own output."""
         monkeypatch.setattr("sparks.fire.engine.os.geteuid", lambda: 501)
         docker.credentials(uid=1001, gid=1002)
         assert "wrong account" in caplog.text
@@ -309,8 +278,6 @@ class TestReadingBackWhatTheChildWrote:
         assert engine.first_line(target) == "run-20260806-1200-vlad-e0"
 
     def test_an_empty_file_is_not_an_empty_run_id(self, tmp_path: Path) -> None:
-        """It is written atomically, so this should not happen - but an empty
-        string as a run id would join to nothing and look like a real answer."""
         target = tmp_path / "run_id"
         target.write_text("")
         assert engine.first_line(target) is None
