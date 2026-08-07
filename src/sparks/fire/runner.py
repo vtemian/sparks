@@ -1,19 +1,6 @@
-"""The single process that turns queued jobs into runs.
-
-One runner, so exclusivity of the GPU is structural rather than something a lock
-has to be trusted to enforce, and FIFO ordering needs nothing but submission
-time. It is the only writer of every `state.json` and of the queue's `.prom`
-file, which is what lets both be written without locking.
-
-It never trusts a job file for anything that decides privilege. The uid a
-container runs as comes from `stat()` on the manifest, and the uid allowed to
-cancel or abort comes from `stat()` on the request. Both are facts the kernel
-maintains; the fields inside those files are labels for humans.
-
-Docker lives behind `Engine` so that everything here - ordering, state
-transitions, who may abort what, what a pull failure does to the job behind it
-- is testable without a daemon. The real one is in `sparks.fire.engine`.
-"""
+"""The single process that turns queued jobs into runs: the only writer of every
+`state.json` and of the queue's `.prom`, which is what lets both go unlocked, and
+it takes every uid that decides privilege from `stat()`, never from a job field."""
 
 import contextlib
 import logging
@@ -28,30 +15,24 @@ from sparks import index, spool
 LOG = logging.getLogger("sparks")
 
 POLL_SECONDS = 2.0
-"""How often the queue is re-read and the metrics republished.
-
-Also the worst-case delay between asking for an abort and the signal arriving,
-which is why it is seconds rather than the minute a pure scheduler would want.
-"""
+"""Also the worst-case delay between asking for an abort and the signal
+arriving, which is why it is seconds rather than a scheduler's minute."""
 
 
 class Handle(Protocol):
     """A running job, from the runner's side of the fence."""
 
-    def poll(self) -> int | None:
-        """Exit code, or None while it is still going."""
+    def poll(self) -> int | None: ...
 
     def terminate(self) -> None:
-        """Ask it to stop. The supervisor underneath escalates to SIGKILL on its
-        own schedule, so nothing here needs a second timer."""
+        """The supervisor underneath escalates to SIGKILL on its own schedule,
+        so nothing here needs a second timer."""
 
-    def run_id(self) -> str | None:
-        """The run the supervisor created, once it has said so."""
+    def run_id(self) -> str | None: ...
 
     def container_id(self) -> str | None: ...
 
-    def finish(self) -> None:
-        """Release whatever the job left behind, once it has ended."""
+    def finish(self) -> None: ...
 
 
 class Engine(Protocol):
@@ -77,18 +58,13 @@ class Runner:
     engine: Engine
     textfile_dir: Path
     poll_seconds: float = POLL_SECONDS
-    # Injected so a test does not spend real seconds waiting, and so the clock
-    # a job is stamped with can be made deterministic.
+    # Injected so a test spends no real seconds and can pin the stamped clock.
     sleep: Callable[[float], None] = field(default=time.sleep)
     now: Callable[[], float] = field(default=time.time)
 
     def serve(self, ticks: int | None = None) -> None:
-        """Run until stopped, or for a bounded number of passes in a test.
-
-        A pass publishes, applies whatever has been asked of the queue, and then
-        starts the next job if there is one - which blocks for as long as that
-        job takes, republishing as it goes.
-        """
+        """Run until stopped, or for a bounded number of passes in a test. A pass
+        that starts a job blocks for as long as that job takes."""
         self.reconcile()
         pass_count = 0
         while ticks is None or pass_count < ticks:
@@ -102,19 +78,9 @@ class Runner:
                 self.sleep(self.poll_seconds)
 
     def reconcile(self) -> None:
-        """Deal with whatever the last runner left mid-flight.
-
-        There is exactly one runner, and it is this one, starting. So a job
-        recorded as building or running is not: its supervisor died with the
-        box, or with the container this process is replacing. Left alone it sits
-        on the dashboard as a run that never ends, and `next_queued` skips it
-        forever, which is a queue that quietly stops after one crash.
-
-        Marked failed rather than requeued. Requeueing would re-run work that
-        may have half-completed - checkpoints written, a dataset consumed - and
-        that is a decision for the person who submitted it. `sparks retry` is
-        one command and it keeps the first attempt's record intact.
-        """
+        """A job recorded as building or running is not, since this runner is the
+        only one and it is starting. Failed rather than requeued: redoing
+        half-completed work is the submitter's call, via `sparks retry`."""
         for entry in spool.entries(self.queue_dir):
             if entry.state.state not in (spool.BUILDING, spool.RUNNING):
                 continue
@@ -124,8 +90,8 @@ class Runner:
                 entry.state.state,
             )
             if entry.state.container_id:
-                # It may genuinely still be running and holding the GPU: the
-                # container outlives the client that started it.
+                # A container outlives the client that started it, so it may
+                # genuinely still be running and holding the GPU.
                 with contextlib.suppress(Exception):
                     self.engine.release(entry.state.container_id)
             spool.advance(
@@ -141,7 +107,6 @@ class Runner:
         self.publish()
 
     def tick(self) -> bool:
-        """One pass. Returns whether a job was run."""
         self.pump()
         entry = spool.next_queued(self.queue_dir)
         if entry is None:
@@ -151,15 +116,13 @@ class Runner:
         return True
 
     def pump(self) -> None:
-        """Republish the queue and act on anything asked of a job that is not
-        the one currently running."""
+        """Republish, and act on requests against jobs other than the running one."""
         entries = spool.entries(self.queue_dir)
         for entry in entries:
             if entry.state.state == spool.QUEUED:
                 self._apply_queued_requests(entry)
             elif entry.is_terminal:
-                # Nothing to do to a job that has stopped, but a request left
-                # sitting there would be replayed forever.
+                # A request left on a stopped job would be replayed forever.
                 spool.clear_requests(entry.path)
         self.publish()
 
@@ -171,12 +134,10 @@ class Runner:
                 heartbeat=self.now(),
             )
         except OSError as exc:
-            # Losing the metrics file must not stop the queue: the jobs are the
-            # point and the file is the view of them.
+            # Losing the view of the queue must not stop the queue.
             LOG.warning("sparks: could not publish the queue: %s", exc)
 
     def process(self, entry: spool.Entry) -> None:
-        """Pull and run one job, from queued to terminal."""
         if not entry.job.image:
             self._fail(
                 entry,
@@ -216,9 +177,7 @@ class Runner:
             code = handle.poll()
         finally:
             # Before the state is written, so a container that outlived its
-            # supervisor is gone by the time the job reads as terminal. A job
-            # shown as finished while its container still holds the GPU is the
-            # worst of both.
+            # supervisor is gone by the time the job reads as terminal.
             handle.finish()
         spool.advance(
             entry.path,
@@ -233,12 +192,9 @@ class Runner:
         self.publish()
 
     def _wait(self, entry: spool.Entry, handle: Handle) -> int | None:
-        """Block until the job ends, aborting it if somebody entitled asks.
-
-        Returns the uid that aborted it, or None. Keeps publishing throughout,
-        because a job that runs for six hours must not look like a dead runner
-        for five of them.
-        """
+        """Block until the job ends, aborting it if somebody entitled asks, and
+        publishing throughout so a six-hour job does not read as a dead runner.
+        Returns the uid that aborted it, or None."""
         aborted_by = None
         while handle.poll() is None:
             if aborted_by is None:
@@ -246,8 +202,8 @@ class Runner:
                 if aborted_by is not None:
                     LOG.info("sparks: uid %d aborted %s", aborted_by, entry.job.job_id)
                     handle.terminate()
-            # Re-read so the run id and container id appear as soon as they are
-            # known, rather than only in the terminal write.
+            # So the run id and container id appear as soon as they are known,
+            # rather than only in the terminal write.
             spool.advance(
                 entry.path,
                 run_id=handle.run_id(),
@@ -267,9 +223,8 @@ class Runner:
         return None
 
     def _apply_queued_requests(self, entry: spool.Entry) -> None:
-        """A job that has not started yet can be cancelled outright, and an
-        abort of one is treated as a cancel: somebody wanting it stopped does
-        not care which verb applies to the state it happens to be in."""
+        """An abort of a job that has not started is treated as a cancel: nobody
+        wanting it stopped cares which verb fits the state it is in."""
         for pending in spool.requests(entry.path):
             if not entry.may_be_controlled_by(pending.uid):
                 self._refuse(entry, pending)
@@ -284,11 +239,8 @@ class Runner:
             return
 
     def _refuse(self, entry: spool.Entry, pending: spool.Request) -> None:
-        """Someone else's job. Logged and dropped rather than obeyed.
-
-        The request file is removed so it is refused once rather than on every
-        pass forever.
-        """
+        """Someone else's job. The request file is removed so it is refused once
+        rather than on every pass forever."""
         LOG.warning(
             "sparks: uid %d may not %s %s, which belongs to uid %d",
             pending.uid,
