@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import signal
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -229,11 +230,14 @@ class TestMain:
 
         fake_client = MagicMock()
 
-        def run_then_mark_abort(*_a: object, **_k: object) -> MagicMock:
-            contain._request_abort(signal.SIGTERM)
+        def run_then_signal(*_a: object, **_k: object) -> MagicMock:
+            """A real SIGTERM, delivered while main() has no handle yet. The
+            handler runs on this thread before the next statement, so by the
+            time run() returns the flag is set and nothing was stopped."""
+            os.kill(os.getpid(), signal.SIGTERM)
             return fake_container
 
-        fake_client.containers.run.side_effect = run_then_mark_abort
+        fake_client.containers.run.side_effect = run_then_signal
         monkeypatch.setattr("sparks.fire.contain.dock.client", lambda: fake_client)
 
         code = contain.main(
@@ -285,11 +289,13 @@ class TestMain:
         fake_container = MagicMock()
         fake_container.id = "abc123deadbeef"
 
-        def logs_then_abort(*_args: object, **_kwargs: object) -> list[bytes]:
-            contain._request_abort(signal.SIGTERM)
+        def logs_then_signal(*_args: object, **_kwargs: object) -> list[bytes]:
+            """A real SIGTERM, delivered once main() holds the handle, so the
+            handler is the thing that stops the container."""
+            os.kill(os.getpid(), signal.SIGTERM)
             return [b"partial\n"]
 
-        fake_container.logs.side_effect = logs_then_abort
+        fake_container.logs.side_effect = logs_then_signal
         fake_container.wait.return_value = {"StatusCode": 137}
 
         fake_client = MagicMock()
@@ -351,6 +357,41 @@ class TestMain:
             )
 
         fake_container.remove.assert_called_once_with(force=True, v=True)
+
+    def test_signal_handlers_are_restored_even_when_the_run_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """contain runs as a child of supervise, so the handlers it borrows for
+        the length of one container belong to whoever installed them first. A
+        run that dies holding them would silently disarm the process."""
+        fake_client = MagicMock()
+        fake_client.containers.run.side_effect = RuntimeError("boom")
+        monkeypatch.setattr("sparks.fire.contain.dock.client", lambda: fake_client)
+        before = {num: signal.getsignal(num) for num in (signal.SIGTERM, signal.SIGINT)}
+
+        with pytest.raises(RuntimeError, match="boom"):
+            contain.main(
+                [
+                    "--name",
+                    "n",
+                    "--cidfile",
+                    str(tmp_path / "cid"),
+                    "--user",
+                    "1:1",
+                    "--shared-dir",
+                    "/shared",
+                    "--data-dir",
+                    str(tmp_path / "data"),
+                    "--workdir",
+                    "/shared",
+                    "img:t",
+                    "true",
+                ]
+            )
+
+        assert {
+            num: signal.getsignal(num) for num in (signal.SIGTERM, signal.SIGINT)
+        } == before
 
 
 class TestParseArgs:
