@@ -93,9 +93,6 @@ def is_stopped(pid: int) -> bool:
     return out.stdout.strip().startswith("T")
 
 
-# -- the matrix ---------------------------------------------------------------
-
-
 def test_a_clean_exit_is_finished(tmp_path: Path) -> None:
     done = run(tmp_path, "clean", "print('training')")
     assert done.outcome.status == "finished"
@@ -279,9 +276,6 @@ def test_a_stopped_child_is_revived_by_sigcont_and_shuts_down_cleanly(
     assert not done.outcome.escalated_to_sigkill
 
 
-# -- what the child leaves behind ---------------------------------------------
-
-
 def launcher(tmp_path: Path) -> list[str]:
     """Three workers that ignore SIGTERM, and a launcher that exits as soon as
     they do.
@@ -400,9 +394,6 @@ def test_a_stray_the_sweep_cannot_reach_never_holds_the_wrapper_open(
             os.kill(int(pidfile.read_text()), signal.SIGKILL)
 
 
-# -- output -------------------------------------------------------------------
-
-
 def test_large_output_survives_a_sigkill(tmp_path: Path) -> None:
     done = run(
         tmp_path,
@@ -459,9 +450,6 @@ def test_output_reaches_the_log_while_the_child_is_still_running(
     assert seen_at[0] < 1.0, f"first line only appeared at {seen_at[0]:.2f}s"
 
 
-# -- exit codes ---------------------------------------------------------------
-
-
 def test_a_synthesised_exit_code_is_clamped_to_eight_bits(tmp_path: Path) -> None:
     """`sys.exit(256)` is reported by the kernel as returncode 0: a failing
     child observed as a success. That mask is already applied by the time the
@@ -482,9 +470,6 @@ def test_classification_is_decided_by_the_wrapper_not_by_the_child() -> None:
     assert classify(-signal.SIGKILL, None).status == "killed"
     assert classify(-signal.SIGKILL, signal.SIGINT).status == "cancelled"
     assert classify(-signal.SIGSEGV, None).status == "crashed"
-
-
-# -- OOM ----------------------------------------------------------------------
 
 
 def test_a_kill_with_cgroup_proof_is_oom(tmp_path: Path) -> None:

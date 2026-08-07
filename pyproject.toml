@@ -84,6 +84,7 @@ max-statements = 15
 # Makefile-invoked CLI scripts that live in tests/, not test modules.
 "tests/check_dashboard.py" = ["C901", "PLR0912", "T201"]
 "tests/check_names.py" = ["T201"]
+"tests/check_banners.py" = ["T201"]
 "tests/on_box.py" = ["BLE001", "C901", "PLR0912", "T201"]
 # The CLI surface prints; that is its output contract.
 "src/sparks/client/cli.py" = ["T201"]

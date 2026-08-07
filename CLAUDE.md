@@ -44,7 +44,9 @@ names the four sites that correctly carry none.
 ### Comments say why, never what
 The house style is prose that argues: the measured number, the rejected
 alternative, the incident that produced the rule. If a comment restates the
-code, delete it. Module constants carry their own docstrings.
+code, delete it. Module constants carry their own docstrings. No section
+banners (`# -- title ---`, `# ====`); structure is modules and functions.
+`tests/check_banners.py` enforces that (`make lint`).
 
 ### Classes only where state is the point
 Dataclasses for structured data, exceptions, protocols, and stateful

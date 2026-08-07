@@ -322,9 +322,6 @@ def provenance(context: Path) -> tuple[str, bool]:
     return sha, bool(done.stdout.strip())
 
 
-# -- reaching a box you are not sitting at -----------------------------------
-
-
 def host_from(explicit: str | None) -> str | None:
     return explicit or os.environ.get(HOST_ENV) or None
 

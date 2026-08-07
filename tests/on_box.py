@@ -139,9 +139,7 @@ def umask(value: int) -> Iterator[None]:
         os.umask(previous)
 
 
-# --------------------------------------------------------------------------
 # contract
-# --------------------------------------------------------------------------
 
 
 def check_contract(report: Report, shared_dir: Path) -> None:
@@ -191,9 +189,7 @@ def check_contract(report: Report, shared_dir: Path) -> None:
     )
 
 
-# --------------------------------------------------------------------------
 # permissions
-# --------------------------------------------------------------------------
 
 
 def check_permissions(report: Report, shared_dir: Path, fix: bool) -> None:
@@ -259,9 +255,7 @@ def _repair(dirs: list[Path], files: list[Path]) -> list[Path]:
     return refused
 
 
-# --------------------------------------------------------------------------
 # acceptance: the plan's definition of done for tier 1
-# --------------------------------------------------------------------------
 
 
 def check_acceptance(
@@ -505,9 +499,7 @@ def _second_account(report: Report, shared_dir: Path, other_user: str | None) ->
     )
 
 
-# --------------------------------------------------------------------------
 # calibration
-# --------------------------------------------------------------------------
 
 
 def check_calibration(report: Report, window: float) -> None:
@@ -616,9 +608,6 @@ def _source_ratio(report: Report, sampler: Sampler, window: float) -> None:
         f"tolerance {RATIO_TOLERANCE:.0%}. Measure under load; if this box sits "
         "at a different ratio, SOURCE_RATIO is what to change.",
     )
-
-
-# --------------------------------------------------------------------------
 
 
 def main(argv: list[str] | None = None) -> int:

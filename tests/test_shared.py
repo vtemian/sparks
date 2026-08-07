@@ -12,9 +12,6 @@ def mode_of(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
-# -- clean -------------------------------------------------------------------
-
-
 def test_clean_turns_a_lone_surrogate_into_the_replacement_char() -> None:
     # argv arrives surrogate-escaped: --name $'bad\xffname' is a lone surrogate
     # that json.dumps escapes silently and every later f.write raises on.
@@ -39,9 +36,6 @@ def test_clean_falls_back_when_empty() -> None:
     assert shared.clean("", "") == ""
 
 
-# -- make_dir ----------------------------------------------------------------
-
-
 def test_make_dir_creates_nested_dirs_at_2775(tmp_path: Path) -> None:
     target = tmp_path / "runs" / "run-1"
     shared.make_dir(target)
@@ -57,9 +51,6 @@ def test_make_dir_heals_a_tree_left_group_unreadable(tmp_path: Path) -> None:
     d.mkdir(mode=0o700)
     shared.make_dir(d)
     assert mode_of(d) == shared.DIR_MODE
-
-
-# -- reserve_dir -----------------------------------------------------------
 
 
 def test_reserve_dir_creates_a_2775_directory(tmp_path: Path) -> None:
@@ -81,9 +72,6 @@ def test_reserve_dir_disambiguates_a_same_second_collision(
     assert first_id != second_id
     assert first_dir.is_dir() and second_dir.is_dir()
     assert second_id.endswith("-2")
-
-
-# -- exclusive ---------------------------------------------------------------
 
 
 def test_exclusive_releases_on_exit_so_the_next_holder_gets_it(
