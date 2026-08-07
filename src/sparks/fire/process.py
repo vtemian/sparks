@@ -129,18 +129,24 @@ def classify(returncode: int, interrupted_by: int | None) -> Outcome:
         )
 
     signum = -returncode
-    if interrupted_by is not None:
-        status = "cancelled"
-    elif signum == signal.SIGKILL:
-        status = "killed"  # may be OOM; only the cgroup counter decides
-    else:
-        status = "crashed"
     return Outcome(
-        status,
+        _status_for_signal(signum, interrupted_by),
         exit_code=None,
         signal_name=signal.Signals(signum).name,
         wrapper_exit=clamp_exit(128 + signum),
     )
+
+
+def _status_for_signal(signum: int, interrupted_by: int | None) -> str:
+    """The status when the child died to a signal. Being told to stop outranks
+    whichever signal actually killed the child: an operator's Ctrl-C often
+    lands as the child's SIGKILL after escalation, and that run was cancelled,
+    not killed."""
+    if interrupted_by is not None:
+        return "cancelled"
+    if signum == signal.SIGKILL:
+        return "killed"  # may be OOM; only the cgroup counter decides
+    return "crashed"
 
 
 def oom_kills(cgroup: Path | None) -> int:
