@@ -43,8 +43,6 @@ PULL_TIMEOUT_SECONDS = 3600.0
 """A pull that has taken an hour is not going to finish. Bounded because the
 runner is single-threaded: a hung pull is the whole queue stopped."""
 
-CLEANUP_TIMEOUT_SECONDS = 60.0
-
 CONTAINER_PREFIX = "sparks"
 """Job ids already begin with `job-`, so this is not `sparks-job`: that produced
 containers called `sparks-job-job-...`."""
@@ -113,7 +111,7 @@ class Process:
         container = self.container_id()
         if not container:
             return
-        dock.remove_quietly(dock.client(), container, timeout=CLEANUP_TIMEOUT_SECONDS)
+        dock.remove_quietly(dock.client(), container)
 
 
 @dataclass
@@ -309,9 +307,7 @@ class Docker:
         this a restart of the queue leaves the GPU held by a run whose record
         already says it ended.
         """
-        dock.remove_quietly(
-            dock.client(), container_id, timeout=CLEANUP_TIMEOUT_SECONDS
-        )
+        dock.remove_quietly(dock.client(), container_id)
 
 
 def shared_group(shared_dir: Path) -> int | None:

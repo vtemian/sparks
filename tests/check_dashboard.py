@@ -73,7 +73,7 @@ KEYWORDS = {
 }
 
 
-class CheckFailed(Exception):
+class CheckError(Exception):
     """A panel query this dashboard should not ship with."""
 
 
@@ -81,7 +81,7 @@ def substitute(expr: str) -> str:
     for name, value in VARIABLES.items():
         expr = expr.replace(name, value)
     if "$" in expr:
-        raise CheckFailed(f"unknown Grafana variable in {expr!r}")
+        raise CheckError(f"unknown Grafana variable in {expr!r}")
     return expr
 
 
@@ -129,9 +129,8 @@ def walk_panels(panels: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
 def expressions(dashboard: dict[str, Any]) -> list[str]:
     out: list[str] = []
     for panel in walk_panels(dashboard["panels"]):
-        for target in panel.get("targets", []):
-            if "expr" in target:
-                out.append(target["expr"])
+        targets = panel.get("targets", [])
+        out.extend(target["expr"] for target in targets if "expr" in target)
     # An annotation naming a metric nobody emits draws no region and fails
     # nothing else. Grafana's own built-in annotations are not PromQL, so they
     # are skipped by looking at the datasource rather than the shape.
@@ -160,17 +159,17 @@ def dashboards() -> list[Path]:
 def check(extra_exprs: list[str] | None = None) -> None:
     boards = dashboards()
     if not boards:
-        raise CheckFailed("no dashboards found to check")
+        raise CheckError("no dashboards found to check")
     exprs = list(extra_exprs or [])
     for path in boards:
         found = expressions(json.loads(path.read_text()))
         if not found:
-            raise CheckFailed(f"{path.name} has no queries at all")
+            raise CheckError(f"{path.name} has no queries at all")
         exprs += found
     for expr in exprs:
         for name in metric_names(substitute(expr)):
             if not allowed(name):
-                raise CheckFailed(
+                raise CheckError(
                     f"{name!r} is neither declared in sparks.metrics.METRICS "
                     f"nor scraped by sparkup: {expr!r}"
                 )
@@ -179,7 +178,7 @@ def check(extra_exprs: list[str] | None = None) -> None:
 def main() -> int:
     try:
         check()
-    except CheckFailed as e:
+    except CheckError as e:
         print(f"FAIL: {e}", file=sys.stderr)
         return 1
     print("ok: " + ", ".join(p.name for p in dashboards()))

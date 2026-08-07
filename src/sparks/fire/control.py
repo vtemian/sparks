@@ -175,14 +175,17 @@ def _age(entry: spool.Entry, now: float) -> str:
     return _duration(max(0.0, now - since))
 
 
+_MINUTE, _HOUR, _DAY = 60, 3600, 86400
+
+
 def _duration(seconds: float) -> str:
-    if seconds < 60:
+    if seconds < _MINUTE:
         return f"{int(seconds)}s"
-    if seconds < 3600:
-        return f"{int(seconds // 60)}m"
-    if seconds < 86400:
-        return f"{seconds / 3600:.1f}h"
-    return f"{int(seconds // 86400)}d"
+    if seconds < _HOUR:
+        return f"{int(seconds // _MINUTE)}m"
+    if seconds < _DAY:
+        return f"{seconds / _HOUR:.1f}h"
+    return f"{int(seconds // _DAY)}d"
 
 
 def _clone(source: Path, destination: Path) -> None:

@@ -151,7 +151,7 @@ def launch(
         # training_run_info already pushed that is LIFECYCLE-exempt and so
         # never staled: a permanent phantom run on the dashboard that never
         # ends and never gets a status.
-        LOG.error("sparks: could not run %s: %s", command, e)
+        LOG.exception("sparks: could not run %s", command)
         _record_failed_launch(run_dir, run_id, name, user, command_record, str(e), sha)
         if metrics is not None:
             metrics.end("crashed")
@@ -229,10 +229,10 @@ def launch(
                 reading.gpu_nvml_joules,
                 reading.gpu_firmware_joules,
             )
-    except Exception as e:
+    except Exception:
         # The child completed and its exit code is faithful; losing the record
         # must neither strand a phantom on the dashboard nor lie about $?.
-        LOG.error("sparks: could not record %s: %s", run_id, e)
+        LOG.exception("sparks: could not record %s", run_id)
     finally:
         if metrics is not None:
             metrics.end(status)

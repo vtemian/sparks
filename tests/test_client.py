@@ -357,7 +357,7 @@ class TestReachingTheBox:
         argv = client.ssh_argv("box", ["queue", "--all"])
         assert argv[2] == "fire-ctl queue --all"
 
-    def test_ssh_argv_honours_SPARKS_REMOTE(
+    def test_ssh_argv_honours_sparks_remote_bin_env(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("SPARKS_REMOTE", "fire")

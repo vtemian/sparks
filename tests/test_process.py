@@ -85,7 +85,10 @@ def group_empty(pgid: int, timeout: float = 5.0) -> bool:
 def is_stopped(pid: int) -> bool:
     """`T` in ps state, on both macOS and Linux."""
     out = subprocess.run(
-        ["ps", "-o", "state=", "-p", str(pid)], capture_output=True, text=True
+        ["ps", "-o", "state=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,  # ps exits non-zero once the pid is gone, and gone is False
     )
     return out.stdout.strip().startswith("T")
 

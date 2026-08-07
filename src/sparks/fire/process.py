@@ -247,7 +247,7 @@ class Supervisor:
             # syscall per byte. Buffering here adds no latency -- readline
             # returns as soon as a newline is in the buffer -- and keeps 100k
             # lines of training output from becoming millions of syscalls.
-            reader = io.BufferedReader(cast(io.RawIOBase, stdout))
+            reader = io.BufferedReader(cast("io.RawIOBase", stdout))
             tee = threading.Thread(
                 target=self._tee, args=(reader, log), name="sparks-tee", daemon=True
             )

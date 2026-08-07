@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from docker.errors import APIError, NotFound
 
-import sparks.dock as dock
+from sparks import dock
 
 
 def test_client_uses_from_env() -> None:

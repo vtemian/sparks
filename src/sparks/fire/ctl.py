@@ -138,7 +138,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
     try:
-        func = cast(Callable[[argparse.Namespace], int], args.func)
+        func = cast("Callable[[argparse.Namespace], int]", args.func)
         return func(args)
     except control.ControlError as e:
         print(f"fire: {e}", file=sys.stderr)

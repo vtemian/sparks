@@ -2,7 +2,7 @@ import pytest
 
 from tests.check_dashboard import (
     ROOT,
-    CheckFailed,
+    CheckError,
     check,
     dashboards,
     expressions,
@@ -20,7 +20,7 @@ def test_rate_interval_is_substituted() -> None:
 
 
 def test_an_unknown_variable_is_an_error() -> None:
-    with pytest.raises(CheckFailed):
+    with pytest.raises(CheckError):
         substitute('training_loss{x=~"$nope"}')
 
 
@@ -46,7 +46,7 @@ def test_the_shipped_dashboard_passes() -> None:
 
 
 def test_a_panel_querying_an_undeclared_metric_fails() -> None:
-    with pytest.raises(CheckFailed):
+    with pytest.raises(CheckError):
         check(extra_exprs=["training_invented_metric"])
 
 

@@ -11,16 +11,19 @@ import contextlib
 import os
 import signal
 import sys
-from collections.abc import Callable, Sequence
 from pathlib import Path
-from types import FrameType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import docker.types
-from docker.models.containers import Container
 
-import sparks.dock as dock
+from sparks import dock
 from sparks.fire import process
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+    from types import FrameType
+
+    from docker.models.containers import Container
 
 _abort_requested = False
 
@@ -107,7 +110,7 @@ _signal_handlers: dict[int, Callable[[int, FrameType | None], None]] = {}
 
 
 def _install_signal_handlers(container_holder: list[Container | None]) -> None:
-    def handler(signum: int, _frame: FrameType | None) -> None:
+    def handler(_signum: int, _frame: FrameType | None) -> None:
         global _abort_requested
         _abort_requested = True
         container = container_holder[0]
@@ -118,7 +121,7 @@ def _install_signal_handlers(container_holder: list[Container | None]) -> None:
     for signum in (signal.SIGTERM, signal.SIGINT):
         _signal_handlers[signum] = handler
         _previous_signal_handlers[signum] = cast(
-            signal.Handlers, signal.signal(signum, handler)
+            "signal.Handlers", signal.signal(signum, handler)
         )
 
 

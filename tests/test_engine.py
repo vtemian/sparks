@@ -11,8 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-import sparks.dock as dock
-from sparks import spool
+from sparks import dock, spool
 from sparks.fire import contain, engine
 from sparks.fire.runner import PullFailedError
 

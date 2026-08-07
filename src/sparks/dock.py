@@ -16,12 +16,7 @@ def client() -> docker.DockerClient:
     return docker.from_env()
 
 
-def remove_quietly(
-    docker_client: docker.DockerClient,
-    container_id: str,
-    *,
-    timeout: float = 60.0,
-) -> None:
+def remove_quietly(docker_client: docker.DockerClient, container_id: str) -> None:
     """Best-effort force-remove; never raises to the runner."""
     try:
         container = docker_client.containers.get(container_id)
