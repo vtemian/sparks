@@ -1,5 +1,3 @@
-"""fire: drain the queue and supervise each job."""
-
 import argparse
 import logging
 import os
@@ -61,7 +59,9 @@ def runner_url(contract: box.Box | None) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="fire", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="fire", description="fire: drain the queue and supervise each job."
+    )
 
     parser.add_argument(
         "--url",

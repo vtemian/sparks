@@ -1,5 +1,3 @@
-"""fire control verbs, over SSH from a laptop."""
-
 from __future__ import annotations
 
 import argparse
@@ -96,7 +94,9 @@ type Subparsers = argparse._SubParsersAction[argparse.ArgumentParser]
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="fire", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="fire", description="fire control verbs, over SSH from a laptop."
+    )
     shared = argparse.ArgumentParser(add_help=False)
     shared.add_argument("--shared-dir", type=Path, default=None)
     subparsers = parser.add_subparsers(dest="verb", required=True)

@@ -73,11 +73,12 @@ in `runner.py`, the record-failed handler in `launch.py`, the pump guard in
 
 ### Write almost none
 **There are no docstrings anywhere.** Not in `src`, not in `tests`, not on
-modules, classes or functions. The only exceptions are the five modules whose
-`__doc__` argparse prints as `--help` text, and those are one line.
-`tests/check_no_docstrings.py` enforces it from `make lint`, so adding one
-fails the build. The name and the signature are the documentation; if they are
-not enough, fix them rather than writing prose about them.
+modules, classes or functions, with no exceptions: every file starts with its
+imports. `--help` text is passed to `ArgumentParser(description=...)` as a
+string, never taken from `__doc__`. `tests/check_no_docstrings.py` enforces
+this from `make lint`, so adding one fails the build. The name and the
+signature are the documentation; if they are not enough, fix them rather than
+writing prose about them.
 
 `src` runs at 3.4% prose, all of it comments. That is the ceiling, not a floor
 to grow toward. What earns a comment is one short line, on the statement it

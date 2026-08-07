@@ -7,18 +7,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCAN = (ROOT / "src" / "sparks", ROOT / "tests")
 
-# The only docstrings that survive: argparse prints these as --help text, so
-# deleting them empties the help output. One line each, and nothing else.
-ARGPARSE_HELP = frozenset(
-    {
-        "src/sparks/client/cli.py",
-        "src/sparks/fire/cli.py",
-        "src/sparks/fire/ctl.py",
-        "src/sparks/fire/contain.py",
-        "src/sparks/fire/supervise.py",
-    }
-)
-
 
 def docstring_of(node: ast.AST) -> ast.Constant | None:
     body = getattr(node, "body", None)
@@ -42,14 +30,8 @@ def violations_in(path: Path) -> list[str]:
     hits: list[str] = []
 
     module_doc = docstring_of(tree)
-    if module_doc is not None and relative not in ARGPARSE_HELP:
+    if module_doc is not None:
         hits.append(f"{relative}:{module_doc.lineno}: module docstring — delete it")
-    if module_doc is not None and relative in ARGPARSE_HELP:
-        text = module_doc.value
-        if isinstance(text, str) and len(text.strip().splitlines()) > 1:
-            hits.append(
-                f"{relative}:{module_doc.lineno}: --help text is one line, not many"
-            )
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):

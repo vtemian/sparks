@@ -1,5 +1,3 @@
-"""Create and wait on one training container."""
-
 from __future__ import annotations
 
 import argparse
@@ -73,7 +71,10 @@ def run_kwargs(
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="sparks.fire.contain", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="sparks.fire.contain",
+        description="Create and wait on one training container.",
+    )
     parser.add_argument("--name", required=True)
     parser.add_argument("--cidfile", type=Path, required=True)
     parser.add_argument("--gpus", default="")

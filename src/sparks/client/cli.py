@@ -1,5 +1,3 @@
-"""sparks: submit training runs to the box queue."""
-
 import argparse
 import logging
 import os
@@ -56,7 +54,9 @@ type Subparsers = argparse._SubParsersAction[argparse.ArgumentParser]
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="sparks", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="sparks", description="sparks: submit training runs to the box queue."
+    )
     host = argparse.ArgumentParser(add_help=False)
     host.add_argument(
         "--host",

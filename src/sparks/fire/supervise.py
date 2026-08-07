@@ -1,5 +1,3 @@
-"""Supervise one job: measure it and record how it ended."""
-
 import argparse
 import functools
 import logging
@@ -129,7 +127,10 @@ def run(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="sparks.fire.supervise", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="sparks.fire.supervise",
+        description="Supervise one job: measure it and record how it ended.",
+    )
     # No defaults on these three: unset must stay distinct from `--url ""`,
     # which is how you ask for no telemetry at all.
 
