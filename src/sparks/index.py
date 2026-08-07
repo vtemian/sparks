@@ -220,44 +220,7 @@ def render_queue(entries: Iterable["spool.Entry"], heartbeat: float) -> str:
     that died, and those need different people looking at them.
     """
     jobs = list(entries)
-    lines: list[str] = []
-    if jobs:
-        lines += _family(QUEUE_INFO, QUEUE_INFO_HELP)
-        lines += [
-            _sample(
-                QUEUE_INFO,
-                {
-                    "job_id": e.job.job_id,
-                    "name": e.job.name,
-                    "user": e.job.user,
-                    "state": e.state.state,
-                    # Present and empty rather than omitted before a build:
-                    # changing the label SET between scrapes creates a second
-                    # series, and every join against the first then breaks.
-                    "image": e.state.image or "",
-                    "run_id": e.state.run_id or "",
-                },
-                1.0,
-            )
-            for e in jobs
-        ]
-    lines += _family(QUEUE_DEPTH, QUEUE_DEPTH_HELP)
-    counted = Counter(e.state.state for e in jobs)
-    # The live states always, so an alert can say "queued > 0 and running == 0"
-    # without `or vector(0)` in the one situation the expression exists for.
-    for state in (*LIVE_STATES, *sorted(set(counted) - set(LIVE_STATES))):
-        lines += [_sample(QUEUE_DEPTH, {"state": state}, counted[state])]
-    stamps: tuple[tuple[str, str, Callable[[spool.Entry], float | None]], ...] = (
-        (QUEUE_SUBMITTED, QUEUE_SUBMITTED_HELP, lambda e: e.job.submitted_unix),
-        (QUEUE_STARTED, QUEUE_STARTED_HELP, lambda e: e.state.started_unix),
-    )
-    for name, help_text, when in stamps:
-        stamped = [(e.job.job_id, when(e)) for e in jobs]
-        present = [(job_id, v) for job_id, v in stamped if v is not None]
-        if not present:
-            continue
-        lines += _family(name, help_text)
-        lines += [_sample(name, {"job_id": job_id}, v) for job_id, v in present]
+    lines = _job_rows(jobs) + _depth_rows(jobs) + _stamp_rows(jobs)
     lines += _family(QUEUE_HEARTBEAT, QUEUE_HEARTBEAT_HELP)
     lines += [_sample(QUEUE_HEARTBEAT, {}, heartbeat)]
     return "".join(f"{line}\n" for line in lines)
@@ -274,6 +237,60 @@ def publish_queue(
     concurrently.
     """
     summary.write_atomically(target, lambda: render_queue(entries, heartbeat))
+
+
+def _job_rows(jobs: list["spool.Entry"]) -> list[str]:
+    """The info family: one row per job, absent entirely on an empty queue."""
+    if not jobs:
+        return []
+    lines = _family(QUEUE_INFO, QUEUE_INFO_HELP)
+    lines += [
+        _sample(
+            QUEUE_INFO,
+            {
+                "job_id": e.job.job_id,
+                "name": e.job.name,
+                "user": e.job.user,
+                "state": e.state.state,
+                # Present and empty rather than omitted before a build:
+                # changing the label SET between scrapes creates a second
+                # series, and every join against the first then breaks.
+                "image": e.state.image or "",
+                "run_id": e.state.run_id or "",
+            },
+            1.0,
+        )
+        for e in jobs
+    ]
+    return lines
+
+
+def _depth_rows(jobs: list["spool.Entry"]) -> list[str]:
+    """The depth family, published even for an empty queue."""
+    lines = _family(QUEUE_DEPTH, QUEUE_DEPTH_HELP)
+    counted = Counter(e.state.state for e in jobs)
+    # The live states always, so an alert can say "queued > 0 and running == 0"
+    # without `or vector(0)` in the one situation the expression exists for.
+    for state in (*LIVE_STATES, *sorted(set(counted) - set(LIVE_STATES))):
+        lines += [_sample(QUEUE_DEPTH, {"state": state}, counted[state])]
+    return lines
+
+
+def _stamp_rows(jobs: list["spool.Entry"]) -> list[str]:
+    """The timestamp families, each declared only when some job has a value."""
+    stamps: tuple[tuple[str, str, Callable[[spool.Entry], float | None]], ...] = (
+        (QUEUE_SUBMITTED, QUEUE_SUBMITTED_HELP, lambda e: e.job.submitted_unix),
+        (QUEUE_STARTED, QUEUE_STARTED_HELP, lambda e: e.state.started_unix),
+    )
+    lines: list[str] = []
+    for name, help_text, when in stamps:
+        stamped = [(e.job.job_id, when(e)) for e in jobs]
+        present = [(job_id, v) for job_id, v in stamped if v is not None]
+        if not present:
+            continue
+        lines += _family(name, help_text)
+        lines += [_sample(name, {"job_id": job_id}, v) for job_id, v in present]
+    return lines
 
 
 def _family(name: str, help_text: str) -> list[str]:
