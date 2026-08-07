@@ -86,6 +86,7 @@ max-statements = 15
 "tests/check_names.py" = ["T201"]
 "tests/check_banners.py" = ["T201"]
 "tests/check_short_funcs.py" = ["T201"]
+"tests/check_file_header.py" = ["T201"]
 "tests/on_box.py" = ["BLE001", "C901", "PLR0912", "T201"]
 # The CLI surface prints; that is its output contract.
 "src/sparks/client/cli.py" = ["T201"]

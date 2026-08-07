@@ -33,6 +33,7 @@ lint:
 	uv run python tests/check_names.py
 	uv run python tests/check_banners.py
 	uv run python tests/check_short_funcs.py
+	uv run python tests/check_file_header.py
 
 typecheck:
 	uv run mypy

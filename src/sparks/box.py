@@ -18,10 +18,10 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-# Not in the shared tree: /etc is where box configuration belongs, it is outside
-# anything `make deploy` rsyncs with --delete, and it survives renaming the
-# shared directory - which is a migration this box still has ahead of it.
 PATH = Path("/etc/sparks/box.toml")
+"""Not in the shared tree: /etc is where box configuration belongs, it is
+outside anything `make deploy` rsyncs with --delete, and it survives renaming
+the shared directory - which is a migration this box still has ahead of it."""
 
 PATHS = ("shared_dir", "textfile_dir")
 STRINGS = ("shared_group", "prometheus_url", "grafana_url", "registry_url")

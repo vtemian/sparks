@@ -22,9 +22,9 @@ LOG = logging.getLogger("sparks")
 
 DASHBOARD = "/d/training-runs/training-runs"
 
-# Cosmetic: it only decorates the printed link, so an unknown Grafana is not
-# worth refusing a run over.
 GRAFANA_FALLBACK = "http://spark.local"
+"""Cosmetic: it only decorates the printed link, so an unknown Grafana is not
+worth refusing a run over."""
 
 
 def deep_link(grafana: str, run_id: str, started: float) -> str:

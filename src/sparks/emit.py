@@ -21,6 +21,10 @@ Or as a context manager, which records `crashed` on an exception:
         ...
 
 Every push is wrapped in try/except. A metrics outage must never kill a run.
+
+`prometheus_remote_writer` 1.1.3 ships no py.typed, so mypy cannot see into it
+and strict mode refuses the import outright (hence the ignore below). The
+writer is used through one method, `send()`.
 """
 
 import atexit
@@ -32,8 +36,6 @@ import time
 from types import TracebackType
 from typing import Any, Self
 
-# 1.1.3 ships no py.typed, so mypy cannot see into it and strict mode refuses
-# the import outright. The writer is used through one method, send().
 from prometheus_remote_writer import RemoteWriter  # type: ignore[import-untyped]
 
 from sparks.buffer import Buffer
