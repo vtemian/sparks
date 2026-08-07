@@ -1,7 +1,3 @@
-"""Docker, as the runner needs it: pull a registry image, then run it under
-`python -m sparks.fire.supervise` as the account that submitted it. Runs as root
-for the Docker socket, and drops to the submitter's uid for everything under it."""
-
 import contextlib
 import logging
 import os
@@ -20,25 +16,18 @@ LOG = logging.getLogger("sparks")
 DOCKER_SOCKET = Path("/var/run/docker.sock")
 
 PULL_TIMEOUT_SECONDS = 3600.0
-"""The runner is single-threaded, so a hung pull is the whole queue stopped."""
 
 CONTAINER_PREFIX = "sparks"
-"""Job ids already begin with `job-`, so this is not `sparks-job`."""
 
 
 @dataclass(frozen=True)
 class Credentials:
-    """Who to become before exec. All None is "stay as we are", which is what
-    Popen means by these being unset and all a non-root runner can do."""
-
     user: int | None = None
     group: int | None = None
     extra_groups: list[int] | None = None
 
 
 class Process:
-    """A job in flight: the supervise process, and the container under it."""
-
     def __init__(
         self,
         child: subprocess.Popen[bytes],
@@ -55,8 +44,6 @@ class Process:
         return self._child.poll()
 
     def terminate(self) -> None:
-        """SIGTERM to the supervisor, never to the container directly: being
-        signalled is what makes a run `cancelled` rather than `finished`."""
         with contextlib.suppress(ProcessLookupError):
             self._child.terminate()
 
@@ -67,9 +54,6 @@ class Process:
         return first_line(self._cidfile)
 
     def finish(self) -> None:
-        """Release what the job leaves behind. contain removes the container in
-        its own `finally`, so this is for a client that died without it and left
-        the container holding the GPU."""
         with contextlib.suppress(OSError, ValueError):
             self._log.close()
         container = self.container_id()
@@ -79,8 +63,6 @@ class Process:
 
 
 def pull_line(chunk: dict[str, Any], log: IO[bytes], log_path: Path) -> None:
-    """The write comes before the raise: the failure message points the reader at
-    the log, so the error line has to be in it."""
     line = chunk.get("status") or chunk.get("error") or str(chunk)
     log.write((line + "\n").encode())
     if chunk.get("error") or chunk.get("errorDetail"):
@@ -91,19 +73,11 @@ def pull_line(chunk: dict[str, Any], log: IO[bytes], log_path: Path) -> None:
 class Docker:
     shared_dir: Path
     url: str
-    """Prometheus as reachable FROM A CONTAINER: the box contract's URL is
-    loopback, which in here is this container, so the queue passes down the
-    host-gateway form."""
     supervise_module: str = "sparks.fire.supervise"
     gpus: str = "all"
-    """Passed to contain as `--gpus`, or empty to omit GPU requests entirely: on
-    a daemon with no nvidia runtime `--gpus all` is a hard error, not an ignored
-    flag, so a box without a GPU could not run a job at all."""
     extra_groups: list[int] = field(default_factory=list)
 
     def pull(self, image: str, log_path: Path) -> None:
-        """Pull a registry image so a missing or broken ref fails the job here,
-        rather than inside contain where the launch log is the only trace."""
         deadline = time.monotonic() + PULL_TIMEOUT_SECONDS
         try:
             client = dock.client()
@@ -150,8 +124,6 @@ class Docker:
         return Process(child, run_id_file, cidfile, log)
 
     def credentials(self, uid: int, gid: int) -> "Credentials":
-        """How to become the submitter, if becoming anybody is possible: only
-        root can change uid, and only the queue container runs as root."""
         if os.geteuid() != 0:
             if os.geteuid() != uid:
                 LOG.warning(
@@ -210,9 +182,6 @@ class Docker:
     def container_argv(
         self, entry: spool.Entry, image: str, cidfile: Path, uid: int, gid: int
     ) -> list[str]:
-        """Every mount and flag is chosen by the queue; the job file says only
-        what image and what command. A job that could name its own `--volume`
-        could mount `/` and be root on the box."""
         return [
             sys.executable,
             "-m",
@@ -249,8 +218,6 @@ def shared_group(shared_dir: Path) -> int | None:
 
 
 def docker_group() -> int | None:
-    """Read off the socket rather than looked up by the name `docker`: inside a
-    container the group's name may not resolve at all, while its gid always does."""
     try:
         return DOCKER_SOCKET.stat().st_gid
     except OSError as exc:
@@ -259,8 +226,6 @@ def docker_group() -> int | None:
 
 
 def first_line(path: Path) -> str | None:
-    """The file's first line, or None if it is not there yet: both files are
-    written by something else while we watch, so absent is not an error."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:

@@ -1,7 +1,3 @@
-"""Per-run training metrics, pushed to Prometheus: a plain object a training
-loop calls (`begin`, `log`, `end`, or the context manager), plus a background
-pump that is the only thing here that ever writes to the wire."""
-
 import atexit
 import logging
 import os
@@ -22,7 +18,6 @@ LOG = logging.getLogger("sparks")
 FLUSH_SECONDS = 5.0
 
 STALE_NAN = struct.unpack("<d", struct.pack("<Q", 0x7FF0000000000002))[0]
-"""Prometheus's stale marker. A pushed series is never staled automatically."""
 
 
 class RunMetrics:
@@ -35,9 +30,6 @@ class RunMetrics:
         autostart: bool = True,
         lifecycle: bool = True,
     ) -> None:
-        """`info` is immutable metadata for the info metric; `labels` ride on
-        every sample, so keep them few and low cardinality. `lifecycle=False` is
-        the training child, which must not write the supervisor's series."""
         self._lifecycle = lifecycle
         self.run_id = run_id
         self.url = url.rstrip("/")
@@ -65,8 +57,6 @@ class RunMetrics:
         self._beat(now)
 
     def log(self, **values: float) -> None:
-        """One sample per keyword, sharing one timestamp. Keywords drop the
-        `training_` prefix, so `m.log(loss=0.5)` writes `training_loss`."""
         now = time.time()
         for key, value in values.items():
             name = f"training_{key}"
@@ -76,7 +66,6 @@ class RunMetrics:
             self._sample(Series(name, self._labels), float(value), now)
 
     def log_group(self, name: str, by_group: dict[str, float]) -> None:
-        """One sample per parameter group, all sharing one timestamp."""
         if name not in METRICS:
             raise KeyError(f"{name} is not declared in sparks.metrics.METRICS")
         self._refuse_if_not_ours(name)
@@ -87,7 +76,6 @@ class RunMetrics:
             )
 
     def end(self, status: str = "finished") -> None:
-        """Terminal state. Never re-labels the info metric."""
         if not self._lifecycle:
             self._shutdown()
             return
@@ -116,8 +104,6 @@ class RunMetrics:
         self._buffer.add(series, value, int(when * 1000))
 
     def _refuse_if_not_ours(self, name: str) -> None:
-        """The child and the supervisor MUST write disjoint series: two writers
-        picking timestamps independently lose the batch carrying the loss."""
         # Asymmetric on purpose: a standalone RunMetrics has no child and owns
         # both halves, so only the child side is constrained.
         if self._lifecycle:
@@ -129,9 +115,6 @@ class RunMetrics:
             )
 
     def _beat(self, now: float) -> None:
-        """The heartbeat freezes when the run dies. The info metric rides along
-        because a series nobody pushes falls out of the lookback window, taking
-        every join with it."""
         if not self._lifecycle:
             return
         self._sample(
@@ -161,9 +144,6 @@ class RunMetrics:
         atexit.register(self._shutdown)
 
     def _pump(self) -> None:
-        """The ONLY thread that may ever call send(). The whole body is guarded,
-        not just the network call: an exception here kills telemetry for the
-        rest of the run and nothing restarts it."""
         while not self._stop.wait(FLUSH_SECONDS):
             try:
                 self._beat(time.time())
@@ -199,9 +179,6 @@ class RunMetrics:
         self._mark_stale()
 
     def _mark_stale(self) -> None:
-        """End the live series, so a finished run stops dead on the graph. The
-        LIFECYCLE metrics are spared: `end()` writes them a millisecond earlier,
-        and staling them would erase the run's own record of itself."""
         batch = self._stale_batch()
         if not batch:
             return
@@ -226,8 +203,6 @@ class RunMetrics:
 
 
 def from_env(autostart: bool = True, **labels: str) -> RunMetrics | None:
-    """The training child's entry point. None outside a supervised run, so the
-    same script runs standalone without the caller branching on it."""
     run_id = os.environ.get("SPARKS_RUN_ID")
     url = os.environ.get("SPARKS_PROMETHEUS_URL")
     if not run_id or not url:

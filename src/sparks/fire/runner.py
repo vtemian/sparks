@@ -1,7 +1,3 @@
-"""The single process that turns queued jobs into runs: the only writer of every
-`state.json` and of the queue's `.prom`, which is what lets both go unlocked, and
-it takes every uid that decides privilege from `stat()`, never from a job field."""
-
 import contextlib
 import logging
 import time
@@ -15,18 +11,12 @@ from sparks import index, spool
 LOG = logging.getLogger("sparks")
 
 POLL_SECONDS = 2.0
-"""Also the worst-case delay between asking for an abort and the signal
-arriving, which is why it is seconds rather than a scheduler's minute."""
 
 
 class Handle(Protocol):
-    """A running job, from the runner's side of the fence."""
-
     def poll(self) -> int | None: ...
 
-    def terminate(self) -> None:
-        """The supervisor underneath escalates to SIGKILL on its own schedule,
-        so nothing here needs a second timer."""
+    def terminate(self) -> None: ...
 
     def run_id(self) -> str | None: ...
 
@@ -36,20 +26,14 @@ class Handle(Protocol):
 
 
 class Engine(Protocol):
-    """Everything the runner needs from Docker."""
+    def pull(self, image: str, log_path: Path) -> None: ...
 
-    def pull(self, image: str, log_path: Path) -> None:
-        """Pull `image`. Raises `PullFailedError`."""
+    def start(self, entry: spool.Entry, image: str, log_path: Path) -> Handle: ...
 
-    def start(self, entry: spool.Entry, image: str, log_path: Path) -> Handle:
-        """Start the job's container under supervise, as the job's owner."""
-
-    def release(self, container_id: str) -> None:
-        """Remove a container this runner is no longer supervising."""
+    def release(self, container_id: str) -> None: ...
 
 
-class PullFailedError(Exception):
-    """The registry did not yield an image the runner can run."""
+class PullFailedError(Exception): ...
 
 
 @dataclass
@@ -63,8 +47,6 @@ class Runner:
     now: Callable[[], float] = field(default=time.time)
 
     def serve(self, ticks: int | None = None) -> None:
-        """Run until stopped, or for a bounded number of passes in a test. A pass
-        that starts a job blocks for as long as that job takes."""
         self.reconcile()
         pass_count = 0
         while ticks is None or pass_count < ticks:
@@ -78,9 +60,6 @@ class Runner:
                 self.sleep(self.poll_seconds)
 
     def reconcile(self) -> None:
-        """A job recorded as building or running is not, since this runner is the
-        only one and it is starting. Failed rather than requeued: redoing
-        half-completed work is the submitter's call, via `sparks retry`."""
         for entry in spool.entries(self.queue_dir):
             if entry.state.state not in (spool.BUILDING, spool.RUNNING):
                 continue
@@ -116,7 +95,6 @@ class Runner:
         return True
 
     def pump(self) -> None:
-        """Republish, and act on requests against jobs other than the running one."""
         entries = spool.entries(self.queue_dir)
         for entry in entries:
             if entry.state.state == spool.QUEUED:
@@ -192,9 +170,6 @@ class Runner:
         self.publish()
 
     def _wait(self, entry: spool.Entry, handle: Handle) -> int | None:
-        """Block until the job ends, aborting it if somebody entitled asks, and
-        publishing throughout so a six-hour job does not read as a dead runner.
-        Returns the uid that aborted it, or None."""
         aborted_by = None
         while handle.poll() is None:
             if aborted_by is None:
@@ -223,8 +198,6 @@ class Runner:
         return None
 
     def _apply_queued_requests(self, entry: spool.Entry) -> None:
-        """An abort of a job that has not started is treated as a cancel: nobody
-        wanting it stopped cares which verb fits the state it is in."""
         for pending in spool.requests(entry.path):
             if not entry.may_be_controlled_by(pending.uid):
                 self._refuse(entry, pending)
@@ -239,8 +212,6 @@ class Runner:
             return
 
     def _refuse(self, entry: spool.Entry, pending: spool.Request) -> None:
-        """Someone else's job. The request file is removed so it is refused once
-        rather than on every pass forever."""
         LOG.warning(
             "sparks: uid %d may not %s %s, which belongs to uid %d",
             pending.uid,

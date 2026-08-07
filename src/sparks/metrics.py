@@ -1,7 +1,3 @@
-"""Every metric this package emits, and what it means. The dashboard checker
-reads this to refuse a panel querying something nothing emits, so a new metric
-goes here first."""
-
 METRICS: dict[str, str] = {
     "training_run_info": "1, carrying the run's immutable metadata as labels",
     "training_run_start_timestamp_seconds": "unix seconds, written once at start",
@@ -47,5 +43,3 @@ LIFECYCLE = frozenset(
         "training_run_status",
     }
 )
-"""The run's record of itself, never marked stale on shutdown: these five say
-the run happened and how it ended, and staling them erases that."""

@@ -1,10 +1,3 @@
-"""Running a training command as a child, and reporting honestly how it ended.
-
-The wrapper outlives the run, so it owns the terminal status. Seven measured
-details are load-bearing; they are marked `Detail N` and argued in
-docs/DECISIONS.md.
-"""
-
 import contextlib
 import io
 import logging
@@ -25,17 +18,12 @@ from sparks.shared import FILE_MODE
 LOG = logging.getLogger("sparks")
 
 GRACE_SECONDS = 30.0
-"""Long enough to write a checkpoint, which is the only reason to wait."""
 
 POLL_SECONDS = 0.2
-"""Detail 4: the bound on every wait. PEP 475 auto-retries an interrupted
-`wait(timeout=None)`, so the escalation deadline would be dead code."""
 
 DRAIN_SECONDS = 5.0
-"""Bounded because a stray that inherited the pipe can hold it open forever."""
 
 SIGKILL_SECONDS = 5.0
-"""How long survivors of the sweep get before SIGKILL."""
 
 FORWARDED = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP, signal.SIGQUIT)
 
@@ -43,8 +31,6 @@ Handler = Callable[[int, FrameType | None], Any] | int | None
 
 
 def clamp_exit(code: int) -> int:
-    """Detail 6: `wait(2)` masks a status to 8 bits, turning `sys.exit(256)`
-    into a reported 0. Nothing synthesised here may clamp to success."""
     if code == 0:
         return 0
     return min(255, max(1, code))
@@ -52,24 +38,15 @@ def clamp_exit(code: int) -> int:
 
 @dataclass(frozen=True)
 class Outcome:
-    """Terminal state. Never one integer: `exit(137)` and SIGKILL both give 137."""
-
     status: str
-    """finished | crashed | cancelled | killed | oom"""
     exit_code: int | None
-    """None when the child died to a signal."""
     signal_name: str | None = None
     wrapper_exit: int = 0
-    """What the wrapper exits with, so `$?` reads like the shell's."""
     escalated_to_sigkill: bool = False
-    """The child ignored its grace period."""
 
 
 @dataclass(frozen=True)
 class Completed:
-    """One finished run. `duration_seconds` is a monotonic delta, never
-    `ended_unix - started_unix`, so NTP cannot lengthen or shorten a run."""
-
     outcome: Outcome
     started_unix: float
     ended_unix: float
@@ -110,7 +87,6 @@ def status_for_signal(signum: int, interrupted_by: int | None) -> str:
 
 
 def oom_kills(cgroup: Path | None) -> int:
-    """`oom_kill` from the run's cgroup, or 0. Never raises: macOS has none."""
     text = events_text(cgroup)
     for line in text.splitlines():
         # partition, not split: a line with no space falls through, not raises.
@@ -135,8 +111,6 @@ def events_text(cgroup: Path | None) -> str:
 
 @dataclass(frozen=True)
 class _Reaped:
-    """Frozen at the reap: cleanup must not re-write how the run ended."""
-
     returncode: int
     ended_wall: float
     ended_mono: float
@@ -146,8 +120,6 @@ class _Reaped:
 
 
 class Supervisor:
-    """One child process, launch to terminal status. Its signal state is one run's."""
-
     def __init__(
         self,
         command: Sequence[str],
@@ -160,7 +132,6 @@ class Supervisor:
         sweep_seconds: float = SIGKILL_SECONDS,
         poll_seconds: float = POLL_SECONDS,
     ) -> None:
-        """`env` overlays the wrapper's environment rather than replacing it."""
         self.command = list(command)
         self.log_path = log_path
         self.env = dict(env or {})
@@ -173,7 +144,6 @@ class Supervisor:
         self._blank_state()
 
     def _blank_state(self) -> None:
-        """Every field must exist before `run()`: `_forward` can fire earlier."""
         self.child: subprocess.Popen[bytes] | None = None
         self.pgid: int | None = None
         self.interrupted_by: int | None = None
@@ -182,7 +152,6 @@ class Supervisor:
         self._previous: dict[int, Handler] = {}
 
     def run(self) -> Completed:
-        """Returns for every terminal state; only a failure to launch raises."""
         started_wall, started_mono = time.time(), time.monotonic()
         oom_before = oom_kills(self.cgroup)
         log = self.log_path.open("wb")
@@ -262,8 +231,6 @@ class Supervisor:
         return io.BufferedReader(cast("io.RawIOBase", stdout))
 
     def _reap(self) -> _Reaped:
-        """Detail 5: frozen before the sweep and the join, so cleanup cannot
-        land in the duration and a Ctrl-C during it cannot relabel the run."""
         # Its own statement: the order must not rest on argument evaluation.
         returncode = self._wait_for_child()
         reaped = _Reaped(
@@ -288,8 +255,6 @@ class Supervisor:
         return outcome
 
     def _forward(self, signum: int, _frame: FrameType | None) -> None:
-        """Detail 3: never exit from here. A default-disposition SIGTERM skips
-        `atexit`, and the wrapper must survive to record and flush."""
         if self.interrupted_by is None:
             self.interrupted_by = signum
             self._deadline = time.monotonic() + self.grace_seconds
@@ -305,15 +270,11 @@ class Supervisor:
             self._deliver(signal.SIGKILL)
 
     def _deliver(self, signum: int) -> None:
-        """Detail 2: chase every terminating signal with SIGCONT. A child
-        stopped by SIGTSTP never runs its SIGTERM handler."""
         self._raw(signum)
         if signum not in (signal.SIGKILL, signal.SIGCONT):
             self._raw(signal.SIGCONT)
 
     def _raw(self, signum: int) -> None:
-        """Detail 1: the group AND the pid, since a child may `setpgid` out of
-        the group -- but only one copy may land on any one process."""
         self._group(signum)
         child = self.child
         if child is None or child.returncode is not None:
@@ -348,7 +309,6 @@ class Supervisor:
         self._previous.clear()
 
     def _capture_pgid(self) -> None:
-        """Cached because `getpgid` raises once the child is reaped."""
         child = self.child
         assert child is not None  # noqa: S101 -- narrowing; only called after Popen
         try:
@@ -364,7 +324,6 @@ class Supervisor:
         self.pgid = pgid
 
     def _wait_for_child(self) -> int:
-        """Detail 4: never blocks unboundedly, so the deadline is reachable."""
         child = self.child
         assert child is not None  # noqa: S101 -- narrowing; only called after Popen
         while True:
@@ -387,8 +346,6 @@ class Supervisor:
                 self._deliver(signal.SIGKILL)
 
     def _sweep(self) -> None:
-        """Detail 7: kill whatever the child left behind. Runs before the tee
-        is joined; until the last writer closes the pipe there is no EOF."""
         if not self._group_alive():
             return
         LOG.info("sparks: sweeping survivors in process group %s", self.pgid)
@@ -415,8 +372,6 @@ class Supervisor:
         return True
 
     def _tee(self, stream: IO[bytes], log: IO[bytes]) -> None:
-        """Keeps draining after the child is gone: that is how its last lines
-        survive a SIGKILL."""
         try:
             echo: BinaryIO | None = sys.stdout.buffer
         except AttributeError:

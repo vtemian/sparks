@@ -1,7 +1,3 @@
-"""Submitting to the queue and asking it what is going on. Every user-facing
-verb is `ssh <host> fire-ctl <verb>`; only submit is more than that, because
-only submit builds an image, pushes it and carries `--data` across."""
-
 import getpass
 import logging
 import os
@@ -27,7 +23,6 @@ REMOTE_BOX_CONFIG = "/etc/sparks/box.toml"
 DOCKERIGNORE = ".dockerignore"
 
 ALWAYS_EXCLUDED = (".git/", "__pycache__/", "*.pyc", ".venv/")
-"""Never uploaded with `--data`, whatever the tree says."""
 
 RSYNC_TIMEOUT_SECONDS = 1800.0
 SSH_TIMEOUT_SECONDS = 120.0
@@ -35,8 +30,7 @@ SSH_TIMEOUT_SECONDS = 120.0
 PUSH_HINT = "Is the registry in insecure-registries and is SPARKS_HOST reachable?"
 
 
-class ClientError(Exception):
-    """Something the person can fix, reported without a traceback."""
+class ClientError(Exception): ...
 
 
 @dataclass(frozen=True)
@@ -46,7 +40,6 @@ class Submitted:
 
 
 def tag_for(registry_url: str, user: str, name: str, ref: str) -> str:
-    """Docker tag `host:port/user/name:ref`, scheme stripped from registry_url."""
     parsed = urlparse(registry_url)
     host = parsed.netloc or parsed.path
     host = host.rstrip("/")
@@ -56,9 +49,6 @@ def tag_for(registry_url: str, user: str, name: str, ref: str) -> str:
 
 
 def split_tag(tag: str) -> tuple[str, str]:
-    """Repository and image tag, `latest` when the tag names none. Only a colon
-    in the last segment splits: a registry port (`spark.local:5000/u/n`) is not
-    a tag separator."""
     if ":" not in tag.rsplit("/", 1)[-1]:
         return tag, "latest"
     repository, image_tag = tag.rsplit(":", 1)
@@ -101,7 +91,6 @@ def push(tag: str) -> None:
 
 
 def raise_if_docker_failed(chunk: dict[str, Any], message: str) -> None:
-    """Docker streams report failure as chunks, not exceptions."""
     error = chunk.get("error")
     detail = chunk.get("errorDetail")
     if error or detail:
@@ -153,8 +142,6 @@ def submit(
     retry_of: str | None = None,
     user: str | None = None,
 ) -> spool.Entry:
-    """Put a job on a queue this machine can see. `--image` skips build/push;
-    otherwise build from `--context` and push to `registry_url`."""
     if not data.is_dir():
         raise ClientError(f"--data {data} is not a directory")
     who = user or current_user()
@@ -216,8 +203,6 @@ def resolve_tag(
 
 
 def ship(source: Path, destination: Path) -> None:
-    """Copy a local tree (usually `--data`) into a job directory on this
-    machine."""
     if not source.is_dir():
         raise ClientError(f"{source} is not a directory")
     destination.mkdir(parents=True, exist_ok=True)
@@ -237,8 +222,6 @@ def ship(source: Path, destination: Path) -> None:
 
 
 def rsync_argv(source: Path, destination: str) -> list[str]:
-    """The trailing slash on the source is load-bearing: without it rsync
-    creates `<destination>/<source name>/` instead of copying the contents."""
     argv = ["rsync", "--archive", "--delete"]
     for pattern in ALWAYS_EXCLUDED:
         argv += ["--exclude", pattern]
@@ -249,8 +232,6 @@ def rsync_argv(source: Path, destination: str) -> list[str]:
 
 
 def provenance(context: Path) -> tuple[str, bool]:
-    """The commit this was built from, and whether it had been edited since.
-    Recorded, never enforced."""
     sha = git_sha(context)
     if sha == "unknown":
         return sha, False
@@ -281,14 +262,10 @@ def remote_bin() -> str:
 
 
 def ssh_argv(host: str, argv: list[str]) -> list[str]:
-    """`fire-ctl <argv>` on `host`, shlex-quoted here rather than by the caller.
-    ssh joins whatever it is given with spaces and hands it to a shell on the
-    far side, so an unquoted `;` would be the REMOTE shell's."""
     return ["ssh", host, shlex.join([remote_bin(), *argv])]
 
 
 def run(host: str, argv: list[str]) -> int:
-    """SSH `fire-ctl <argv>` on `host`; return the remote exit code."""
     try:
         return subprocess.run(ssh_argv(host, argv), check=False).returncode
     except FileNotFoundError as exc:
@@ -296,7 +273,6 @@ def run(host: str, argv: list[str]) -> int:
 
 
 def capture(host: str, argv: list[str]) -> str:
-    """SSH `fire-ctl <argv>` on `host`; return stdout (stripped)."""
     done = subprocess.run(
         ssh_argv(host, argv),
         capture_output=True,
@@ -320,9 +296,6 @@ def submit_remote(
     image: str | None = None,
     registry_url: str | None = None,
 ) -> str:
-    """Build/push (unless image given), reserve, ship data, then commit. The
-    manifest goes last, so the runner never sees a half-copied `--data`. The
-    build context stays on the laptop; the runner pulls the image."""
     if not data.is_dir():
         raise ClientError(f"--data {data} is not a directory")
 
@@ -351,8 +324,6 @@ def reserve(host: str, name: str, who: str) -> str:
 
 
 def ship_to(data: Path, host: str, reserved: str) -> None:
-    """rsync `--data` into a job directory reserved on the box. The remote
-    counterpart of `ship`, not a variant of it."""
     dest = f"{host}:{reserved}/{spool.DATA_DIR}/"
     argv = rsync_argv(data, dest)
     try:
@@ -396,8 +367,6 @@ def commit_argv(
 
 
 def local_user() -> str:
-    """Who is submitting, as known here, and passed to the box rather than read
-    there. Display only: privilege on the box is the uid that owns the files."""
     try:
         return getpass.getuser()
     except Exception:  # noqa: BLE001 -- a missing account is not a failure

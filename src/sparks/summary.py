@@ -1,7 +1,3 @@
-"""What a run was and how it ended: one `summary.json` per run, which is the
-durable record the run index is rebuilt from. Every field is required except
-`final_loss`, and nothing here may depend on Prometheus still holding the run."""
-
 import contextlib
 import json
 import math
@@ -42,13 +38,9 @@ class Summary:
     started_unix: float
     ended_unix: float
     duration_seconds: float
-    """A `time.monotonic()` delta. It disagrees with `ended_unix -
-    started_unix` whenever the clock steps, and that is correct."""
     status: str
     exit_code: int | None
     signal: str | None
-    """The signal's name, `SIGKILL` rather than 9. Orthogonal to `exit_code`,
-    never collapsed into it: both are set at once for a `cancelled` run."""
     escalated_to_sigkill: bool
     energy: Energy
     final_loss: float | None = None
@@ -102,10 +94,6 @@ def load(path: Path) -> Summary:
 def write_atomically(
     target: Path, render: Callable[[], str], mode: int = 0o644
 ) -> None:
-    """Write `render()` to `target` so a reader sees the old file or the new
-    one, never half of either. Two traps: `mkstemp` creates 0600, which
-    node_exporter skips in silence, and a temp name ending `.prom` is read
-    half-written."""
     fd, tmp = tempfile.mkstemp(
         dir=target.parent, prefix=f".{target.stem}.", suffix=".tmp"
     )

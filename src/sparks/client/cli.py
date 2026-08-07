@@ -1,5 +1,4 @@
-"""sparks — the laptop client. Every verb talks to the box over ssh: set
-SPARKS_HOST or pass --host, and queue control runs `fire-ctl` there."""
+"""sparks: submit training runs to the box queue."""
 
 import argparse
 import logging

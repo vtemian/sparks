@@ -1,6 +1,4 @@
-"""sparks.fire.supervise -- wraps a training command, records what it cost, and
-prints the Grafana link. Private to the fire package: the queue nests it via
-`python -m` inside the job container, not as a console script."""
+"""Supervise one job: measure it and record how it ended."""
 
 import argparse
 import functools
@@ -19,12 +17,9 @@ LOG = logging.getLogger("sparks")
 DASHBOARD = "/d/training-runs/training-runs"
 
 GRAFANA_FALLBACK = "http://spark.local"
-"""Cosmetic: it only decorates the printed link."""
 
 
 def deep_link(grafana: str, run_id: str, started: float) -> str:
-    """The live form, backdated a minute so the first samples are not glued to
-    the left edge of the graph."""
     frm = int((started - 60) * 1000)
     return (
         f"{grafana.rstrip('/')}{DASHBOARD}"
@@ -40,9 +35,6 @@ class _Settings:
 
 
 def read_settings(args: argparse.Namespace) -> _Settings:
-    """Flags win, then the contract. Nothing is guessed except the Grafana link,
-    and nothing partial is returned: a run recorded into a directory nobody
-    reads is the failure this path exists to prevent."""
     contract = box.load()
     shared = Path(args.shared_dir) if args.shared_dir else None
     url = args.url
@@ -102,8 +94,6 @@ def require_matching(complaints: list[str]) -> None:
 def announce(
     target: Path | None,
 ) -> Callable[[str, Path], None] | None:
-    """Publish the run id the moment it exists. A file rather than a line on
-    stdout, which carries the training's own output."""
     if target is None:
         return None
 

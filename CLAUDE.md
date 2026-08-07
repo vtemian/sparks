@@ -1,9 +1,7 @@
 # CLAUDE.md
 
 Standing rules for working in sparks. How to install it and run a job is
-INSTALL_CLAUDE.md. Why the code is shaped this way, and the traps that come with
-changing it, is docs/DECISIONS.md; read that before editing anything under
-`src/sparks/fire/` or `emit.py`.
+INSTALL_CLAUDE.md.
 
 ## Before every commit
 
@@ -11,7 +9,7 @@ changing it, is docs/DECISIONS.md; read that before editing anything under
 - Work on a branch, never directly on main. Push after committing.
 - Anything touching the emitter's threading, shutdown, or the launch/supervise
   seam also needs `make live` (real Prometheus) before merge. No unit test can
-  catch a second writer; docs/DECISIONS.md explains why.
+  catch a second writer.
 
 ## Code quality standards (mandatory, enforced by ruff)
 
@@ -30,13 +28,12 @@ Say what is happening in `LOG.debug`, present tense, one line per state
 transition: "starting pid %d", "got SIGTERM; forwarding and waiting %ds",
 "child reaped with returncode %d". A comment saying the same thing is invisible
 to whoever is debugging a box at 2am, which is the only moment it is wanted.
-Reserve comments for the argument a log line cannot carry: an ordering
-constraint, a measured number, an alternative that was tried and lost.
+A comment is only for what a log line cannot carry: an ordering that looks
+reorderable, a value that must not be recomputed.
 
 ### Say a shared constraint once
-A rule governing several call sites goes in docs/DECISIONS.md, once, and the
-call sites name only their local consequence in a line each. Re-deriving the
-same argument everywhere is how the source reached 29% prose: one fact about
+State it once, at the site that enforces it, in one line. Re-deriving the same
+argument everywhere is how the source reached 29% prose: one fact about
 remote-write rollback had been written out nine times across six files.
 
 ### No nesting, and no helper soup
@@ -70,27 +67,25 @@ Catch specific exceptions. The only broad excepts are the deliberate ones
 (telemetry never kills a run; a bad job never stops the queue), and each carries
 `# noqa: BLE001` and a comment saying why. Never add one without both. The
 exception is a handler that re-raises or logs a traceback: ruff does not call
-those blind, so a directive there fails the gate the other way.
-docs/DECISIONS.md names the four sites that correctly carry none.
+those blind, so a directive there fails the gate the other way: the queue guard
+in `runner.py`, the record-failed handler in `launch.py`, the pump guard in
+`emit.py` and the cleanup in `summary.py` correctly carry none.
 
 ### Write almost none
-The default is no comment and no docstring. `src` runs at about 11% prose and
-that is the ceiling, not a floor to grow back toward. Before writing either,
-try the other two homes first: a `LOG.debug` line if it describes what happens
-at runtime, or docs/DECISIONS.md if it is a measurement, a rejected
-alternative, or an incident. Those belong in the record, not beside the code
-that happens to have provoked them.
+**There are no docstrings in `src`.** Not on modules, not on classes, not on
+functions. The only exceptions are the five modules whose `__doc__` argparse
+prints as `--help` text, and those are one line. Do not add one back: the name
+and the signature are the documentation, and if they are not enough, fix them.
 
-What stays in the source is one short line, on the statement it guards, when
-violating it causes a bug someone would otherwise introduce: an ordering that
-looks reorderable, a value that must not be recomputed, a field whose legal
-values a caller cannot otherwise know. If it does not meet that test, delete it.
+`src` runs at 3.4% prose, all of it comments. That is the ceiling, not a floor
+to grow toward. What earns a comment is one short line, on the statement it
+guards, where violating it causes a bug someone would otherwise introduce. If
+it does not meet that test, delete it. If it describes what happens at runtime,
+it is a `LOG.debug` line instead.
 
-A docstring that restates the name is worse than none, because it costs a
-reader a detour to learn nothing. Module docstrings are two or three lines
-saying what the module owns. No section banners (`# -- title ---`, `# ====`)
-and no `#` comments before the first top-level `def`/`class`
-(`tests/check_banners.py`, `tests/check_file_header.py`, both from `make lint`).
+No section banners (`# -- title ---`, `# ====`) and no `#` comments before the
+first top-level `def`/`class` (`tests/check_banners.py`,
+`tests/check_file_header.py`, both from `make lint`).
 
 ### Classes only where state is the point
 Dataclasses for structured data, exceptions, protocols, and stateful
@@ -109,8 +104,7 @@ looks like success is the worst outcome.
 - Mock only true externals (the Docker SDK client, subprocess argv capture),
   and assert on what our code sent them.
 - A test that re-implements the logic it checks is vacuous; assert on what
-  the code actually produced (see the `_stale_batch` story in
-  docs/DECISIONS.md).
+  the code actually produced.
 - Never delete a failing test. Never relax `[tool.mypy] strict`.
 - Error paths are behaviour: pin the message the user sees
   (`pytest.raises(match=...)`).

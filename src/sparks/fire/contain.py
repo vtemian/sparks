@@ -1,8 +1,4 @@
-"""Create and wait on one training container via the Docker SDK.
-
-Runs as the child of `python -m sparks.fire.supervise`, so energy sampling and
-cancel semantics stay outside the project's image.
-"""
+"""Create and wait on one training container."""
 
 from __future__ import annotations
 
@@ -120,7 +116,6 @@ def main(argv: list[str] | None = None) -> int:
     aborted = False
 
     def stop_on_signal(_signum: int, _frame: FrameType | None) -> None:
-        """Logs nothing: the main thread it interrupts may hold the log lock."""
         nonlocal aborted
         aborted = True
         if container is not None:

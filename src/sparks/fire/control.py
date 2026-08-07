@@ -1,5 +1,3 @@
-"""Queue control helpers — resolve, ask, retry, remove, render."""
-
 from __future__ import annotations
 
 import logging
@@ -13,8 +11,7 @@ from sparks import box, spool
 LOG = logging.getLogger("sparks")
 
 
-class ControlError(Exception):
-    """Something the caller can fix, reported without a traceback."""
+class ControlError(Exception): ...
 
 
 HEADINGS = ("JOB", "USER", "STATE", "AGE", "RUN")
@@ -40,8 +37,6 @@ def queue_dir(shared_dir: Path | None = None) -> Path:
 
 
 def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
-    """Submit the same job again, reusing the image and data already on the box.
-    A new job, linked back through `retry_of`."""
     if not entry.is_terminal:
         raise ControlError(
             f"{entry.job.job_id} is {entry.state.state}. Retrying a job that has "
@@ -83,9 +78,6 @@ def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
 
 
 def resolve(queue_dir: Path, needle: str) -> spool.Entry:
-    """One job from whatever the person typed: a full id, a unique part of one,
-    or a job name. Ambiguity is refused, because the wrong guess here aborts
-    somebody's training."""
     found = spool.entries(queue_dir)
     if not found:
         raise ControlError("there are no jobs in the queue")
@@ -105,7 +97,6 @@ def resolve(queue_dir: Path, needle: str) -> spool.Entry:
 
 
 def disambiguate(matches: list[spool.Entry], needle: str) -> spool.Entry:
-    """The one job the person meant, or a refusal listing the candidates."""
     if len(matches) == 1:
         return matches[0]
     live = [entry for entry in matches if not entry.is_terminal]
@@ -117,7 +108,6 @@ def disambiguate(matches: list[spool.Entry], needle: str) -> spool.Entry:
 
 
 def ask(queue_dir: Path, needle: str, action: str) -> spool.Entry:
-    """Cancel or abort, whichever applies once the runner looks at it."""
     entry = resolve(queue_dir, needle)
     if entry.is_terminal:
         raise ControlError(
@@ -148,7 +138,6 @@ def remove(queue_dir: Path, needle: str) -> spool.Entry:
 
 
 def render(entries: list[spool.Entry], now: float | None = None) -> str:
-    """The queue as a person reads it."""
     if not entries:
         return "the queue is empty\n"
 
@@ -178,7 +167,6 @@ def render_row(values: tuple[str, ...], widths: list[int]) -> str:
 
 
 def age(entry: spool.Entry, now: float) -> str:
-    """How long it has been in its current phase: waiting, or running."""
     since = entry.state.started_unix or entry.job.submitted_unix
     if entry.is_terminal and entry.state.finished_unix:
         since = entry.state.finished_unix

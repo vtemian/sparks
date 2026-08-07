@@ -1,8 +1,7 @@
 # Installing and using sparks
 
 Everything an agent needs to install sparks, submit a training run, and find out what
-happened to it. No design rationale: that is `docs/DECISIONS.md`, and you do not need it
-to operate this.
+happened to it.
 
 sparks owns training runs — emitting their metrics, launching them, queueing them. The box
 itself (Prometheus, Grafana, the image registry, the queue container) is provisioned by

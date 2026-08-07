@@ -1,7 +1,3 @@
-"""One `.prom` file holding every completed run, rebuilt from the summaries,
-and beside it a second file holding the live queue. This module owns the
-node_exporter text format; everything it writes is a gauge."""
-
 import logging
 import math
 from collections import Counter
@@ -92,16 +88,9 @@ NUMERIC: tuple[Numeric, ...] = (
         lambda s: s.final_loss,
     ),
 )
-"""Joules, never watt-hours: Prometheus naming guidance is base units, and
-`promtool check metrics` warns. Divide by 3600 in the panel."""
 
 
 def rebuild(runs_dir: Path, target: Path) -> int:
-    """Rewrite `target` from every terminal run under `runs_dir`, and return how
-    many runs the index now holds.
-
-    The read and the write are locked together: `write_atomically` makes the
-    write atomic, not the read-modify-write around it."""
     with shared.exclusive(target.parent):
         runs = [run for run in load_all(runs_dir) if run.is_terminal]
         summary.write_atomically(target, lambda: render(runs))
@@ -109,8 +98,6 @@ def rebuild(runs_dir: Path, target: Path) -> int:
 
 
 def load_all(runs_dir: Path) -> list[summary.Summary]:
-    """Every readable `summary.json` under `runs_dir`. One unreadable file must
-    not cost every other run its row."""
     runs = []
     for path in sorted(runs_dir.glob(f"*/{summary.FILENAME}")):
         try:
@@ -121,7 +108,6 @@ def load_all(runs_dir: Path) -> list[summary.Summary]:
 
 
 def render(runs: Iterable[summary.Summary]) -> str:
-    """The whole run index, or an empty string when there is nothing to write."""
     terminal = sorted(
         (run for run in runs if run.is_terminal), key=lambda run: run.run_id
     )
@@ -156,8 +142,6 @@ def render(runs: Iterable[summary.Summary]) -> str:
 
 
 def render_queue(entries: Iterable["spool.Entry"], heartbeat: float) -> str:
-    """The queue as it stands right now. `heartbeat` is written even on an empty
-    queue: it is the only thing that tells an idle box from a dead runner."""
     jobs = list(entries)
     lines = job_rows(jobs) + depth_rows(jobs) + stamp_rows(jobs)
     lines += family(QUEUE_HEARTBEAT, QUEUE_HEARTBEAT_HELP)
@@ -226,8 +210,6 @@ def family(name: str, help_text: str) -> list[str]:
 
 
 def sample(name: str, labels: dict[str, str], value: float) -> str:
-    """A sample line, never with an explicit timestamp: one makes the collector
-    skip the entire file."""
     if not labels:
         return f"{name} {number(value)}"
     pairs = ",".join(f'{key}="{escape(value)}"' for key, value in labels.items())
@@ -235,15 +217,12 @@ def sample(name: str, labels: dict[str, str], value: float) -> str:
 
 
 def escape(value: str) -> str:
-    """The only three escapes the text format defines. Backslash first, or the
-    backslashes the other two introduce get escaped a second time."""
     escaped = value.replace("\\", "\\\\")
     escaped = escaped.replace('"', '\\"')
     return escaped.replace("\n", "\\n")
 
 
 def number(value: float) -> str:
-    """Prometheus's float syntax."""
     if math.isnan(value):
         return "NaN"
     if math.isinf(value):

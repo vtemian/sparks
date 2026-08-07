@@ -1,6 +1,4 @@
-"""fire — queue daemon and control verbs. Without a leading verb the flags are
-the daemon's, so compose can pass `--url … --shared-dir …` directly; a leading
-token in ctl.VERBS is the SSH-RPC control surface instead."""
+"""fire: drain the queue and supervise each job."""
 
 import argparse
 import logging
@@ -15,7 +13,6 @@ LOG = logging.getLogger("sparks")
 
 
 def serve(args: argparse.Namespace) -> int:
-    """The queue container's entry point."""
     contract = box.load()
     shared_dir = args.shared_dir or (contract.shared_dir if contract else None)
     if shared_dir is None:
@@ -52,8 +49,6 @@ def serve(args: argparse.Namespace) -> int:
 
 
 def runner_url(contract: box.Box | None) -> str:
-    """Prometheus as reachable from inside the queue container: the contract's
-    URL is loopback, which in here is this container."""
     if contract is None:
         return ""
 

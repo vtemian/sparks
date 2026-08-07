@@ -1,4 +1,4 @@
-"""fire control verbs — the SSH-RPC surface inside the queue container."""
+"""fire control verbs, over SSH from a laptop."""
 
 from __future__ import annotations
 

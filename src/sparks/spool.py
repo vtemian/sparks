@@ -1,7 +1,3 @@
-"""The queue on disk: one directory per job, owned by the account that submitted
-it. `job.json` is the submission, written once by the client; `state.json` is
-everything that changes, written only by the runner."""
-
 import contextlib
 import json
 import logging
@@ -19,7 +15,6 @@ LOG = logging.getLogger("sparks")
 JOB_FILE = "job.json"
 STATE_FILE = "state.json"
 CONTEXT_DIR = "context"
-"""Legacy name; jobs no longer ship a build context."""
 DATA_DIR = "data"
 PULL_LOG = "pull.log"
 LAUNCH_LOG = "launch.log"
@@ -28,8 +23,6 @@ RUN_ID_FILE = "run_id"
 REQUESTS_DIR = "requests"
 
 QUEUE_MODE = 0o3775
-"""setgid, group-writable and STICKY. Without sticky, group-write on the queue
-is permission to unlink anyone's queued job."""
 
 QUEUED = "queued"
 BUILDING = "building"
@@ -41,14 +34,12 @@ ABORTED = "aborted"
 UNKNOWN = "unknown"
 
 TERMINAL = frozenset({FINISHED, FAILED, CANCELLED, ABORTED})
-"""Where a job stops. Deliberately not `summary.STATUSES`."""
 
 CANCEL = "cancel"
 ABORT = "abort"
 ACTIONS = frozenset({CANCEL, ABORT})
 
 RETENTION_SECONDS = 6 * 3600.0
-"""How long a finished job keeps a row in the metrics file."""
 
 
 @dataclass(frozen=True)
@@ -56,7 +47,6 @@ class Job:
     job_id: str
     name: str
     user: str
-    """For display only. Authorisation goes through `owner_uid`."""
     command: list[str]
     submitted_unix: float
     image: str
@@ -86,14 +76,12 @@ class Job:
 class State:
     state: str = QUEUED
     image: str | None = None
-    """The digest actually pulled, not the tag it was asked for."""
     run_id: str | None = None
     container_id: str | None = None
     started_unix: float | None = None
     finished_unix: float | None = None
     exit_code: int | None = None
     detail: str | None = None
-    """Why it ended this way, when the state alone does not say."""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -116,7 +104,6 @@ class State:
 class Request:
     action: str
     uid: int
-    """From `stat`, never from the file's name or contents."""
     path: Path
 
 
@@ -140,8 +127,6 @@ class Entry:
         return self.path / DATA_DIR
 
     def may_be_controlled_by(self, uid: int) -> bool:
-        """Whether `uid` may cancel, abort or remove this job. root is the
-        runner, acting on everyone's behalf."""
         return uid in (0, self.owner_uid)
 
 
@@ -157,8 +142,6 @@ def reserve(
 
 
 def commit(path: Path, job: Job) -> Entry:
-    """Write the manifest LAST, once `--data` is in place: its presence is what
-    makes the job visible, so a runner cannot mount a half-copied tree."""
     summary.write_atomically(
         path / JOB_FILE, lambda: json.dumps(job.to_dict(), indent=2) + "\n"
     )
@@ -195,8 +178,6 @@ def submit(
 
 
 def load(path: Path) -> Entry:
-    """One job directory. Raises when the manifest is missing, which is how
-    `entries` tells a job from any other directory."""
     manifest = path / JOB_FILE
     with manifest.open(encoding="utf-8") as handle:
         job = Job.from_dict(json.load(handle))
@@ -209,8 +190,6 @@ def load(path: Path) -> Entry:
 
 
 def entries(queue_dir: Path) -> list[Entry]:
-    """Every readable job, oldest submission first. Unreadable ones are skipped:
-    one bad directory must not stop the runner picking anything up."""
     found = []
     for path in sorted(queue_dir.glob(f"*/{JOB_FILE}")):
         try:
@@ -221,8 +200,6 @@ def entries(queue_dir: Path) -> list[Entry]:
 
 
 def next_queued(queue_dir: Path) -> Entry | None:
-    """The job to start now, or None. Strictly `QUEUED`: an unparseable state
-    might be hiding `running`."""
     return next(
         (entry for entry in entries(queue_dir) if entry.state.state == QUEUED),
         None,
@@ -232,8 +209,6 @@ def next_queued(queue_dir: Path) -> Entry | None:
 def publishable(
     queue_dir: Path, now: float | None = None, retention: float = RETENTION_SECONDS
 ) -> list[Entry]:
-    """The jobs worth a row in the metrics file: everything live, whatever its
-    age, plus anything that finished recently."""
     moment = time.time() if now is None else now
     keep = []
     for entry in entries(queue_dir):
@@ -262,8 +237,6 @@ def advance(path: Path, **changes: Any) -> State:  # noqa: ANN401
 
 
 def request(path: Path, action: str) -> Path:
-    """One file per requester per action, so asking twice is a no-op and two
-    people asking at once do not collide."""
     if action not in ACTIONS:
         raise ValueError(f"{action!r} is not one of {sorted(ACTIONS)}")
     directory = shared.make_dir(path / REQUESTS_DIR)
@@ -275,7 +248,6 @@ def request(path: Path, action: str) -> Path:
 
 
 def requests(path: Path) -> list[Request]:
-    """Everything asked of this job and not yet handled."""
     directory = path / REQUESTS_DIR
     found = []
     for candidate in sorted(directory.glob("*")):
@@ -301,8 +273,6 @@ def remove(path: Path) -> None:
 
 
 def read_state(path: Path) -> State:
-    """Absent means queued; unreadable means `UNKNOWN` and never queued, because
-    restarting a job that is already running costs a GPU."""
     state_path = path / STATE_FILE
     try:
         with state_path.open(encoding="utf-8") as handle:

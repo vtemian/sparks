@@ -1,6 +1,3 @@
-"""Wrap a training command: measure what it cost, record how it ended. Owns the
-run's identity, its energy window, and its lifecycle series."""
-
 import contextlib
 import logging
 import signal
@@ -23,7 +20,6 @@ from sparks.run import current_user, git_sha
 LOG = logging.getLogger("sparks")
 
 BASELINE_SECONDS = 60.0
-"""The idle window, sampled in-process from the counters the run is measured on."""
 
 
 @dataclass(frozen=True)
@@ -44,13 +40,6 @@ def launch(
     on_reserved: Callable[[str, Path], None] | None = None,
     sha: str | None = None,
 ) -> Launched:
-    """Run `command` as a training run and leave a permanent record of it.
-
-    `url` is the Prometheus to push to, or None to record to disk only.
-    `on_reserved` is handed the run id as soon as it exists, long before this
-    returns. `sha` overrides the recorded commit, which otherwise comes from the
-    working directory and is the framework's own when the queue runs this.
-    """
     run = reserved(command, name, shared_dir, on_reserved, sha)
     if sampler is None:
         sampler = Sampler.detect()
@@ -100,8 +89,6 @@ def launch(
 
 @dataclass(frozen=True)
 class _Run:
-    """Who ran what, and where it lands: fixed the moment the run is reserved."""
-
     id: str
     dir: Path
     shared_dir: Path
@@ -118,8 +105,6 @@ def reserved(
     on_reserved: Callable[[str, Path], None] | None,
     sha: str | None,
 ) -> _Run:
-    """Only the persisted and pushed copies are cleaned here; the child is still
-    exec'd with the ORIGINAL argv."""
     user = shared.clean(current_user())
     run_name = shared.clean(name, "run")
     # mkdir raising EEXIST is the only atomic uniqueness guarantee.
@@ -145,9 +130,6 @@ def reserved(
 
 @dataclass(frozen=True)
 class _Window:
-    """The measurement window at the moment it opened. Every field but
-    `opened_at` is named for the `EnergyReading` field it will close."""
-
     total_joules: float | None
     gpu_nvml_joules: float | None
     gpu_firmware_joules: float | None
@@ -201,8 +183,6 @@ def close_window(
     completed: Completed,
     baseline_seconds: float,
 ) -> summary.Energy:
-    """`sampler` must be the one that took the start reads: a delta whose two
-    endpoints come from different counters is not a measurement."""
     measured_seconds = max(
         completed.duration_seconds, time.monotonic() - window.opened_at
     )
@@ -239,7 +219,6 @@ def close_window(
 def crashed(
     run: _Run, metrics: RunMetrics | None, command: list[str], error: Exception
 ) -> Launched:
-    """A command that does not exist, or a failure inside the supervisor."""
     LOG.exception("sparks: could not run %s: %s", command, error)
     try:
         record_failed_launch(run, str(error))
@@ -253,8 +232,6 @@ def crashed(
 
 
 def cancelled(run: _Run, baseline_seconds: float, abort: "_AbortError") -> Launched:
-    """Stopped during the baseline: nothing was pushed, so there is nothing to
-    end and nothing to stale, and the index rebuild is the whole obligation."""
     LOG.warning("sparks: %s before the run started; recording it stopped", abort)
     try:
         record_failed_launch(
@@ -315,8 +292,6 @@ def record_failed_launch(
 
 
 def rebuild(shared_dir: Path) -> None:
-    """Refresh the run index. Never raises: a corrupt summary somewhere else, or
-    a box with no textfile directory, must not read as this run having failed."""
     runs_dir = shared_dir / "runs"
     LOG.debug("sparks: rebuilding the run index from %s", runs_dir)
     try:
@@ -330,8 +305,6 @@ def rebuild(shared_dir: Path) -> None:
 
 
 class _AbortError(Exception):
-    """A stop signal arrived before there was a child to forward it to."""
-
     def __init__(self, signum: int) -> None:
         self.signum = signum
         super().__init__(signal.Signals(signum).name)
@@ -343,10 +316,6 @@ class _AbortError(Exception):
 
 @contextlib.contextmanager
 def interruptible() -> Iterator[None]:
-    """Turn SIGINT and SIGTERM into an exception for the duration. Raising from a
-    handler is safe only here, where there is no child to orphan and nothing to
-    reap; `process.py`'s handler must never raise. Handlers are restored after,
-    so `Supervisor` installs its own over a clean slate."""
 
     signums = (signal.SIGINT, signal.SIGTERM)
     previous = {

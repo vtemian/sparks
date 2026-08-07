@@ -1,7 +1,3 @@
-"""What a run cost: the box's hwmon power and energy channels, NVML's GPU
-counter, and the idle baseline they are measured against. Every accessor
-degrades to None rather than raising."""
-
 import functools
 import importlib
 import math
@@ -23,7 +19,6 @@ GPU_ENERGY_LABELS = ("gpu",)
 
 SOURCE_RATIO = 1.22
 RATIO_TOLERANCE = 0.15
-"""Relative to SOURCE_RATIO, never absolute: the whole observed spread is 2.1%."""
 
 BUSY_GPU_WATTS = 10.0
 UNDER_BASELINE_FRACTION = 0.9
@@ -47,8 +42,6 @@ class Baseline:
 
 @dataclass(frozen=True)
 class EnergyReading:
-    """What the run drew. None means unmeasured, and never 0.0."""
-
     total_joules: float | None
     gpu_nvml_joules: float | None
     gpu_firmware_joules: float | None
@@ -87,8 +80,6 @@ class EnergyReading:
 
 
 class Sampler:
-    """Reads the box's energy sensors, or reports zeros where there are none."""
-
     def __init__(
         self,
         nvml: Callable[[], float] | None = None,
@@ -140,9 +131,6 @@ class Sampler:
         return value if math.isfinite(value) else None
 
     def baseline(self, seconds: float) -> Baseline:
-        """Idle power over `seconds`, whole-box and GPU-rail, before the run.
-
-        Never call it during the run it is the baseline for."""
         if seconds <= 0:
             return Baseline(0.0, 0.0)
         if self.has_energy_counter:
@@ -172,7 +160,6 @@ class Sampler:
 
 
 def channel(chip: Path | None, kind: str, labels: Sequence[str]) -> Path | None:
-    """The `<kind>N_input` file behind the first of `labels` this chip offers."""
     if chip is None:
         return None
     inputs: dict[str, Path] = {}
@@ -190,15 +177,12 @@ def channel(chip: Path | None, kind: str, labels: Sequence[str]) -> Path | None:
 
 
 def delta(start: float | None, end: float | None) -> float | None:
-    """How far a counter advanced, or None if either endpoint was not read."""
     if start is None or end is None or end < start:
         return None
     return end - start
 
 
 def read_micro(path: Path | None) -> float | None:
-    """A sysfs sensor in base units, or None if it is missing, unparseable,
-    non-finite, or the dead-sensor sentinel."""
     if path is None:
         return None
     try:
@@ -212,8 +196,6 @@ def read_micro(path: Path | None) -> float | None:
 
 
 def nvml_counter() -> Callable[[], float] | None:
-    """NVML's total energy counter in millijoules, or None where NVML is not
-    available. Imported by name: nvidia-ml-py is absent off the box."""
     try:
         nvml = importlib.import_module("pynvml")
     except ImportError:

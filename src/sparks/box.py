@@ -1,7 +1,3 @@
-"""What the box provides, as `/etc/sparks/box.toml` declared it. This module
-reads that file and nothing else: it creates no directories and guesses no
-paths, because a run recorded where nothing reads it is what it prevents."""
-
 import os
 import tomllib
 from dataclasses import dataclass
@@ -13,12 +9,10 @@ PATHS = ("shared_dir", "textfile_dir")
 STRINGS = ("shared_group", "prometheus_url", "grafana_url", "registry_url")
 
 
-class NotProvisionedError(Exception):
-    """This box carries no sparks contract, so nothing knows where to write."""
+class NotProvisionedError(Exception): ...
 
 
-class MalformedError(Exception):
-    """The contract exists but cannot be read. Someone edited it by hand."""
+class MalformedError(Exception): ...
 
 
 @dataclass(frozen=True)
@@ -40,8 +34,6 @@ class Box:
 
 
 def load(path: Path | None = None) -> Box | None:
-    """The contract, or None when this box has none: whether that is fatal is
-    the caller's decision."""
     path = path or config_path()
     try:
         raw = path.read_bytes()
@@ -72,8 +64,6 @@ def config_path() -> Path:
 
 
 def preflight(target: Box) -> list[str]:
-    """Everything wrong with what the contract promised, one complaint per
-    problem so a reader fixes them all in one pass."""
     return [
         complaint
         for complaint in (usable(target.runs_dir), usable(textfile_dir(target)))
@@ -82,7 +72,6 @@ def preflight(target: Box) -> list[str]:
 
 
 def textfile_dir(target: Box | None = None) -> Path:
-    """Where node_exporter reads .prom files from."""
     # The override beats the contract, or the suite runs against the real index.
     override = os.environ.get("SPARKS_TEXTFILE_DIR")
     if override:
