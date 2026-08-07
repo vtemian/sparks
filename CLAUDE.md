@@ -34,11 +34,10 @@ Reserve comments for the argument a log line cannot carry: an ordering
 constraint, a measured number, an alternative that was tried and lost.
 
 ### Say a shared constraint once
-A rule that governs several call sites belongs in the module docstring that
-owns it, stated once, with the call sites naming only their local consequence.
-Re-deriving the same argument at every site is how this file reached 29% prose:
-one fact about remote-write rollback had been written out nine times. If the
-rule spans modules, it goes in docs/DECISIONS.md and the code points at it.
+A rule governing several call sites goes in docs/DECISIONS.md, once, and the
+call sites name only their local consequence in a line each. Re-deriving the
+same argument everywhere is how the source reached 29% prose: one fact about
+remote-write rollback had been written out nine times across six files.
 
 ### No nesting, and no helper soup
 Flatten control flow with guard clauses and early returns. One level of
@@ -74,14 +73,24 @@ exception is a handler that re-raises or logs a traceback: ruff does not call
 those blind, so a directive there fails the gate the other way.
 docs/DECISIONS.md names the four sites that correctly carry none.
 
-### Comments say why, never what
-The house style is prose that argues: the measured number, the rejected
-alternative, the incident that produced the rule. If a comment restates the
-code, delete it. Module constants carry their own docstrings. No section
-banners (`# -- title ---`, `# ====`); structure is modules and functions.
-`tests/check_banners.py` enforces that. No `#` comments before the first
-top-level `def`/`class` — put the argument in the module docstring or on the
-binding (`tests/check_file_header.py`). Both run from `make lint`.
+### Write almost none
+The default is no comment and no docstring. `src` runs at about 11% prose and
+that is the ceiling, not a floor to grow back toward. Before writing either,
+try the other two homes first: a `LOG.debug` line if it describes what happens
+at runtime, or docs/DECISIONS.md if it is a measurement, a rejected
+alternative, or an incident. Those belong in the record, not beside the code
+that happens to have provoked them.
+
+What stays in the source is one short line, on the statement it guards, when
+violating it causes a bug someone would otherwise introduce: an ordering that
+looks reorderable, a value that must not be recomputed, a field whose legal
+values a caller cannot otherwise know. If it does not meet that test, delete it.
+
+A docstring that restates the name is worse than none, because it costs a
+reader a detour to learn nothing. Module docstrings are two or three lines
+saying what the module owns. No section banners (`# -- title ---`, `# ====`)
+and no `#` comments before the first top-level `def`/`class`
+(`tests/check_banners.py`, `tests/check_file_header.py`, both from `make lint`).
 
 ### Classes only where state is the point
 Dataclasses for structured data, exceptions, protocols, and stateful
