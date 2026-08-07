@@ -398,6 +398,23 @@ class TestBuildAndPush:
             client.push("spark.local:5000/u/n:r")
 
 
+class TestWhoSubmitted:
+    def test_the_ssh_account_is_who_submitted_not_the_laptop_account(self) -> None:
+        assert client.submitting_user("vlad@spark.local") == "vlad"
+
+    def test_a_host_with_no_account_falls_back_to_the_local_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(client, "local_user", lambda: "whitemonk")
+        assert client.submitting_user("spark.local") == "whitemonk"
+
+    def test_an_ipv6_style_host_is_not_mistaken_for_an_account(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(client, "local_user", lambda: "whitemonk")
+        assert client.submitting_user("[fe80::1]") == "whitemonk"
+
+
 class TestSubmitRemote:
     def test_submit_remote_builds_pushes_rsyncs_data_then_commits(
         self,

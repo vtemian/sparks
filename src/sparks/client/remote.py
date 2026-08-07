@@ -302,7 +302,7 @@ def submit_remote(
     if not data.is_dir():
         raise ClientError(f"--data {data} is not a directory")
 
-    who = local_user()
+    who = submitting_user(host)
     sha, dirty = provenance(context)
     if image is None and registry_url is None:
         registry_url = fetch_registry_url(host)
@@ -367,6 +367,16 @@ def commit_argv(
 
     argv += ["--image", image]
     return [*argv, "--", *command]
+
+
+def submitting_user(host: str) -> str:
+    # The account the job will actually run under on the box, which is the one
+    # ssh authenticates, not whoever happens to be logged in on this laptop.
+    account, _, rest = host.partition("@")
+    if rest and account:
+        return account
+
+    return local_user()
 
 
 def local_user() -> str:
