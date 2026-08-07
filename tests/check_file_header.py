@@ -46,9 +46,7 @@ def violations_in(path: Path) -> list[str]:
         if lineno >= cutoff:
             break
         if is_header_comment(line, lineno=lineno):
-            hits.append(
-                f"{path}:{lineno}: header `#` comment — move into a docstring"
-            )
+            hits.append(f"{path}:{lineno}: header `#` comment — move into a docstring")
     return hits
 
 

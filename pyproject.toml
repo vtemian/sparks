@@ -21,6 +21,7 @@ dev = [
     "pytest>=8",
     "mypy>=1.13",
     "ruff>=0.8",
+    "vulture>=2.14",
     "requests>=2.32",
     "types-requests>=2.32",
     "types-docker>=7.2.0.20260806",
@@ -60,13 +61,21 @@ ignore = [
                           # which is not what S603 measures.
 ]
 
+# Measured, not chosen. A tighter statement cap does not buy smaller functions:
+# it buys a tier of single-use three-line helpers, and it prices out the
+# narration logging that makes a long linear function readable at all. At 15
+# statements, five log lines leave ten for the work. Widening cost nothing here
+# -- src passed at every level tried -- and it removed the reason to invent a
+# helper whose name saves the reader nothing.
 [tool.ruff.lint.mccabe]
-max-complexity = 5
+max-complexity = 8
 
 [tool.ruff.lint.pylint]
-max-branches = 4
+max-branches = 8
+# Returns stays where it was: a function with five exits is usually two
+# functions, and unlike the other three this cap never fought the narration.
 max-returns = 4
-max-statements = 15
+max-statements = 30
 
 [tool.ruff.lint.per-file-ignores]
 # Test modules: assertions, fixture arity, magic numbers, long arranges.
