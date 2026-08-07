@@ -129,18 +129,24 @@ def classify(returncode: int, interrupted_by: int | None) -> Outcome:
         )
 
     signum = -returncode
-    if interrupted_by is not None:
-        status = "cancelled"
-    elif signum == signal.SIGKILL:
-        status = "killed"  # may be OOM; only the cgroup counter decides
-    else:
-        status = "crashed"
     return Outcome(
-        status,
+        _status_for_signal(signum, interrupted_by),
         exit_code=None,
         signal_name=signal.Signals(signum).name,
         wrapper_exit=clamp_exit(128 + signum),
     )
+
+
+def _status_for_signal(signum: int, interrupted_by: int | None) -> str:
+    """The status when the child died to a signal. Being told to stop outranks
+    whichever signal actually killed the child: an operator's Ctrl-C often
+    lands as the child's SIGKILL after escalation, and that run was cancelled,
+    not killed."""
+    if interrupted_by is not None:
+        return "cancelled"
+    if signum == signal.SIGKILL:
+        return "killed"  # may be OOM; only the cgroup counter decides
+    return "crashed"
 
 
 def oom_kills(cgroup: Path | None) -> int:
@@ -148,20 +154,48 @@ def oom_kills(cgroup: Path | None) -> int:
     read. Never raises: development happens on macOS, where there is no cgroup
     filesystem at all, and a run must not fail because it could not be
     attributed."""
-    if cgroup is None:
-        return 0
-    try:
-        text = (cgroup / "memory.events.local").read_text()
-    except OSError:
-        return 0
-    for line in text.splitlines():
+    for line in _events_text(cgroup).splitlines():
+        # cgroup v2 writes `key value`; partition never raises, so a line with
+        # no space falls through rather than failing the read.
         key, _, value = line.partition(" ")
         if key == "oom_kill":
-            try:
-                return int(value)
-            except ValueError:
-                return 0
+            return _int_or_zero(value)
     return 0
+
+
+def _events_text(cgroup: Path | None) -> str:
+    """`memory.events.local`, or "" when there is no cgroup or it cannot be
+    read -- the caller then finds no counter and reports 0."""
+    if cgroup is None:
+        return ""
+    try:
+        return (cgroup / "memory.events.local").read_text()
+    except OSError:
+        return ""
+
+
+def _int_or_zero(value: str) -> int:
+    """The counter as an int, or 0: `oom_kills` promises never to raise."""
+    try:
+        return int(value)
+    except ValueError:
+        return 0
+
+
+@dataclass(frozen=True)
+class _Reaped:
+    """The terminal facts of one run, taken the moment the child is reaped.
+
+    Frozen because everything after the reap is cleanup, and a signal landing
+    during cleanup must not re-write how the run ended.
+    """
+
+    returncode: int
+    ended_wall: float
+    ended_mono: float
+    interrupted_by: int | None
+    escalated: bool
+    oom_after: int
 
 
 class Supervisor:
@@ -195,7 +229,12 @@ class Supervisor:
         self.drain_seconds = drain_seconds
         self.sweep_seconds = sweep_seconds
         self.poll_seconds = poll_seconds
+        self._blank_state()
 
+    def _blank_state(self) -> None:
+        """The run's own state, all of it. Every field must exist before
+        `run()` is called: `_forward` fires between bytecodes and reads them
+        with no launch having happened yet."""
         self.child: subprocess.Popen[bytes] | None = None
         self.pgid: int | None = None
         self.interrupted_by: int | None = None
@@ -210,91 +249,127 @@ class Supervisor:
         only exceptions that escape are failures to launch at all."""
         started_wall, started_mono = time.time(), time.monotonic()
         oom_before = oom_kills(self.cgroup)
-        log = self.log_path.open("wb")
-        # "wb" lands 0600 under umask 077, so the colleague whose GPU this run
-        # is hogging cannot read its log. chmod is never masked; suppress the
-        # EPERM that a directory another user owns would raise.
-        with contextlib.suppress(OSError):
-            os.chmod(self.log_path, FILE_MODE)
+        log = self._open_log()
         reader: io.BufferedReader | None = None
         tee: threading.Thread | None = None
         try:
-            # Handlers before the child exists, so a signal arriving in the gap
-            # is recorded and delivered as soon as there is something to deliver
-            # it to. The alternative loses it to the default disposition, which
-            # kills the wrapper and orphans the child it just spawned.
-            self._install()
-            self.child = subprocess.Popen(
-                self.command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,  # one stream, interleaved in order
-                stdin=subprocess.DEVNULL,  # a training run must never wait on a read
-                start_new_session=True,
-                bufsize=0,
-                cwd=self.cwd,
-                # Detail: a pipe switches CPython from line to block buffering.
-                # Five lines printed at 0.3s intervals arrived in one burst at
-                # t=1.54s without this, and at 0.02/0.32/0.62/0.92/1.23s with it.
-                env={**os.environ, "PYTHONUNBUFFERED": "1", **self.env},
-            )
-            self._capture_pgid()
-            if self.interrupted_by is not None:
-                self._deliver(signal.SIGKILL if self.escalated else self.interrupted_by)
-
-            stdout = self.child.stdout
-            assert stdout is not None  # stdout=PIPE
-            # `bufsize=0` hands back a raw FileIO, whose readline costs one
-            # syscall per byte. Buffering here adds no latency -- readline
-            # returns as soon as a newline is in the buffer -- and keeps 100k
-            # lines of training output from becoming millions of syscalls.
-            reader = io.BufferedReader(cast("io.RawIOBase", stdout))
-            tee = threading.Thread(
-                target=self._tee, args=(reader, log), name="sparks-tee", daemon=True
-            )
-            tee.start()
-
-            returncode = self._wait_for_child()
+            reader = self._start()
+            tee = self._start_tee(reader, log)
             # Detail 5: the terminal facts are taken here, before the sweep and
             # before the tee is joined. A 1.5s run was measured as 6.5s because
             # orphaned workers held the stdout pipe open, so the tee never saw
             # EOF and its join ran the full timeout. Freezing the signal state
             # with them also keeps a Ctrl-C during cleanup from re-labelling a
             # run that had already ended on its own.
-            ended_wall, ended_mono = time.time(), time.monotonic()
-            interrupted_by, escalated = self.interrupted_by, self.escalated
-            oom_after = oom_kills(self.cgroup)
-
-            self._sweep()
-            tee.join(timeout=self.drain_seconds)
-            if tee.is_alive():
-                LOG.warning(
-                    "sparks: something still holds %s open after %.0fs; the log "
-                    "stops here",
-                    self.log_path,
-                    self.drain_seconds,
-                )
+            reaped = _Reaped(
+                returncode=self._wait_for_child(),
+                ended_wall=time.time(),
+                ended_mono=time.monotonic(),
+                interrupted_by=self.interrupted_by,
+                escalated=self.escalated,
+                oom_after=oom_kills(self.cgroup),
+            )
+            self._drain(tee)
         finally:
             self._restore()
-            # Only when the tee has finished with it. `close()` takes the same
-            # lock the reader holds while blocked in read(), so closing it under
-            # a live tee waits for the writer that outlived the drain -- which
-            # is the exact hostage situation the bounded join exists to avoid.
-            # Measured: a 0.1s run held here for 60s by three strays.
-            if reader is not None and (tee is None or not tee.is_alive()):
-                reader.close()
-            log.close()
+            self._close(reader, tee, log)
 
-        outcome = replace(
-            classify(returncode, interrupted_by), escalated_to_sigkill=escalated
-        )
-        if outcome.status == "killed" and oom_after > oom_before:
-            outcome = replace(outcome, status="oom")
         return Completed(
-            outcome=outcome,
+            outcome=self._finish(reaped, oom_before),
             started_unix=started_wall,
-            ended_unix=ended_wall,
-            duration_seconds=ended_mono - started_mono,
+            ended_unix=reaped.ended_wall,
+            duration_seconds=reaped.ended_mono - started_mono,
         )
+
+    def _open_log(self) -> IO[bytes]:
+        """The run's log, open for bytes and private to the wrapper's owner."""
+        log = self.log_path.open("wb")
+        # "wb" lands 0600 under umask 077, so the colleague whose GPU this run
+        # is hogging cannot read its log. chmod is never masked; suppress the
+        # EPERM that a directory another user owns would raise.
+        with contextlib.suppress(OSError):
+            os.chmod(self.log_path, FILE_MODE)
+        return log
+
+    def _start(self) -> io.BufferedReader:
+        """Handlers, then the child, then a buffered reader on its output."""
+        # Handlers before the child exists, so a signal arriving in the gap
+        # is recorded and delivered as soon as there is something to deliver
+        # it to. The alternative loses it to the default disposition, which
+        # kills the wrapper and orphans the child it just spawned.
+        self._install()
+        self.child = subprocess.Popen(
+            self.command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # one stream, interleaved in order
+            stdin=subprocess.DEVNULL,  # a training run must never wait on a read
+            start_new_session=True,
+            bufsize=0,
+            cwd=self.cwd,
+            # Detail: a pipe switches CPython from line to block buffering.
+            # Five lines printed at 0.3s intervals arrived in one burst at
+            # t=1.54s without this, and at 0.02/0.32/0.62/0.92/1.23s with it.
+            env={**os.environ, "PYTHONUNBUFFERED": "1", **self.env},
+        )
+        self._capture_pgid()
+        if self.interrupted_by is not None:
+            self._deliver(signal.SIGKILL if self.escalated else self.interrupted_by)
+
+        stdout = self.child.stdout
+        assert stdout is not None  # stdout=PIPE
+        # `bufsize=0` hands back a raw FileIO, whose readline costs one
+        # syscall per byte. Buffering here adds no latency -- readline
+        # returns as soon as a newline is in the buffer -- and keeps 100k
+        # lines of training output from becoming millions of syscalls.
+        return io.BufferedReader(cast("io.RawIOBase", stdout))
+
+    def _start_tee(self, reader: io.BufferedReader, log: IO[bytes]) -> threading.Thread:
+        """The tee, already running: every line the child writes from here on
+        is being echoed and logged."""
+        tee = threading.Thread(
+            target=self._tee, args=(reader, log), name="sparks-tee", daemon=True
+        )
+        tee.start()
+        return tee
+
+    def _drain(self, tee: threading.Thread) -> None:
+        """Sweep first -- until the strays are gone the pipe has no EOF -- then
+        give the tee a bounded window to finish reading."""
+        self._sweep()
+        tee.join(timeout=self.drain_seconds)
+        if tee.is_alive():
+            LOG.warning(
+                "sparks: something still holds %s open after %.0fs; the log stops here",
+                self.log_path,
+                self.drain_seconds,
+            )
+
+    def _close(
+        self,
+        reader: io.BufferedReader | None,
+        tee: threading.Thread | None,
+        log: IO[bytes],
+    ) -> None:
+        """Close what `run` opened, without ever waiting on a live tee."""
+        # Only when the tee has finished with it. `close()` takes the same
+        # lock the reader holds while blocked in read(), so closing it under
+        # a live tee waits for the writer that outlived the drain -- which
+        # is the exact hostage situation the bounded join exists to avoid.
+        # Measured: a 0.1s run held here for 60s by three strays.
+        if reader is not None and (tee is None or not tee.is_alive()):
+            reader.close()
+        log.close()
+
+    def _finish(self, reaped: _Reaped, oom_before: int) -> Outcome:
+        """Classify from the frozen facts alone, then let the cgroup counter
+        promote `killed` to `oom`."""
+        outcome = replace(
+            classify(reaped.returncode, reaped.interrupted_by),
+            escalated_to_sigkill=reaped.escalated,
+        )
+        if outcome.status == "killed" and reaped.oom_after > oom_before:
+            outcome = replace(outcome, status="oom")
+        return outcome
 
     # -- signals -------------------------------------------------------------
 
