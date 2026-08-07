@@ -157,7 +157,7 @@ class TestMain:
         fake_client = MagicMock()
 
         def run_then_mark_abort(*_a: object, **_k: object) -> MagicMock:
-            contain._abort_requested = True
+            contain._request_abort(signal.SIGTERM)
             return fake_container
 
         fake_client.containers.run.side_effect = run_then_mark_abort
