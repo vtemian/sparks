@@ -74,11 +74,11 @@ def launch(
     the framework's own directory and would otherwise record sparks' commit as
     though it were the training code's.
     """
-    rec, run_id, run_dir = _reserved(command, name, shared_dir, on_reserved, sha)
-    started = _started(run_dir, run_id, rec, shared_dir, sampler, baseline_seconds)
+    run = _reserved(command, name, shared_dir, on_reserved, sha)
+    started = _started(run, sampler, baseline_seconds)
     if isinstance(started, Launched):
         return started
-    metrics, completed = _supervised(command, run_dir, run_id, rec, shared_dir, url)
+    metrics, completed = _supervised(command, run, url)
     if isinstance(completed, Launched):
         return completed
 
@@ -89,22 +89,16 @@ def launch(
     # the dashboard forever with no end and no status.
     status = completed.outcome.status
     try:
-        _record(
-            run_dir,
-            run_id,
-            rec,
-            completed,
-            _close_window(started, completed, baseline_seconds),
-        )
+        _record(run, completed, _close_window(started, completed, baseline_seconds))
     except Exception:
         # The child completed and its exit code is faithful; losing the record
         # must neither strand a phantom on the dashboard nor lie about $?.
-        LOG.exception("sparks: could not record %s", run_id)
+        LOG.exception("sparks: could not record %s", run.id)
     finally:
         _end(metrics, status)
-        _rebuild(shared_dir)
+        _rebuild(run.shared_dir)
 
-    return Launched(run_id, status, completed.outcome.wrapper_exit, run_dir)
+    return Launched(run.id, status, completed.outcome.wrapper_exit, run.dir)
 
 
 @dataclass(frozen=True)
@@ -115,6 +109,21 @@ class _Record:
     name: str
     sha: str
     command: list[str]
+
+
+@dataclass(frozen=True)
+class _Run:
+    """Where a run lives and who it belongs to, fixed the moment it is reserved.
+
+    Threaded as one value because every failure path needs all four to write a
+    record: the id and directory to write into, the cleaned identity to write,
+    and the shared root whose index is rebuilt afterwards.
+    """
+
+    id: str
+    dir: Path
+    shared_dir: Path
+    rec: _Record
 
 
 def _cleaned(command: list[str], name: str, user: str, sha: str | None) -> _Record:
@@ -150,14 +159,14 @@ def _reserved(
     shared_dir: Path,
     on_reserved: Callable[[str, Path], None] | None,
     sha: str | None,
-) -> tuple[_Record, str, Path]:
+) -> _Run:
     """The run's durable identity: cleaned record, reserved directory, id."""
     rec = _cleaned(command, name, current_user(), sha)
     # mkdir raising EEXIST is the only atomic uniqueness guarantee, and the
     # chmod inside heals a tree left group-unreadable by an earlier umask.
     run_id, run_dir = shared.reserve_dir(shared_dir / "runs", rec.name, rec.user)
     _announce(on_reserved, run_id, run_dir)
-    return rec, run_id, run_dir
+    return _Run(id=run_id, dir=run_dir, shared_dir=shared_dir, rec=rec)
 
 
 @dataclass(frozen=True)
@@ -211,12 +220,7 @@ def _open_window(
 
 
 def _started(
-    run_dir: Path,
-    run_id: str,
-    rec: _Record,
-    shared_dir: Path,
-    sampler: Sampler | None,
-    baseline_seconds: float,
+    run: _Run, sampler: Sampler | None, baseline_seconds: float
 ) -> tuple[_Window, Sampler] | Launched:
     """The opened measurement window, or the run recorded as cancelled.
 
@@ -230,22 +234,13 @@ def _started(
     try:
         return _open_window(sampler, baseline_seconds)
     except _AbortError as e:
-        return _cancelled(run_dir, run_id, rec, shared_dir, baseline_seconds, e)
+        return _cancelled(run, baseline_seconds, e)
 
 
-def _cancelled(
-    run_dir: Path,
-    run_id: str,
-    rec: _Record,
-    shared_dir: Path,
-    baseline_seconds: float,
-    abort: "_AbortError",
-) -> Launched:
+def _cancelled(run: _Run, baseline_seconds: float, abort: "_AbortError") -> Launched:
     LOG.warning("sparks: %s before the run started; recording it stopped", abort)
     _record_failed_launch(
-        run_dir,
-        run_id,
-        rec,
+        run,
         f"stopped during the {baseline_seconds:.0f}s baseline",
         status="cancelled",
         # Nothing ran, so there is no exit code to report. `cancelled` with
@@ -253,8 +248,8 @@ def _cancelled(
         exit_code=None,
         signal_name=str(abort),
     )
-    _rebuild(shared_dir)
-    return Launched(run_id, "cancelled", 128 + abort.signum, run_dir)
+    _rebuild(run.shared_dir)
+    return Launched(run.id, "cancelled", 128 + abort.signum, run.dir)
 
 
 def _begin(metrics: RunMetrics | None) -> None:
@@ -279,33 +274,22 @@ def _child_env(run_id: str, url: str | None) -> dict[str, str]:
 
 
 def _supervised(
-    command: list[str],
-    run_dir: Path,
-    run_id: str,
-    rec: _Record,
-    shared_dir: Path,
-    url: str | None,
+    command: list[str], run: _Run, url: str | None
 ) -> tuple[RunMetrics | None, Completed | Launched]:
     """The supervisor's emitter and how the run ended: its `Completed`, or the
     crashed record when the child could not run at all."""
-    metrics = _supervisor_metrics(run_id, rec.name, url, rec.sha)
+    metrics = _supervisor_metrics(run.id, run.rec.name, url, run.rec.sha)
     _begin(metrics)
     try:
         return metrics, Supervisor(
-            command, log_path=run_dir / "output.log", env=_child_env(run_id, url)
+            command, log_path=run.dir / "output.log", env=_child_env(run.id, url)
         ).run()
     except Exception as e:  # noqa: BLE001 -- any failure to run still owes a record
-        return metrics, _crashed(run_dir, run_id, rec, shared_dir, metrics, command, e)
+        return metrics, _crashed(run, metrics, command, e)
 
 
 def _crashed(
-    run_dir: Path,
-    run_id: str,
-    rec: _Record,
-    shared_dir: Path,
-    metrics: RunMetrics | None,
-    command: list[str],
-    error: Exception,
+    run: _Run, metrics: RunMetrics | None, command: list[str], error: Exception
 ) -> Launched:
     """A command that does not exist, or a failure inside the supervisor.
 
@@ -315,10 +299,10 @@ def _crashed(
     gets a status.
     """
     LOG.exception("sparks: could not run %s", command)
-    _record_failed_launch(run_dir, run_id, rec, str(error))
+    _record_failed_launch(run, str(error))
     _end(metrics, "crashed")
-    _rebuild(shared_dir)
-    return Launched(run_id, "crashed", 127, run_dir)
+    _rebuild(run.shared_dir)
+    return Launched(run.id, "crashed", 127, run.dir)
 
 
 def _close_window(
@@ -379,19 +363,13 @@ def _close_window(
     )
 
 
-def _record(
-    run_dir: Path,
-    run_id: str,
-    rec: _Record,
-    completed: Completed,
-    reading: summary.Energy,
-) -> None:
+def _record(run: _Run, completed: Completed, reading: summary.Energy) -> None:
     record = summary.Summary(
-        run_id=run_id,
-        run_name=rec.name,
-        user=rec.user,
-        git_sha=rec.sha,
-        command=rec.command,
+        run_id=run.id,
+        run_name=run.rec.name,
+        user=run.rec.user,
+        git_sha=run.rec.sha,
+        command=run.rec.command,
         started_unix=completed.started_unix,
         ended_unix=completed.ended_unix,
         duration_seconds=completed.duration_seconds,
@@ -401,7 +379,7 @@ def _record(
         escalated_to_sigkill=completed.outcome.escalated_to_sigkill,
         energy=reading,
     )
-    summary.save(record, run_dir)
+    summary.save(record, run.dir)
 
 
 def _supervisor_metrics(
@@ -477,9 +455,7 @@ def _interruptible() -> Iterator[None]:
 
 
 def _record_failed_launch(
-    run_dir: Path,
-    run_id: str,
-    rec: _Record,
+    run: _Run,
     error: str,
     status: str = "crashed",
     exit_code: int | None = 127,
@@ -488,11 +464,11 @@ def _record_failed_launch(
     now = time.time()
     summary.save(
         summary.Summary(
-            run_id=run_id,
-            run_name=rec.name,
-            user=rec.user,
-            git_sha=rec.sha,
-            command=list(rec.command),
+            run_id=run.id,
+            run_name=run.rec.name,
+            user=run.rec.user,
+            git_sha=run.rec.sha,
+            command=list(run.rec.command),
             started_unix=now,
             ended_unix=now,
             duration_seconds=0.0,
@@ -515,9 +491,9 @@ def _record_failed_launch(
                 gpu_sources=SOURCES_UNMEASURED,
             ),
         ),
-        run_dir,
+        run.dir,
     )
     # FileNotFoundError's message carries the bad byte straight from argv, so
     # write_text(error) would raise UnicodeEncodeError inside launch()'s except
     # and escape with a traceback. clean() is the same one-boundary fix.
-    (run_dir / "error.txt").write_text(shared.clean(error, "", limit=4000) + "\n")
+    (run.dir / "error.txt").write_text(shared.clean(error, "", limit=4000) + "\n")
