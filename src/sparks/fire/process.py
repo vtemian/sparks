@@ -255,20 +255,7 @@ class Supervisor:
         try:
             reader = self._start()
             tee = self._start_tee(reader, log)
-            # Detail 5: the terminal facts are taken here, before the sweep and
-            # before the tee is joined. A 1.5s run was measured as 6.5s because
-            # orphaned workers held the stdout pipe open, so the tee never saw
-            # EOF and its join ran the full timeout. Freezing the signal state
-            # with them also keeps a Ctrl-C during cleanup from re-labelling a
-            # run that had already ended on its own.
-            reaped = _Reaped(
-                returncode=self._wait_for_child(),
-                ended_wall=time.time(),
-                ended_mono=time.monotonic(),
-                interrupted_by=self.interrupted_by,
-                escalated=self.escalated,
-                oom_after=oom_kills(self.cgroup),
-            )
+            reaped = self._reap()
             self._drain(tee)
         finally:
             self._restore()
@@ -279,6 +266,26 @@ class Supervisor:
             started_unix=started_wall,
             ended_unix=reaped.ended_wall,
             duration_seconds=reaped.ended_mono - started_mono,
+        )
+
+    def _reap(self) -> _Reaped:
+        """Detail 5: wait for the child, then freeze every terminal fact.
+
+        Taken before the sweep and before the tee is joined. A 1.5s run was
+        measured as 6.5s because orphaned workers held the stdout pipe open, so
+        the tee never saw EOF and its join ran the full timeout. Freezing the
+        signal state with them also keeps a Ctrl-C during cleanup from
+        re-labelling a run that had already ended on its own. The wait is its
+        own statement so the order does not rest on argument evaluation.
+        """
+        returncode = self._wait_for_child()
+        return _Reaped(
+            returncode=returncode,
+            ended_wall=time.time(),
+            ended_mono=time.monotonic(),
+            interrupted_by=self.interrupted_by,
+            escalated=self.escalated,
+            oom_after=oom_kills(self.cgroup),
         )
 
     def _open_log(self) -> IO[bytes]:
