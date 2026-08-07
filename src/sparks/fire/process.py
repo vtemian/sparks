@@ -154,20 +154,32 @@ def oom_kills(cgroup: Path | None) -> int:
     read. Never raises: development happens on macOS, where there is no cgroup
     filesystem at all, and a run must not fail because it could not be
     attributed."""
-    if cgroup is None:
-        return 0
-    try:
-        text = (cgroup / "memory.events.local").read_text()
-    except OSError:
-        return 0
-    for line in text.splitlines():
+    for line in _events_text(cgroup).splitlines():
+        # cgroup v2 writes `key value`; partition never raises, so a line with
+        # no space falls through rather than failing the read.
         key, _, value = line.partition(" ")
         if key == "oom_kill":
-            try:
-                return int(value)
-            except ValueError:
-                return 0
+            return _int_or_zero(value)
     return 0
+
+
+def _events_text(cgroup: Path | None) -> str:
+    """`memory.events.local`, or "" when there is no cgroup or it cannot be
+    read -- the caller then finds no counter and reports 0."""
+    if cgroup is None:
+        return ""
+    try:
+        return (cgroup / "memory.events.local").read_text()
+    except OSError:
+        return ""
+
+
+def _int_or_zero(value: str) -> int:
+    """The counter as an int, or 0: `oom_kills` promises never to raise."""
+    try:
+        return int(value)
+    except ValueError:
+        return 0
 
 
 class Supervisor:
