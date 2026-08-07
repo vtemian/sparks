@@ -104,19 +104,26 @@ def exclusive(directory: Path, timeout: float = 30.0) -> Iterator[None]:
     """
     fd = os.open(str(directory), os.O_RDONLY)
     try:
-        deadline = time.monotonic() + timeout
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    msg = f"{directory} was locked for over {timeout:g}s"
-                    raise TimeoutError(msg) from None
-                time.sleep(0.05)
+        _grab(fd, directory, timeout)
         yield
     finally:
         os.close(fd)  # releases the lock
+
+
+def _grab(fd: int, directory: Path, timeout: float) -> None:
+    """Poll for the lock rather than block on it: a blocking `flock` has no
+    deadline, so a wedged holder would hang every later rebuild forever. The
+    50ms retry costs at most one sleep of extra wait over a blocking call."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                msg = f"{directory} was locked for over {timeout:g}s"
+                raise TimeoutError(msg) from None
+            time.sleep(0.05)
 
 
 def clean(value: str, fallback: str = "unknown", limit: int = MAX_TEXT) -> str:
