@@ -22,7 +22,10 @@ thought.
 
 ### No nesting
 Flatten control flow with guard clauses and early returns. One level of
-indentation inside a function body.
+indentation inside a function body. Private helpers and nested `def`s need
+at least three statements — a one- or two-liner is an inline, not a function.
+`tests/check_short_funcs.py` enforces that (`make lint`). Class methods and
+public module names may stay thin; they are the API.
 
 ### Names are contracts
 A function does what its name says, all of it, and nothing else. `fetch_*`

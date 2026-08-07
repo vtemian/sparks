@@ -28,7 +28,6 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any
@@ -115,23 +114,6 @@ class Process:
         dock.remove_quietly(container)
 
 
-def _bounded(
-    stream: Iterable[dict[str, Any]], deadline: float
-) -> Iterator[dict[str, Any]]:
-    """Yield the pull stream's chunks until the deadline says stop.
-
-    The check runs per chunk, so this bounds a pull that is still streaming; a
-    stream that has gone silent is only noticed when its next chunk lands.
-    """
-    for chunk in stream:
-        if time.monotonic() > deadline:
-            raise PullFailedError(
-                f"the pull was still going after "
-                f"{PULL_TIMEOUT_SECONDS / 3600:g}h and was stopped"
-            )
-        yield chunk
-
-
 def _pull_line(chunk: dict[str, Any], log: IO[bytes], log_path: Path) -> None:
     """Write one chunk's line to the pull log, failing on an error chunk.
 
@@ -174,7 +156,12 @@ class Docker:
             client = dock.client()
             with log_path.open("wb") as log:
                 stream = client.api.pull(image, stream=True, decode=True)
-                for chunk in _bounded(stream, deadline):
+                for chunk in stream:
+                    if time.monotonic() > deadline:
+                        raise PullFailedError(
+                            f"the pull was still going after "
+                            f"{PULL_TIMEOUT_SECONDS / 3600:g}h and was stopped"
+                        )
                     _pull_line(chunk, log, log_path)
         except dock.DockerException as exc:
             raise PullFailedError(f"could not pull image: {exc}") from exc
@@ -371,4 +358,5 @@ def _first_line(path: Path) -> str | None:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
-    return text.strip().splitlines()[0] if text.strip() else None
+    stripped = text.strip()
+    return stripped.splitlines()[0] if stripped else None

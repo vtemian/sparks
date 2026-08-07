@@ -407,15 +407,17 @@ def _read_state(path: Path) -> State:
     corrupt state to queued would start a second container for a job already
     running, which is the one mistake here with a hardware cost.
     """
+    state_path = path / STATE_FILE
     try:
-        with (path / STATE_FILE).open(encoding="utf-8") as handle:
-            return State.from_dict(json.load(handle))
+        with state_path.open(encoding="utf-8") as handle:
+            state = State.from_dict(json.load(handle))
     except FileNotFoundError:
-        return State()
+        state = State()
     except (OSError, ValueError, TypeError) as exc:
         LOG.warning(
             "sparks: %s has an unreadable state, so it will not be started: %s",
             path.name,
             exc,
         )
-        return State(state=UNKNOWN)
+        state = State(state=UNKNOWN)
+    return state

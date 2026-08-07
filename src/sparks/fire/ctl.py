@@ -101,7 +101,15 @@ def build_parser() -> argparse.ArgumentParser:
     shared.add_argument("--shared-dir", type=Path, default=None)
     subparsers = parser.add_subparsers(dest="verb", required=True)
     _add_queue(subparsers, shared)
-    _add_control_verbs(subparsers, shared)
+    for verb, help_text, func in (
+        ("cancel", "drop a job that has not started yet", cancel),
+        ("abort", "stop a job, whether it has started or not", abort),
+        ("retry", "submit the same job again", retry),
+        ("remove", "delete a finished job", remove),
+    ):
+        verb_parser = subparsers.add_parser(verb, parents=[shared], help=help_text)
+        verb_parser.add_argument("job")
+        verb_parser.set_defaults(func=func)
     _add_rpc_verbs(subparsers, shared)
     return parser
 
@@ -114,18 +122,6 @@ def _add_queue(subparsers: Subparsers, shared: argparse.ArgumentParser) -> None:
     )
     queue_parser.add_argument("--all", action="store_true")
     queue_parser.set_defaults(func=queue)
-
-
-def _add_control_verbs(subparsers: Subparsers, shared: argparse.ArgumentParser) -> None:
-    for verb, help_text, func in (
-        ("cancel", "drop a job that has not started yet", cancel),
-        ("abort", "stop a job, whether it has started or not", abort),
-        ("retry", "submit the same job again", retry),
-        ("remove", "delete a finished job", remove),
-    ):
-        verb_parser = subparsers.add_parser(verb, parents=[shared], help=help_text)
-        verb_parser.add_argument("job")
-        verb_parser.set_defaults(func=func)
 
 
 def _add_rpc_verbs(subparsers: Subparsers, shared: argparse.ArgumentParser) -> None:

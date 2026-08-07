@@ -114,7 +114,8 @@ def _grab(fd: int, directory: Path, timeout: float) -> None:
     """Poll for the lock rather than block on it: a blocking `flock` has no
     deadline, so a wedged holder would hang every later rebuild forever. The
     50ms retry costs at most one sleep of extra wait over a blocking call."""
-    deadline = time.monotonic() + timeout
+    now = time.monotonic()
+    deadline = now + timeout
     while True:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

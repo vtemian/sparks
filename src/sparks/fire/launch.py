@@ -87,7 +87,11 @@ def launch(
         return _cancelled(run, baseline_seconds, exc)
 
     metrics = _supervisor_metrics(run.id, run.rec.name, url, run.rec.sha)
-    _begin(metrics)
+    # None is a box without monitoring, and the test lives here rather than
+    # behind a do-nothing RunMetrics: a constructed emitter is a second
+    # writer on the run's series (see `_supervisor_metrics`).
+    if metrics is not None:
+        metrics.begin()
     try:
         completed = Supervisor(
             command, log_path=run.dir / "output.log", env=_child_env(run.id, url)
@@ -123,33 +127,6 @@ class _Run:
     rec: _Record
 
 
-def _cleaned(command: list[str], name: str, user: str, sha: str | None) -> _Record:
-    """Sanitise the durable copies at this one boundary. The child is still
-    exec'd with the ORIGINAL argv, which round-trips through execve correctly;
-    only what we persist and push is cleaned, so a non-UTF-8 --name can neither
-    poison the shared index nor crash the wrapper.
-    """
-    return _Record(
-        user=shared.clean(user),
-        name=shared.clean(name, "run"),
-        sha=git_sha() if sha is None else shared.clean(sha, "unknown"),
-        command=[shared.clean(arg, "", limit=4000) for arg in command],
-    )
-
-
-def _announce(
-    on_reserved: Callable[[str, Path], None] | None, run_id: str, run_dir: Path
-) -> None:
-    if on_reserved is None:
-        return
-    # Never allowed to sink the run: whoever wanted to be told has a worse
-    # view of the world if this fails, but the run itself is unaffected.
-    try:
-        on_reserved(run_id, run_dir)
-    except Exception as exc:  # noqa: BLE001 -- an observer's failure is not the run's
-        LOG.warning("sparks: could not announce %s: %s", run_id, exc)
-
-
 def _reserved(
     command: list[str],
     name: str,
@@ -157,12 +134,29 @@ def _reserved(
     on_reserved: Callable[[str, Path], None] | None,
     sha: str | None,
 ) -> _Run:
-    """The run's durable identity: cleaned record, reserved directory, id."""
-    rec = _cleaned(command, name, current_user(), sha)
+    """The run's durable identity: cleaned record, reserved directory, id.
+
+    Sanitising the durable copies happens at this one boundary. The child is
+    still exec'd with the ORIGINAL argv, which round-trips through execve
+    correctly; only what we persist and push is cleaned, so a non-UTF-8
+    --name can neither poison the shared index nor crash the wrapper.
+    """
+    rec = _Record(
+        user=shared.clean(current_user()),
+        name=shared.clean(name, "run"),
+        sha=git_sha() if sha is None else shared.clean(sha, "unknown"),
+        command=[shared.clean(arg, "", limit=4000) for arg in command],
+    )
     # mkdir raising EEXIST is the only atomic uniqueness guarantee, and the
     # chmod inside heals a tree left group-unreadable by an earlier umask.
     run_id, run_dir = shared.reserve_dir(shared_dir / "runs", rec.name, rec.user)
-    _announce(on_reserved, run_id, run_dir)
+    if on_reserved is not None:
+        # Never allowed to sink the run: whoever wanted to be told has a
+        # worse view of the world if this fails, but the run itself is not.
+        try:
+            on_reserved(run_id, run_dir)
+        except Exception as exc:  # noqa: BLE001 -- an observer's failure is not the run's
+            LOG.warning("sparks: could not announce %s: %s", run_id, exc)
     return _Run(id=run_id, dir=run_dir, shared_dir=shared_dir, rec=rec)
 
 
@@ -205,14 +199,15 @@ def _open_window(
         # the exact hazard duration_seconds already avoids. The window
         # brackets the whole run.
         opened_at = time.monotonic()
-        return _Window(
+        window = _Window(
             total_joules=sampler.total_joules(),
             gpu_nvml_joules=sampler.gpu_nvml_joules(),
             gpu_firmware_joules=sampler.gpu_firmware_joules(),
             idle_watts=base.idle_watts,
             gpu_idle_watts=base.gpu_watts,
             opened_at=opened_at,
-        ), sampler
+        )
+    return window, sampler
 
 
 def _cancelled(run: _Run, baseline_seconds: float, abort: "_AbortError") -> Launched:
@@ -233,20 +228,6 @@ def _cancelled(run: _Run, baseline_seconds: float, abort: "_AbortError") -> Laun
     finally:
         _rebuild(run.shared_dir)
     return Launched(run.id, "cancelled", 128 + abort.signum, run.dir)
-
-
-def _begin(metrics: RunMetrics | None) -> None:
-    """None is a box without monitoring, and the test lives here rather than
-    behind a do-nothing RunMetrics: a constructed emitter is a second writer
-    on the run's series (see `_supervisor_metrics`)."""
-    if metrics is not None:
-        metrics.begin()
-
-
-def _end(metrics: RunMetrics | None, status: str) -> None:
-    """The end-of-run twin of `_begin`, safe on a box without monitoring."""
-    if metrics is not None:
-        metrics.end(status)
 
 
 def _child_env(run_id: str, url: str | None) -> dict[str, str]:
@@ -275,7 +256,9 @@ def _crashed(
         # the end below, or that series is a phantom run with no end forever.
         LOG.exception("sparks: could not record the failed launch of %s", run.id)
     finally:
-        _end(metrics, "crashed")
+        # Safe on a box without monitoring, where metrics is None.
+        if metrics is not None:
+            metrics.end("crashed")
         _rebuild(run.shared_dir)
     return Launched(run.id, "crashed", 127, run.dir)
 
@@ -296,13 +279,31 @@ def _recorded(
     """
     status = completed.outcome.status
     try:
-        _record(run, completed, _close_window(opened, completed, baseline_seconds))
+        reading = _close_window(opened, completed, baseline_seconds)
+        record = summary.Summary(
+            run_id=run.id,
+            run_name=run.rec.name,
+            user=run.rec.user,
+            git_sha=run.rec.sha,
+            command=run.rec.command,
+            started_unix=completed.started_unix,
+            ended_unix=completed.ended_unix,
+            duration_seconds=completed.duration_seconds,
+            status=completed.outcome.status,
+            exit_code=completed.outcome.exit_code,
+            signal=completed.outcome.signal_name,
+            escalated_to_sigkill=completed.outcome.escalated_to_sigkill,
+            energy=reading,
+        )
+        summary.save(record, run.dir)
     except Exception:
         # The child completed and its exit code is faithful; losing the record
         # must neither strand a phantom on the dashboard nor lie about $?.
         LOG.exception("sparks: could not record %s", run.id)
     finally:
-        _end(metrics, status)
+        # Safe on a box without monitoring, where metrics is None.
+        if metrics is not None:
+            metrics.end(status)
         _rebuild(run.shared_dir)
     return Launched(run.id, status, completed.outcome.wrapper_exit, run.dir)
 
@@ -365,25 +366,6 @@ def _close_window(
     )
 
 
-def _record(run: _Run, completed: Completed, reading: summary.Energy) -> None:
-    record = summary.Summary(
-        run_id=run.id,
-        run_name=run.rec.name,
-        user=run.rec.user,
-        git_sha=run.rec.sha,
-        command=run.rec.command,
-        started_unix=completed.started_unix,
-        ended_unix=completed.ended_unix,
-        duration_seconds=completed.duration_seconds,
-        status=completed.outcome.status,
-        exit_code=completed.outcome.exit_code,
-        signal=completed.outcome.signal_name,
-        escalated_to_sigkill=completed.outcome.escalated_to_sigkill,
-        energy=reading,
-    )
-    summary.save(record, run.dir)
-
-
 def _supervisor_metrics(
     run_id: str, name: str, url: str | None, sha: str
 ) -> RunMetrics | None:
@@ -395,11 +377,8 @@ def _supervisor_metrics(
     """
     if not url:
         return None
-    return RunMetrics(
-        run_id=run_id,
-        url=url,
-        info={"run_name": name, "git_sha": sha},
-    )
+    info = {"run_name": name, "git_sha": sha}
+    return RunMetrics(run_id=run_id, url=url, info=info)
 
 
 def _rebuild(shared_dir: Path) -> None:
@@ -411,10 +390,15 @@ def _rebuild(shared_dir: Path) -> None:
     the warning below means either a library caller that never asked for a
     contract, or provisioning that changed mid-run.
     """
+    runs_dir = shared_dir / "runs"
     try:
         target = box.textfile_dir() / index.FILENAME
+    except Exception as exc:  # noqa: BLE001 -- the run itself still succeeded
+        LOG.warning("sparks: could not rebuild the run index: %s", exc)
+        return
+    try:
         shared.make_dir(target.parent)
-        written = index.rebuild(shared_dir / "runs", target)
+        written = index.rebuild(runs_dir, target)
         LOG.info("sparks: %d runs in %s", written, target)
     except Exception as exc:  # noqa: BLE001 -- the run itself still succeeded
         LOG.warning("sparks: could not rebuild the run index: %s", exc)
@@ -426,6 +410,11 @@ class _AbortError(Exception):
     def __init__(self, signum: int) -> None:
         self.signum = signum
         super().__init__(signal.Signals(signum).name)
+
+    @staticmethod
+    def raise_from_signal(signum: int, _frame: object) -> None:
+        """Shaped for `signal.signal`, which `_interruptible` registers."""
+        raise _AbortError(signum)
 
 
 @contextlib.contextmanager
@@ -442,12 +431,10 @@ def _interruptible() -> Iterator[None]:
     a clean slate.
     """
 
-    def stop(signum: int, _frame: object) -> None:
-        raise _AbortError(signum)
-
+    signums = (signal.SIGINT, signal.SIGTERM)
     previous = {
-        signum: signal.signal(signum, stop)
-        for signum in (signal.SIGINT, signal.SIGTERM)
+        signum: signal.signal(signum, _AbortError.raise_from_signal)
+        for signum in signums
     }
     try:
         yield

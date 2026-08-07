@@ -28,6 +28,7 @@ carried as None all the way to the index, which omits the sample, so a run that
 was not measured has no row rather than a row of zeroes.
 """
 
+import functools
 import importlib
 import math
 import time
@@ -205,7 +206,20 @@ class Sampler:
     @classmethod
     def detect(cls, root: Path = HWMON) -> Self:
         """A sampler wired to whatever this box actually offers."""
-        return cls(nvml=_nvml_counter(), hwmon=_spbm_chip(root))
+        try:
+            chips = sorted(root.glob("hwmon*"))
+        except OSError:
+            chips = []
+        hwmon = None
+        for chip in chips:
+            try:
+                name = (chip / "name").read_text().strip()
+            except OSError:
+                continue
+            if name == CHIP:
+                hwmon = chip
+                break
+        return cls(nvml=_nvml_counter(), hwmon=hwmon)
 
     @property
     def has_energy_counter(self) -> bool:
@@ -259,9 +273,11 @@ class Sampler:
             # An endpoint that could not be read leaves the rail at 0 W, which
             # is how "no baseline" is spelled to marginal_joules: it then
             # declines to subtract rather than subtracting a fabricated number.
+            box_delta = delta(box0, box1)
+            gpu_delta = delta(gpu0, gpu1)
             return Baseline(
-                _watts(delta(box0, box1), seconds),
-                _watts(delta(gpu0, gpu1), seconds),
+                0.0 if box_delta is None else box_delta / seconds,
+                0.0 if gpu_delta is None else gpu_delta / seconds,
             )
         # No accumulator: integrate the power gauge. The GPU rail has no gauge
         # here, so its idle draw is unknown and reported as zero.
@@ -287,15 +303,6 @@ class Sampler:
         return median(samples) if samples else 0.0
 
 
-def _spbm_chip(root: Path = HWMON) -> Path | None:
-    """The board power monitor's chip directory, by `name`."""
-    try:
-        chips = sorted(root.glob("hwmon*"))
-    except OSError:
-        return None
-    return next((chip for chip in chips if _read(chip / "name") == CHIP), None)
-
-
 def _channel(chip: Path | None, kind: str, labels: Sequence[str]) -> Path | None:
     """The `<kind>N_input` file behind the first of `labels` this chip offers.
 
@@ -309,26 +316,13 @@ def _channel(chip: Path | None, kind: str, labels: Sequence[str]) -> Path | None
         reading = label_file.with_name(
             label_file.name.removesuffix("_label") + "_input"
         )
-        label = _read(label_file)
+        try:
+            label = label_file.read_text().strip()
+        except OSError:
+            label = None
         if label is not None and reading.exists():
             inputs.setdefault(label, reading)
     return next((inputs[label] for label in labels if label in inputs), None)
-
-
-def _read(path: Path) -> str | None:
-    try:
-        return path.read_text().strip()
-    except OSError:
-        return None
-
-
-def _watts(joules: float | None, seconds: float) -> float:
-    """A counter delta as average power, or 0 W when the delta is unknown.
-
-    The Baseline stays a plain float because 0 W already means "no baseline
-    worth subtracting" everywhere downstream; introducing a second spelling of
-    absent would give marginal_joules two None branches that behave alike."""
-    return 0.0 if joules is None else joules / seconds
 
 
 def delta(start: float | None, end: float | None) -> float | None:
@@ -354,12 +348,11 @@ def _read_micro(path: Path | None) -> float | None:
     without raising, which is how a bare NaN token would otherwise reach
     json.dumps and produce a file every strict parser rejects.
     """
-    raw = _read(path) if path is not None else None
-    if raw is None:
+    if path is None:
         return None
     try:
-        micro = float(raw)
-    except ValueError:
+        micro = float(path.read_text().strip())
+    except (OSError, ValueError):
         return None
     if not math.isfinite(micro) or micro == U32_SENTINEL:
         return None
@@ -374,12 +367,11 @@ def _nvml_counter() -> Callable[[], float] | None:
     package is developed on, and importing this module must not depend on it."""
     try:
         nvml = importlib.import_module("pynvml")
+    except ImportError:
+        return None
+    try:
         nvml.nvmlInit()
         device = nvml.nvmlDeviceGetHandleByIndex(0)
-    except Exception:  # noqa: BLE001 -- NVML's own error type needs the import
+    except Exception:  # noqa: BLE001 -- NVML's own error type, raised past the import
         return None
-
-    def counter() -> float:
-        return float(nvml.nvmlDeviceGetTotalEnergyConsumption(device))
-
-    return counter
+    return functools.partial(nvml.nvmlDeviceGetTotalEnergyConsumption, device)

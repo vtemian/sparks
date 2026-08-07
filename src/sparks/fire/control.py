@@ -61,7 +61,16 @@ def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
     job_id, path = spool.reserve(queue_dir, entry.job.name, who)
     source = entry.data_dir
     if source.is_dir():
-        _clone(source, path / spool.DATA_DIR)
+        # Hardlink the tree where the filesystem allows it: a data folder can
+        # be gigabytes and a retry does not change it, so copying the bytes
+        # again is pure waste. Hardlinks are safe here because nothing ever
+        # writes into a committed job's `data/` after submit.
+        destination = path / spool.DATA_DIR
+        try:
+            shutil.copytree(source, destination, copy_function=os.link)
+        except OSError as exc:
+            LOG.info("sparks: could not hardlink data (%s); copying instead", exc)
+            shutil.copytree(source, destination, dirs_exist_ok=True)
 
     return spool.commit(
         path,
@@ -94,19 +103,15 @@ def resolve(queue_dir: Path, needle: str) -> spool.Entry:
     if exact:
         return exact[0]
 
-    matches = _matches(found, needle)
-    if not matches:
-        raise ControlError(f"no job matches {needle!r}")
-    return _disambiguate(matches, needle)
-
-
-def _matches(found: list[spool.Entry], needle: str) -> list[spool.Entry]:
-    """Every job whose id contains the needle, or whose name is exactly it."""
-    return [
+    # Every job whose id contains the needle, or whose name is exactly it.
+    matches = [
         entry
         for entry in found
         if needle in entry.job.job_id or entry.job.name == needle
     ]
+    if not matches:
+        raise ControlError(f"no job matches {needle!r}")
+    return _disambiguate(matches, needle)
 
 
 def _disambiguate(matches: list[spool.Entry], needle: str) -> spool.Entry:
@@ -182,9 +187,9 @@ def render(entries: list[spool.Entry], now: float | None = None) -> str:
 
 
 def _row(values: tuple[str, ...], widths: list[int]) -> str:
-    return "  ".join(
-        value.ljust(width) for value, width in zip(values, widths, strict=True)
-    ).rstrip()
+    padded = [value.ljust(width) for value, width in zip(values, widths, strict=True)]
+    line = "  ".join(padded)
+    return line.rstrip()
 
 
 def _age(entry: spool.Entry, now: float) -> str:
@@ -210,17 +215,3 @@ def _duration(seconds: float) -> str:
     if seconds < _DAY:
         return f"{seconds / _HOUR:.1f}h"
     return f"{int(seconds // _DAY)}d"
-
-
-def _clone(source: Path, destination: Path) -> None:
-    """Hardlink the tree where the filesystem allows it.
-
-    A data folder can be gigabytes and a retry does not change it, so copying
-    the bytes again is pure waste. Hardlinks are safe here because nothing ever
-    writes into a committed job's `data/` after submit.
-    """
-    try:
-        shutil.copytree(source, destination, copy_function=os.link)
-    except OSError as exc:
-        LOG.info("sparks: could not hardlink data (%s); copying instead", exc)
-        shutil.copytree(source, destination, dirs_exist_ok=True)

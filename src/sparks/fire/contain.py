@@ -107,8 +107,11 @@ def _request_abort(signum: int) -> None:
     nothing when no handler is installed, which is the same as a signal
     arriving before main() reached _install_signal_handlers."""
     handler = _signal_handlers.get(signum)
-    if handler is not None and callable(handler):
-        handler(signum, None)
+    if handler is None:
+        return
+    if not callable(handler):
+        return
+    handler(signum, None)
 
 
 _previous_signal_handlers: dict[int, signal.Handlers] = {}
@@ -123,6 +126,7 @@ def _install_signal_handlers(abort: _Abort) -> None:
             with contextlib.suppress(Exception):
                 container.stop(timeout=int(process.GRACE_SECONDS))
 
+    assert not _signal_handlers, "handlers already installed"  # noqa: S101 -- re-entrant main()
     for signum in (signal.SIGTERM, signal.SIGINT):
         _signal_handlers[signum] = handler
         _previous_signal_handlers[signum] = cast(
@@ -144,6 +148,7 @@ def _create(client: docker.DockerClient, args: argparse.Namespace) -> Container:
     published for cleanup: a container the daemon created but we refused still
     exists, and one nothing supervises keeps the GPU.
     """
+    environment = container_environment()
     container: Container = client.containers.run(
         **run_kwargs(
             name=args.name,
@@ -154,7 +159,7 @@ def _create(client: docker.DockerClient, args: argparse.Namespace) -> Container:
             data_dir=args.data_dir,
             workdir=args.workdir,
             gpus=args.gpus,
-            environment=container_environment(),
+            environment=environment,
         )
     )
     return container
@@ -162,10 +167,11 @@ def _create(client: docker.DockerClient, args: argparse.Namespace) -> Container:
 
 def _cid(container: Container) -> str:
     """The id docker-py types as optional but sets for anything it started."""
-    if container.id is None:
+    identifier = container.id
+    if identifier is None:
         msg = "docker created a container with no id"
         raise RuntimeError(msg)
-    return container.id
+    return identifier
 
 
 def _aborted(container: Container) -> int:
@@ -178,13 +184,17 @@ def _aborted(container: Container) -> int:
 
 
 def _stream(container: Container) -> None:
-    for chunk in container.logs(stream=True, follow=True, stdout=True, stderr=True):
-        sys.stdout.buffer.write(chunk)
-        sys.stdout.buffer.flush()
+    """Tee the container's combined stdout/stderr to this process's stdout."""
+    chunks = container.logs(stream=True, follow=True, stdout=True, stderr=True)
+    out = sys.stdout.buffer
+    for chunk in chunks:
+        out.write(chunk)
+        out.flush()
 
 
-def _remove(container: Container | None, name: str) -> None:
-    """Force-remove the job container, by handle or failing that by name.
+def _cleanup(container: Container | None, name: str) -> None:
+    """Restore the box's own signal handlers, then force-remove the job
+    container by handle or, failing that, by name.
 
     The by-name path is not belt and braces: docker-py's `containers.run` is
     `create()` then `start()` with no cleanup between them, so a start that
@@ -193,15 +203,17 @@ def _remove(container: Container | None, name: str) -> None:
     written in that case, so `engine.Process.finish` cannot reach it either and
     the name stays taken until a human runs `docker rm`.
     """
-    if container is not None:
+    _restore_signal_handlers()
+    handle = container
+    if handle is None:
+        # The client is built inside the guard on purpose: this runs in a
+        # finally, and a daemon that has gone away must not replace the real
+        # error with a connection one.
         with contextlib.suppress(Exception):
-            container.remove(force=True, v=True)
-        return
-    # The client is built inside the guard on purpose: this runs in a finally,
-    # and a daemon that has gone away must not replace the real error with a
-    # connection one.
-    with contextlib.suppress(Exception):
-        dock.client().containers.get(name).remove(force=True, v=True)
+            handle = dock.client().containers.get(name)
+    if handle is not None:
+        with contextlib.suppress(Exception):
+            handle.remove(force=True, v=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -224,8 +236,7 @@ def main(argv: list[str] | None = None) -> int:
         status = int(container.wait()["StatusCode"])
         return 1 if abort.requested else status
     finally:
-        _restore_signal_handlers()
-        _remove(container, args.name)
+        _cleanup(container, args.name)
 
 
 if __name__ == "__main__":

@@ -72,7 +72,21 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command_name", required=True)
     _add_submit(subparsers, host)
     _add_queue(subparsers, host)
-    _add_job_verbs(subparsers, host)
+    for verb, helping, func in (
+        ("cancel", "drop a job that has not started yet", cancel),
+        ("abort", "stop a job, whether it has started or not", abort),
+        (
+            "retry",
+            "submit the same job again, reusing the code already there",
+            retry,
+        ),
+        ("remove", "delete a finished job and the code it kept", remove),
+    ):
+        verb_parser = subparsers.add_parser(verb, parents=[host], help=helping)
+        verb_parser.add_argument(
+            "job", help="a job id, a unique part of one, or its name"
+        )
+        verb_parser.set_defaults(func=func)
     return parser
 
 
@@ -116,24 +130,6 @@ def _add_queue(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
         help="include jobs that finished long enough ago to have aged out",
     )
     queue_parser.set_defaults(func=queue)
-
-
-def _add_job_verbs(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
-    for verb, helping, func in (
-        ("cancel", "drop a job that has not started yet", cancel),
-        ("abort", "stop a job, whether it has started or not", abort),
-        (
-            "retry",
-            "submit the same job again, reusing the code already there",
-            retry,
-        ),
-        ("remove", "delete a finished job and the code it kept", remove),
-    ):
-        verb_parser = subparsers.add_parser(verb, parents=[host], help=helping)
-        verb_parser.add_argument(
-            "job", help="a job id, a unique part of one, or its name"
-        )
-        verb_parser.set_defaults(func=func)
 
 
 def main(argv: list[str] | None = None) -> int:

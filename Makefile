@@ -29,9 +29,10 @@ fmt:
 lint:
 	uv run ruff format --check src tests
 	uv run ruff check src tests
-	# House rules ruff cannot express yet (VNE001, section banners).
+	# House rules ruff cannot express yet.
 	uv run python tests/check_names.py
 	uv run python tests/check_banners.py
+	uv run python tests/check_short_funcs.py
 
 typecheck:
 	uv run mypy

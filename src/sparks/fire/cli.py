@@ -22,7 +22,15 @@ def serve(args: argparse.Namespace) -> int:
     contract = box.load()
     shared_dir = args.shared_dir or (contract.shared_dir if contract else None)
     if shared_dir is None:
-        raise box.NotProvisionedError(_unprovisioned(["--shared-dir"]))
+        raise box.NotProvisionedError(
+            f"this box is not configured for sparks.\n\n"
+            f"{box.config_path()} does not exist, so nothing here knows where the "
+            f"queue lives. sparks reads that file; sparkup writes it.\n\n"
+            f"Provision the box:\n"
+            f"    cd sparkup && make apply\n\n"
+            f"Or say so explicitly:\n"
+            f"    fire --shared-dir ..."
+        )
 
     url = args.url if args.url is not None else _runner_url(contract)
     textfile = args.textfile_dir or box.textfile_dir(contract)
@@ -62,19 +70,6 @@ def _runner_url(contract: box.Box | None) -> str:
         if loopback in url:
             return url.replace(loopback, "host.docker.internal")
     return url
-
-
-def _unprovisioned(missing: list[str]) -> str:
-    flags = " ".join(f"{flag} ..." for flag in missing)
-    return (
-        f"this box is not configured for sparks.\n\n"
-        f"{box.config_path()} does not exist, so nothing here knows where the "
-        f"queue lives. sparks reads that file; sparkup writes it.\n\n"
-        f"Provision the box:\n"
-        f"    cd sparkup && make apply\n\n"
-        f"Or say so explicitly:\n"
-        f"    fire {flags}"
-    )
 
 
 def build_parser() -> argparse.ArgumentParser:

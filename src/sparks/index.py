@@ -298,7 +298,9 @@ def _stamp_rows(jobs: list["spool.Entry"]) -> list[str]:
 
 
 def _family(name: str, help_text: str) -> list[str]:
-    return [f"# HELP {name} {help_text}", f"# TYPE {name} gauge"]
+    help_line = f"# HELP {name} {help_text}"
+    type_line = f"# TYPE {name} gauge"
+    return [help_line, type_line]
 
 
 def _sample(name: str, labels: dict[str, str], value: float) -> str:
@@ -313,7 +315,9 @@ def _sample(name: str, labels: dict[str, str], value: float) -> str:
 def _escape(value: str) -> str:
     """The only three escapes the text format defines. Backslash first, or the
     backslashes introduced by the other two get escaped a second time."""
-    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    escaped = value.replace("\\", "\\\\")
+    escaped = escaped.replace('"', '\\"')
+    return escaped.replace("\n", "\\n")
 
 
 def _number(value: float) -> str:

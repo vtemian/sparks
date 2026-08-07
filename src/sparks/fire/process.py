@@ -154,12 +154,16 @@ def oom_kills(cgroup: Path | None) -> int:
     read. Never raises: development happens on macOS, where there is no cgroup
     filesystem at all, and a run must not fail because it could not be
     attributed."""
-    for line in _events_text(cgroup).splitlines():
+    text = _events_text(cgroup)
+    for line in text.splitlines():
         # cgroup v2 writes `key value`; partition never raises, so a line with
         # no space falls through rather than failing the read.
         key, _, value = line.partition(" ")
         if key == "oom_kill":
-            return _int_or_zero(value)
+            try:
+                return int(value)
+            except ValueError:
+                return 0
     return 0
 
 
@@ -168,18 +172,11 @@ def _events_text(cgroup: Path | None) -> str:
     read -- the caller then finds no counter and reports 0."""
     if cgroup is None:
         return ""
+    events = cgroup / "memory.events.local"
     try:
-        return (cgroup / "memory.events.local").read_text()
+        return events.read_text()
     except OSError:
         return ""
-
-
-def _int_or_zero(value: str) -> int:
-    """The counter as an int, or 0: `oom_kills` promises never to raise."""
-    try:
-        return int(value)
-    except ValueError:
-        return 0
 
 
 @dataclass(frozen=True)
@@ -538,30 +535,22 @@ class Supervisor:
         Output is not lost when the child dies: this keeps draining the pipe
         afterwards, which is how 100000 of 100000 lines survived a SIGKILL.
         """
-        echo = _stdout_bytes()
+        try:
+            echo: BinaryIO | None = sys.stdout.buffer
+        except AttributeError:
+            echo = None
         try:
             for line in stream:
                 if echo is not None:
-                    _write(echo, line)
-                _write(log, line)
+                    # BrokenPipeError when the terminal goes away (`python -m …
+                    # | head`); losing the echo must never kill the run.
+                    with contextlib.suppress(OSError, ValueError):
+                        echo.write(line)
+                        echo.flush()
+                with contextlib.suppress(OSError, ValueError):
+                    log.write(line)
+                    log.flush()
         except (OSError, ValueError):
             # The pipe was closed under us because the drain timed out. There is
             # nothing left to read and nothing to report.
             pass
-
-
-def _stdout_bytes() -> BinaryIO | None:
-    """The wrapper's own stdout as bytes, or None if it has none to give."""
-    try:
-        return sys.stdout.buffer
-    except AttributeError:
-        return None
-
-
-def _write(sink: IO[bytes], line: bytes) -> None:
-    with contextlib.suppress(OSError, ValueError):
-        # BrokenPipeError when the terminal goes away (`python -m … | head`),
-        # ValueError when a sink was closed under us. Losing an echo must never
-        # kill the run.
-        sink.write(line)
-        sink.flush()

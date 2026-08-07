@@ -7,6 +7,7 @@ laptop client.
 """
 
 import argparse
+import functools
 import logging
 import os
 import sys
@@ -63,12 +64,9 @@ def _settings(args: argparse.Namespace) -> _Settings:
             for name, value in (("--shared-dir", shared), ("--url", url))
             if value is None
         ]
-        if missing:
-            raise box.NotProvisionedError(_unprovisioned(missing))
+        _require_provisioned(missing)
     else:
-        complaints = box.preflight(contract)
-        if complaints:
-            raise box.NotProvisionedError(_mismatched(complaints))
+        _require_matching(box.preflight(contract))
         shared = shared or contract.shared_dir
         url = contract.prometheus_url if url is None else url
 
@@ -82,13 +80,15 @@ def _settings(args: argparse.Namespace) -> _Settings:
     )
 
 
-def _unprovisioned(missing: list[str]) -> str:
+def _require_provisioned(missing: list[str]) -> None:
+    if not missing:
+        return
     flags = " ".join(f"{flag} ..." for flag in missing)
-    return (
+    raise box.NotProvisionedError(
         f"this box is not configured for sparks.\n\n"
-        f"{box.config_path()} does not exist, so nothing here knows where runs "
-        f"are recorded on this machine or which Prometheus to publish them to. "
-        f"sparks reads that file; sparkup writes it.\n\n"
+        f"{box.config_path()} does not exist, so nothing here knows where "
+        f"runs are recorded on this machine or which Prometheus to publish "
+        f"them to. sparks reads that file; sparkup writes it.\n\n"
         f"Provision the box:\n"
         f"    cd sparkup && make apply\n\n"
         f"Or, on a box sparkup does not manage, say so explicitly:\n"
@@ -96,9 +96,11 @@ def _unprovisioned(missing: list[str]) -> str:
     )
 
 
-def _mismatched(complaints: list[str]) -> str:
+def _require_matching(complaints: list[str]) -> None:
+    if not complaints:
+        return
     problems = "\n".join(f"    {complaint}" for complaint in complaints)
-    return (
+    raise box.NotProvisionedError(
         f"this box's sparks configuration does not match the box.\n\n"
         f"{box.config_path()} describes provisioning that is not there:\n"
         f"{problems}\n\n"
@@ -122,7 +124,9 @@ def _announce(
         return None
 
     def write(run_id: str, _run_dir: Path) -> None:
-        summary.write_atomically(target, lambda: run_id + "\n")
+        line = run_id + "\n"
+        render = functools.partial(str, line)
+        summary.write_atomically(target, render)
 
     return write
 

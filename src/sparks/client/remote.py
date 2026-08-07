@@ -26,7 +26,6 @@ import shlex
 import subprocess
 import time
 import tomllib
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -108,7 +107,11 @@ def build(context: Path, tag: str) -> None:
             decode=True,
             rm=True,
         )
-        _echo_build(stream, tag)
+        for chunk in stream:
+            if "stream" in chunk:
+                # No newline of our own: the chunks carry theirs.
+                print(chunk["stream"], end="")
+            _raise_if_docker_failed(chunk, f"docker build failed for {tag}")
     except dock.DockerException as exc:
         raise ClientError(f"docker build failed for {tag}: {exc}") from exc
 
@@ -117,37 +120,23 @@ def push(tag: str) -> None:
     repository, image_tag = split_tag(tag)
     try:
         docker_client = dock.client()
-        _echo_push(
-            docker_client.images.push(
-                repository, tag=image_tag, stream=True, decode=True
-            ),
-            tag,
-        )
+        for line in docker_client.images.push(
+            repository, tag=image_tag, stream=True, decode=True
+        ):
+            _raise_if_docker_failed(line, f"docker push failed for {tag}. {PUSH_HINT}")
+            status = line.get("status")
+            if status:
+                print(status)
     except dock.DockerException as exc:
         raise ClientError(f"docker push failed for {tag}. {PUSH_HINT}") from exc
 
 
-def _failed(chunk: dict[str, Any]) -> bool:
+def _raise_if_docker_failed(chunk: dict[str, Any], message: str) -> None:
     """Docker streams report failure as chunks, not exceptions."""
-    return bool(chunk.get("error") or chunk.get("errorDetail"))
-
-
-def _echo_build(chunks: Iterable[dict[str, Any]], tag: str) -> None:
-    for chunk in chunks:
-        if "stream" in chunk:
-            # No newline of our own: the chunks carry theirs.
-            print(chunk["stream"], end="")
-        if _failed(chunk):
-            raise ClientError(f"docker build failed for {tag}")
-
-
-def _echo_push(chunks: Iterable[dict[str, Any]], tag: str) -> None:
-    for line in chunks:
-        if _failed(line):
-            raise ClientError(f"docker push failed for {tag}. {PUSH_HINT}")
-        status = line.get("status")
-        if status:
-            print(status)
+    error = chunk.get("error")
+    detail = chunk.get("errorDetail")
+    if error or detail:
+        raise ClientError(message)
 
 
 def fetch_registry_url(host: str) -> str:
@@ -394,10 +383,13 @@ def submit_remote(
 
     who = local_user()
     sha, dirty = provenance(context)
+    if image is None and registry_url is None:
+        # Ask the box for its registry only when there is something to push.
+        registry_url = fetch_registry_url(host)
     tag = _resolve_tag(
         image=image,
         context=context,
-        registry_url=_registry_for(host, image, registry_url),
+        registry_url=registry_url,
         user=who,
         name=name,
         sha=sha,
@@ -405,13 +397,6 @@ def submit_remote(
     reserved = _reserve(host, name, who)
     ship_to(data, host, reserved)
     return capture(host, commit_argv(reserved, name, command, sha, dirty, tag))
-
-
-def _registry_for(host: str, image: str | None, registry_url: str | None) -> str | None:
-    """Ask the box for its registry only when there is something to push."""
-    if image is None and registry_url is None:
-        return fetch_registry_url(host)
-    return registry_url
 
 
 def _reserve(host: str, name: str, who: str) -> str:
