@@ -1,10 +1,6 @@
 """A metric name plus its labels, in the one form the rest of the code uses.
-
-Labels are validated on construction rather than on push. Prometheus drops a
-series carrying an invalid label name and still answers 200, counting it only in
-`prometheus_api_remote_write_invalid_labels_samples_total`, so a typo produces a
-green push and no data. This is the only place that mistake is visible.
-"""
+Validated on construction, not on push: Prometheus drops a series with a bad
+label name and still answers 200, so this is where a typo becomes visible."""
 
 import re
 from dataclasses import dataclass

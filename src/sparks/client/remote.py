@@ -1,23 +1,6 @@
-"""Submitting to the queue and asking it what is going on.
-
-The laptop client always talks to the box over ssh. User-facing verbs require
-`SPARKS_HOST` (or `--host`): `sparks queue --host spark.local` is
-`ssh spark.local fire-ctl queue`, and the same pattern holds for cancel, abort,
-retry and remove. Only `submit` is more than a thin ssh, because only submit
-has to build an image, push it, and carry a data folder across.
-
-Submitting is five steps and they are in this order for a reason:
-
-1. build the image on the laptop (unless `--image` was given)
-2. push it to the box registry
-3. reserve a job directory on the box, which is `mkdir` and therefore the atomic
-   part - two people submitting in the same second get two directories
-4. rsync `--data` into `job/data/`, which takes as long as it takes
-5. write the manifest with the image ref, which is what makes the job visible
-
-A runner that saw the job at step 4 would mount a half-copied data tree and
-record the result as a real run.
-"""
+"""Submitting to the queue and asking it what is going on. Every user-facing
+verb is `ssh <host> fire-ctl <verb>`; only submit is more than that, because
+only submit builds an image, pushes it and carries `--data` across."""
 
 import getpass
 import logging
@@ -44,24 +27,12 @@ REMOTE_BOX_CONFIG = "/etc/sparks/box.toml"
 DOCKERIGNORE = ".dockerignore"
 
 ALWAYS_EXCLUDED = (".git/", "__pycache__/", "*.pyc", ".venv/")
-"""Never uploaded with `--data`, whatever the tree says.
-
-`.git` in particular: it is the largest thing in most checkouts, jobs never need
-it, and the provenance that would justify carrying it is recorded as a field
-instead.
-"""
+"""Never uploaded with `--data`, whatever the tree says."""
 
 RSYNC_TIMEOUT_SECONDS = 1800.0
 SSH_TIMEOUT_SECONDS = 120.0
 
 PUSH_HINT = "Is the registry in insecure-registries and is SPARKS_HOST reachable?"
-"""One diagnosis for every way a push dies.
-
-The box registry is plain HTTP, so a Docker daemon that has not listed it in
-insecure-registries refuses it with an error that never says so; the only
-other likely cause is the box being unreachable. Carried separately from the
-tag so both raise sites can still say which tag failed.
-"""
 
 
 class ClientError(Exception):
@@ -85,11 +56,9 @@ def tag_for(registry_url: str, user: str, name: str, ref: str) -> str:
 
 
 def split_tag(tag: str) -> tuple[str, str]:
-    """Repository and image tag, `latest` when the tag names none.
-
-    Only a colon in the last path segment is a tag separator; the colon
-    before a registry port (`spark.local:5000/u/n`) must not split.
-    """
+    """Repository and image tag, `latest` when the tag names none. Only a colon
+    in the last segment splits: a registry port (`spark.local:5000/u/n`) is not
+    a tag separator."""
     if ":" not in tag.rsplit("/", 1)[-1]:
         return tag, "latest"
     repository, image_tag = tag.rsplit(":", 1)
@@ -140,7 +109,6 @@ def raise_if_docker_failed(chunk: dict[str, Any], message: str) -> None:
 
 
 def fetch_registry_url(host: str) -> str:
-    """Read `registry_url` from the box contract over ssh."""
     raw = box_config(host)
     return registry_url(raw, f"{host}:{REMOTE_BOX_CONFIG}")
 
@@ -185,12 +153,8 @@ def submit(
     retry_of: str | None = None,
     user: str | None = None,
 ) -> spool.Entry:
-    """Put a job on a queue this machine can see.
-
-    Requires `--data`. Pass `--image` to skip build/push (useful when testing on
-    the box without a registry); otherwise build from `--context` and push to
-    `registry_url`.
-    """
+    """Put a job on a queue this machine can see. `--image` skips build/push;
+    otherwise build from `--context` and push to `registry_url`."""
     if not data.is_dir():
         raise ClientError(f"--data {data} is not a directory")
     who = user or current_user()
@@ -252,12 +216,8 @@ def resolve_tag(
 
 
 def ship(source: Path, destination: Path) -> None:
-    """Copy a local tree (usually `--data`) into a job directory.
-
-    rsync rather than `shutil.copytree` so `.dockerignore` exclusions still
-    apply when a data tree happens to carry one, and so always-excluded paths
-    like `.git/` never ride along.
-    """
+    """Copy a local tree (usually `--data`) into a job directory on this
+    machine."""
     if not source.is_dir():
         raise ClientError(f"{source} is not a directory")
     destination.mkdir(parents=True, exist_ok=True)
@@ -290,10 +250,7 @@ def rsync_argv(source: Path, destination: str) -> list[str]:
 
 def provenance(context: Path) -> tuple[str, bool]:
     """The commit this was built from, and whether it had been edited since.
-
-    Recorded, never enforced. Refusing to submit a dirty tree would be the
-    friction this whole design exists to remove: experiments run dirty.
-    """
+    Recorded, never enforced."""
     sha = git_sha(context)
     if sha == "unknown":
         return sha, False
@@ -316,7 +273,6 @@ def host_from(explicit: str | None) -> str | None:
 
 
 def is_configured(explicit: str | None = None) -> bool:
-    """Whether the laptop knows which box to talk to."""
     return host_from(explicit) is not None
 
 
@@ -325,17 +281,9 @@ def remote_bin() -> str:
 
 
 def ssh_argv(host: str, argv: list[str]) -> list[str]:
-    """`fire-ctl <argv>` on `host`, quoted to survive the trip.
-
-    ssh does not take a command as a list. Whatever it is given it joins with
-    spaces and hands to a shell on the far side, so passing arguments
-    separately only LOOKS safe: `-c 'echo a; echo b'` arrives as three words and
-    the semicolon is the remote shell's. The first job submitted from a laptop
-    with a quoted command came back as a bash syntax error.
-
-    Quoting here rather than trusting the caller, because the argument that
-    breaks is always the one somebody typed.
-    """
+    """`fire-ctl <argv>` on `host`, shlex-quoted here rather than by the caller.
+    ssh joins whatever it is given with spaces and hands it to a shell on the
+    far side, so an unquoted `;` would be the REMOTE shell's."""
     return ["ssh", host, shlex.join([remote_bin(), *argv])]
 
 
@@ -372,19 +320,15 @@ def submit_remote(
     image: str | None = None,
     registry_url: str | None = None,
 ) -> str:
-    """Build/push (unless image given), reserve, ship data, then commit.
-
-    See the module docstring for why the manifest goes last. The Docker build
-    context stays on the laptop; only `--data` is rsynced — the runner pulls
-    the image.
-    """
+    """Build/push (unless image given), reserve, ship data, then commit. The
+    manifest goes last, so the runner never sees a half-copied `--data`. The
+    build context stays on the laptop; the runner pulls the image."""
     if not data.is_dir():
         raise ClientError(f"--data {data} is not a directory")
 
     who = local_user()
     sha, dirty = provenance(context)
     if image is None and registry_url is None:
-        # Ask the box for its registry only when there is something to push.
         registry_url = fetch_registry_url(host)
     tag = resolve_tag(
         image=image,
@@ -407,12 +351,8 @@ def reserve(host: str, name: str, who: str) -> str:
 
 
 def ship_to(data: Path, host: str, reserved: str) -> None:
-    """rsync `--data` into a job directory reserved on the box.
-
-    The remote counterpart of `ship`, not a variant of it: the box end of the
-    reserve/commit handshake already made the directory, and the failures name
-    the host rather than the destination path.
-    """
+    """rsync `--data` into a job directory reserved on the box. The remote
+    counterpart of `ship`, not a variant of it."""
     dest = f"{host}:{reserved}/{spool.DATA_DIR}/"
     argv = rsync_argv(data, dest)
     try:
@@ -438,7 +378,6 @@ def commit_argv(
     dirty: bool,
     image: str,
 ) -> list[str]:
-    """The last step of a remote submit, as a pure function."""
     argv = [
         "commit",
         reserved,
@@ -457,12 +396,8 @@ def commit_argv(
 
 
 def local_user() -> str:
-    """Who is submitting, as known here.
-
-    Passed to the box rather than read there: over ssh the box would see the ssh
-    account, which is usually the same but is not the same *fact*. What decides
-    privilege on the box is the uid that owns the files, not this.
-    """
+    """Who is submitting, as known here, and passed to the box rather than read
+    there. Display only: privilege on the box is the uid that owns the files."""
     try:
         return getpass.getuser()
     except Exception:  # noqa: BLE001 -- a missing account is not a failure

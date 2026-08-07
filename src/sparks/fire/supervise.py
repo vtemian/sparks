@@ -1,10 +1,6 @@
-"""sparks.fire.supervise -- python train.py
-
-Wraps a training command, records what it cost, and prints the Grafana link.
-Private to the fire package: the queue nests it via `python -m`, not as a
-console script. Used inside the queue container (and on the box) — not the
-laptop client.
-"""
+"""sparks.fire.supervise -- wraps a training command, records what it cost, and
+prints the Grafana link. Private to the fire package: the queue nests it via
+`python -m` inside the job container, not as a console script."""
 
 import argparse
 import functools
@@ -23,12 +19,11 @@ LOG = logging.getLogger("sparks")
 DASHBOARD = "/d/training-runs/training-runs"
 
 GRAFANA_FALLBACK = "http://spark.local"
-"""Cosmetic: it only decorates the printed link, so an unknown Grafana is not
-worth refusing a run over."""
+"""Cosmetic: it only decorates the printed link."""
 
 
 def deep_link(grafana: str, run_id: str, started: float) -> str:
-    """The live form. Backdated a minute so the first samples are not glued to
+    """The live form, backdated a minute so the first samples are not glued to
     the left edge of the graph."""
     frm = int((started - 60) * 1000)
     return (
@@ -38,9 +33,6 @@ def deep_link(grafana: str, run_id: str, started: float) -> str:
 
 
 class _Settings:
-    """The three box-shaped values a run needs, after the flags and the contract
-    have been reconciled."""
-
     def __init__(self, shared_dir: Path, url: str, grafana: str) -> None:
         self.shared_dir = shared_dir
         self.url = url
@@ -48,12 +40,9 @@ class _Settings:
 
 
 def read_settings(args: argparse.Namespace) -> _Settings:
-    """Flags win, then the contract. Nothing is guessed except the Grafana link.
-
-    Raises rather than returning a partial answer: a run recorded into a
-    directory nobody reads is the failure this whole path exists to prevent, and
-    a default here is exactly how that happens.
-    """
+    """Flags win, then the contract. Nothing is guessed except the Grafana link,
+    and nothing partial is returned: a run recorded into a directory nobody
+    reads is the failure this path exists to prevent."""
     contract = box.load()
     shared = Path(args.shared_dir) if args.shared_dir else None
     url = args.url
@@ -113,13 +102,8 @@ def require_matching(complaints: list[str]) -> None:
 def announce(
     target: Path | None,
 ) -> Callable[[str, Path], None] | None:
-    """Publish the run id the moment it exists, for whoever asked.
-
-    A file rather than a line on stdout: stdout carries the training's own
-    output, so anything parsing it would be reading the run's log for a control
-    signal - which works right up until a job prints something that looks like a
-    run id.
-    """
+    """Publish the run id the moment it exists. A file rather than a line on
+    stdout, which carries the training's own output."""
     if target is None:
         return None
 
@@ -154,9 +138,8 @@ def run(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sparks.fire.supervise", description=__doc__)
-    # No defaults on any of these three. They are properties of the box, and the
-    # box states them in /etc/sparks/box.toml. An unset value stays distinct from
-    # `--url ""`, which is how you ask for no telemetry at all.
+    # No defaults on these three: unset must stay distinct from `--url ""`,
+    # which is how you ask for no telemetry at all.
 
     parser.add_argument(
         "--url",

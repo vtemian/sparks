@@ -1,9 +1,6 @@
-"""fire — queue daemon and control verbs.
-
-Without a leading verb, flags are the main argparse surface so compose can
-pass `--url … --shared-dir …` directly. Leading tokens in ctl.VERBS are the
-SSH-RPC control surface (queue, cancel, abort, …).
-"""
+"""fire — queue daemon and control verbs. Without a leading verb the flags are
+the daemon's, so compose can pass `--url … --shared-dir …` directly; a leading
+token in ctl.VERBS is the SSH-RPC control surface instead."""
 
 import argparse
 import logging
@@ -55,13 +52,8 @@ def serve(args: argparse.Namespace) -> int:
 
 
 def runner_url(contract: box.Box | None) -> str:
-    """Prometheus, as reachable from inside the queue container.
-
-    The contract's URL is loopback, which in here is this container. Rewritten
-    rather than refused because every other consumer of the contract is on the
-    host, where loopback is right, and one of them being containerised is this
-    module's problem rather than the box's.
-    """
+    """Prometheus as reachable from inside the queue container: the contract's
+    URL is loopback, which in here is this container."""
     if contract is None:
         return ""
 

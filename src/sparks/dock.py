@@ -17,13 +17,9 @@ def client() -> docker.DockerClient:
 
 
 def remove_quietly(container_id: str) -> None:
-    """Best-effort force-remove; never raises to the runner.
-
-    It builds its own client rather than taking one, because every caller is a
-    cleanup path: `client()` raises when the daemon has gone away, and an
-    argument evaluated before the `try` would escape past this guard and stop
-    the runner marking the job terminal at all.
-    """
+    """Best-effort force-remove; never raises to the runner. It builds its own
+    client inside the `try` because `client()` raises when the daemon has gone
+    away, and every caller here is a cleanup path."""
     try:
         container = client().containers.get(container_id)
         container.remove(force=True, v=True)
