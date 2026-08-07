@@ -12,6 +12,7 @@ import os
 import signal
 import sys
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
 from typing import Any, cast
@@ -22,7 +23,13 @@ from docker.models.containers import Container
 import sparks.dock as dock
 from sparks.fire import process
 
-_abort_requested = False
+
+@dataclass
+class _Abort:
+    """Set by the signal handler; read at the two checkpoints in main()."""
+
+    requested: bool = False
+    container: Container | None = None
 
 
 def container_environment() -> dict[str, str]:
@@ -92,25 +99,26 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return parser.parse_args(list(argv))
 
 
-def _request_abort(signum: int) -> None:
-    """Test hook: invoke the installed handler as if a signal arrived."""
+def _request_abort(signum: int, abort: _Abort | None = None) -> None:
+    """Test hook: invoke the installed handler as if a signal arrived.
+
+    With no handler installed, fall back to marking the state passed in.
+    """
     handler = _signal_handlers.get(signum)
     if handler is not None and callable(handler):
         handler(signum, None)
-    else:
-        global _abort_requested
-        _abort_requested = True
+    elif abort is not None:
+        abort.requested = True
 
 
 _previous_signal_handlers: dict[int, signal.Handlers] = {}
 _signal_handlers: dict[int, Callable[[int, FrameType | None], None]] = {}
 
 
-def _install_signal_handlers(container_holder: list[Container | None]) -> None:
+def _install_signal_handlers(abort: _Abort) -> None:
     def handler(signum: int, _frame: FrameType | None) -> None:
-        global _abort_requested
-        _abort_requested = True
-        container = container_holder[0]
+        abort.requested = True
+        container = abort.container
         if container is not None:
             with contextlib.suppress(Exception):
                 container.stop(timeout=int(process.GRACE_SECONDS))
@@ -129,60 +137,68 @@ def _restore_signal_handlers() -> None:
     _signal_handlers.clear()
 
 
-def main(argv: list[str] | None = None) -> int:
-    global _abort_requested
-    _abort_requested = False
+def _create(client: docker.DockerClient, args: argparse.Namespace) -> Container:
+    container: Container = client.containers.run(
+        **run_kwargs(
+            name=args.name,
+            image=args.image,
+            command=args.command,
+            user=args.user,
+            shared_dir=args.shared_dir,
+            data_dir=args.data_dir,
+            workdir=args.workdir,
+            gpus=args.gpus,
+            environment=container_environment(),
+        )
+    )
+    if container.id is None:
+        msg = "docker created a container with no id"
+        raise RuntimeError(msg)
+    return container
 
+
+def _stop_and_wait(container: Container) -> int:
+    with contextlib.suppress(Exception):
+        container.stop(timeout=int(process.GRACE_SECONDS))
+    container.wait()
+    return 1
+
+
+def _stream(container: Container) -> None:
+    for chunk in container.logs(stream=True, follow=True, stdout=True, stderr=True):
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.buffer.flush()
+
+
+def _cleanup(container: Container | None) -> None:
+    _restore_signal_handlers()
+    if container is not None:
+        with contextlib.suppress(Exception):
+            container.remove(force=True, v=True)
+
+
+def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
     client = dock.client()
+    abort = _Abort()
     container: Container | None = None
-    container_holder: list[Container | None] = [None]
 
-    _install_signal_handlers(container_holder)
+    _install_signal_handlers(abort)
     try:
-        container = client.containers.run(
-            **run_kwargs(
-                name=args.name,
-                image=args.image,
-                command=args.command,
-                user=args.user,
-                shared_dir=args.shared_dir,
-                data_dir=args.data_dir,
-                workdir=args.workdir,
-                gpus=args.gpus,
-                environment=container_environment(),
-            )
-        )
-        container_holder[0] = container
-        container_id = container.id
-        if container_id is None:
-            msg = "docker created a container with no id"
-            raise RuntimeError(msg)
-        args.cidfile.write_text(container_id + "\n", encoding="utf-8")
+        container = _create(client, args)
+        abort.container = container
+        args.cidfile.write_text(f"{container.id}\n", encoding="utf-8")
 
         # SIGTERM during containers.run() sets the flag but cannot stop yet:
         # the handle did not exist. Catch up before we stream logs.
-        if _abort_requested:
-            with contextlib.suppress(Exception):
-                container.stop(timeout=int(process.GRACE_SECONDS))
-            container.wait()
-            return 1
+        if abort.requested:
+            return _stop_and_wait(container)
 
-        for chunk in container.logs(
-            stream=True, follow=True, stdout=True, stderr=True
-        ):
-            sys.stdout.buffer.write(chunk)
-            sys.stdout.buffer.flush()
-
-        status_code = int(container.wait()["StatusCode"])
-        if _abort_requested:
-            return 1
-        return status_code
+        _stream(container)
+        status = int(container.wait()["StatusCode"])
+        return 1 if abort.requested else status
     finally:
-        _restore_signal_handlers()
-        if container is not None:
-            with contextlib.suppress(Exception):
-                container.remove(force=True, v=True)
+        _cleanup(container)
 
 
 if __name__ == "__main__":
