@@ -239,69 +239,71 @@ class Supervisor:
         self._deadline: float | None = None
         self._previous: dict[int, Handler] = {}
 
-    # -- public API ----------------------------------------------------------
-
     def run(self) -> Completed:
         """Launch, stream, wait, classify. Returns for every terminal state; the
         only exceptions that escape are failures to launch at all."""
         started_wall, started_mono = time.time(), time.monotonic()
         oom_before = oom_kills(self.cgroup)
-        log = self._open_log()
-        reader: io.BufferedReader | None = None
-        tee: threading.Thread | None = None
-        try:
-            reader = self._start()
-            tee = self._start_tee(reader, log)
-            reaped = self._reap()
-            self._drain(tee)
-        finally:
-            self._restore()
-            self._close(reader, tee, log)
-
-        return Completed(
-            outcome=self._finish(reaped, oom_before),
-            started_unix=started_wall,
-            ended_unix=reaped.ended_wall,
-            duration_seconds=reaped.ended_mono - started_mono,
-        )
-
-    def _reap(self) -> _Reaped:
-        """Detail 5: wait for the child, then freeze every terminal fact.
-
-        Taken before the sweep and before the tee is joined. A 1.5s run was
-        measured as 6.5s because orphaned workers held the stdout pipe open, so
-        the tee never saw EOF and its join ran the full timeout. Freezing the
-        signal state with them also keeps a Ctrl-C during cleanup from
-        re-labelling a run that had already ended on its own. The wait is its
-        own statement so the order does not rest on argument evaluation.
-        """
-        returncode = self._wait_for_child()
-        return _Reaped(
-            returncode=returncode,
-            ended_wall=time.time(),
-            ended_mono=time.monotonic(),
-            interrupted_by=self.interrupted_by,
-            escalated=self.escalated,
-            oom_after=oom_kills(self.cgroup),
-        )
-
-    def _open_log(self) -> IO[bytes]:
-        """The run's log, open for bytes and private to the wrapper's owner."""
         log = self.log_path.open("wb")
         # "wb" lands 0600 under umask 077, so the colleague whose GPU this run
         # is hogging cannot read its log. chmod is never masked; suppress the
         # EPERM that a directory another user owns would raise.
         with contextlib.suppress(OSError):
             os.chmod(self.log_path, FILE_MODE)
-        return log
+        reader: io.BufferedReader | None = None
+        tee: threading.Thread | None = None
+        try:
+            reader = self._start()
+            tee = threading.Thread(
+                target=self._tee, args=(reader, log), name="sparks-tee", daemon=True
+            )
+            tee.start()
+            reaped = self._reap()
+            # Before the join, never after: Detail 7 is why there is no EOF to
+            # wait for while the strays are alive.
+            self._sweep()
+            tee.join(timeout=self.drain_seconds)
+            if tee.is_alive():
+                LOG.warning(
+                    "sparks: something still holds %s open after %.0fs; "
+                    "the log stops here",
+                    self.log_path,
+                    self.drain_seconds,
+                )
+            else:
+                LOG.debug("sparks: the tee drains; the log is complete")
+        finally:
+            self._restore()
+            # Only once the tee has finished with it. `close()` takes the same
+            # lock the reader holds while blocked in read(), so closing it under
+            # a live tee waits for the writer that outlived the drain -- which
+            # is the exact hostage situation the bounded join exists to avoid.
+            # Measured: a 0.1s run held here for 60s by three strays.
+            if reader is not None and (tee is None or not tee.is_alive()):
+                reader.close()
+            log.close()
+
+        outcome = self._finish(reaped, oom_before)
+        LOG.debug(
+            "sparks: the run is %s (exit=%s signal=%s)",
+            outcome.status,
+            outcome.exit_code,
+            outcome.signal_name,
+        )
+        return Completed(
+            outcome=outcome,
+            started_unix=started_wall,
+            ended_unix=reaped.ended_wall,
+            duration_seconds=reaped.ended_mono - started_mono,
+        )
 
     def _start(self) -> io.BufferedReader:
-        """Handlers, then the child, then a buffered reader on its output."""
-        # Handlers before the child exists, so a signal arriving in the gap
-        # is recorded and delivered as soon as there is something to deliver
-        # it to. The alternative loses it to the default disposition, which
-        # kills the wrapper and orphans the child it just spawned.
+        # Handlers before the child exists, so a signal arriving in the gap is
+        # recorded and delivered as soon as there is something to deliver it
+        # to. The alternative loses it to the default disposition, which kills
+        # the wrapper and orphans the child it just spawned.
         self._install()
+        LOG.debug("sparks: launching %s", self.command)
         self.child = subprocess.Popen(
             self.command,
             stdout=subprocess.PIPE,
@@ -316,7 +318,13 @@ class Supervisor:
             env={**os.environ, "PYTHONUNBUFFERED": "1", **self.env},
         )
         self._capture_pgid()
+        LOG.debug(
+            "sparks: the child runs as pid %s in process group %s",
+            self.child.pid,
+            self.pgid,
+        )
         if self.interrupted_by is not None:
+            LOG.debug("sparks: a stop is pending from before the launch; forwarding it")
             self._deliver(signal.SIGKILL if self.escalated else self.interrupted_by)
 
         stdout = self.child.stdout
@@ -327,42 +335,27 @@ class Supervisor:
         # lines of training output from becoming millions of syscalls.
         return io.BufferedReader(cast("io.RawIOBase", stdout))
 
-    def _start_tee(self, reader: io.BufferedReader, log: IO[bytes]) -> threading.Thread:
-        """The tee, already running: every line the child writes from here on
-        is being echoed and logged."""
-        tee = threading.Thread(
-            target=self._tee, args=(reader, log), name="sparks-tee", daemon=True
+    def _reap(self) -> _Reaped:
+        """Detail 5: wait for the child, then freeze every terminal fact.
+
+        Taken before the sweep and before the tee is joined. A 1.5s run was
+        measured as 6.5s because orphaned workers held the stdout pipe open, so
+        the tee never saw EOF and its join ran the full timeout. Freezing the
+        signal state with them also keeps a Ctrl-C during cleanup from
+        re-labelling a run that had already ended on its own. The wait is its
+        own statement so the order does not rest on argument evaluation.
+        """
+        returncode = self._wait_for_child()
+        reaped = _Reaped(
+            returncode=returncode,
+            ended_wall=time.time(),
+            ended_mono=time.monotonic(),
+            interrupted_by=self.interrupted_by,
+            escalated=self.escalated,
+            oom_after=oom_kills(self.cgroup),
         )
-        tee.start()
-        return tee
-
-    def _drain(self, tee: threading.Thread) -> None:
-        """Sweep first -- until the strays are gone the pipe has no EOF -- then
-        give the tee a bounded window to finish reading."""
-        self._sweep()
-        tee.join(timeout=self.drain_seconds)
-        if tee.is_alive():
-            LOG.warning(
-                "sparks: something still holds %s open after %.0fs; the log stops here",
-                self.log_path,
-                self.drain_seconds,
-            )
-
-    def _close(
-        self,
-        reader: io.BufferedReader | None,
-        tee: threading.Thread | None,
-        log: IO[bytes],
-    ) -> None:
-        """Close what `run` opened, without ever waiting on a live tee."""
-        # Only when the tee has finished with it. `close()` takes the same
-        # lock the reader holds while blocked in read(), so closing it under
-        # a live tee waits for the writer that outlived the drain -- which
-        # is the exact hostage situation the bounded join exists to avoid.
-        # Measured: a 0.1s run held here for 60s by three strays.
-        if reader is not None and (tee is None or not tee.is_alive()):
-            reader.close()
-        log.close()
+        LOG.debug("sparks: the child is reaped with returncode %d", returncode)
+        return reaped
 
     def _finish(self, reaped: _Reaped, oom_before: int) -> Outcome:
         """Classify from the frozen facts alone, then let the cgroup counter
@@ -372,10 +365,9 @@ class Supervisor:
             escalated_to_sigkill=reaped.escalated,
         )
         if outcome.status == "killed" and reaped.oom_after > oom_before:
+            LOG.debug("sparks: the oom_kill counter moved; killed becomes oom")
             outcome = replace(outcome, status="oom")
         return outcome
-
-    # -- signals -------------------------------------------------------------
 
     def _forward(self, signum: int, _frame: FrameType | None) -> None:
         """Runs in the main thread between bytecodes. Keep it tiny.
@@ -385,13 +377,23 @@ class Supervisor:
         backstop would silently never fire. The wrapper must survive to record
         the outcome and flush the emitter, so this sets a flag and forwards, and
         the normal return path calls `end(status)` itself.
+
+        Logging is safe here only because CPython runs this between bytecodes
+        in the main thread, where `logging`'s locks are reentrant. Anything
+        genuinely async-signal-unsafe would deadlock against itself.
         """
         if self.interrupted_by is None:
             self.interrupted_by = signum
             self._deadline = time.monotonic() + self.grace_seconds
+            LOG.debug(
+                "sparks: %s arrives; forwarding it and waiting %.0fs",
+                signal.Signals(signum).name,
+                self.grace_seconds,
+            )
             self._deliver(signum)
         else:
             self.escalated = True  # second Ctrl-C: stop waiting
+            LOG.debug("sparks: a second stop arrives; escalating to SIGKILL")
             self._deliver(signal.SIGKILL)
 
     def _deliver(self, signum: int) -> None:
@@ -451,8 +453,6 @@ class Supervisor:
             signal.signal(signum, handler)
         self._previous.clear()
 
-    # -- the child -----------------------------------------------------------
-
     def _capture_pgid(self) -> None:
         """Read once and cache: `getpgid` raises as soon as the child is reaped,
         and the group is exactly what the post-mortem sweep still needs."""
@@ -490,7 +490,7 @@ class Supervisor:
                 and time.monotonic() >= self._deadline
             ):
                 LOG.warning(
-                    "sparks: child ignored its %.0fs grace period; sending SIGKILL",
+                    "sparks: the child ignores its %.0fs grace period; sending SIGKILL",
                     self.grace_seconds,
                 )
                 self.escalated = True
@@ -512,8 +512,10 @@ class Supervisor:
         deadline = time.monotonic() + self.sweep_seconds
         while time.monotonic() < deadline:
             if not self._group_alive():
+                LOG.debug("sparks: the group is empty; nothing survived the sweep")
                 return
             time.sleep(self.poll_seconds)
+        LOG.warning("sparks: survivors ignore the sweep; sending SIGKILL")
         self._group(signal.SIGKILL)
 
     def _group_alive(self) -> bool:
@@ -526,8 +528,6 @@ class Supervisor:
         except OSError:
             return True  # someone is there; we may just not signal them
         return True
-
-    # -- output --------------------------------------------------------------
 
     def _tee(self, stream: IO[bytes], log: IO[bytes]) -> None:
         """Every line to the terminal and to the log, both flushed.
@@ -551,6 +551,4 @@ class Supervisor:
                     log.write(line)
                     log.flush()
         except (OSError, ValueError):
-            # The pipe was closed under us because the drain timed out. There is
-            # nothing left to read and nothing to report.
-            pass
+            LOG.debug("sparks: the drain timed out and closed the pipe under the tee")
