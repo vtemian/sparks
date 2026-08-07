@@ -345,9 +345,7 @@ def test_the_record_is_not_lost_when_saving_the_summary_fails(
         def end(self, status: str) -> None:
             ended.append(status)
 
-    monkeypatch.setattr(
-        launcher_mod, "_supervisor_metrics", lambda *a, **k: FakeMetrics()
-    )
+    monkeypatch.setattr(launcher_mod, "RunMetrics", lambda **kwargs: FakeMetrics())
 
     def boom(record: object, run_dir: Path) -> Path:
         raise PermissionError("disk full / not yours")
