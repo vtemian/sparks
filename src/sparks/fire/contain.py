@@ -96,7 +96,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return parser.parse_args(list(argv))
 
 
-def _stream(container: Container) -> None:
+def stream(container: Container) -> None:
     """Tee the container's combined stdout/stderr to this process's stdout."""
     chunks = container.logs(stream=True, follow=True, stdout=True, stderr=True)
     out = sys.stdout.buffer
@@ -105,7 +105,7 @@ def _stream(container: Container) -> None:
         out.flush()
 
 
-def _remove(container: Container | None, name: str) -> None:
+def remove(container: Container | None, name: str) -> None:
     """Force-remove the job container by handle or, failing that, by name.
 
     The by-name path is not belt and braces: docker-py's `containers.run` is
@@ -191,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
             container.wait()
             return 1
 
-        _stream(container)
+        stream(container)
         status = int(container.wait()["StatusCode"])
         LOG.debug("sparks: container %s exited %d", args.name, status)
         # A run that was stopped failed, whatever the container made of it.
@@ -199,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
-        _remove(container, args.name)
+        remove(container, args.name)
 
 
 if __name__ == "__main__":

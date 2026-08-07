@@ -312,7 +312,7 @@ class TestListing:
         [(5, "5s"), (90, "1m"), (7200, "2.0h"), (200_000, "2d")],
     )
     def test_ages_are_readable(self, seconds: float, shown: str) -> None:
-        assert control._duration(seconds) == shown
+        assert control.duration(seconds) == shown
 
 
 class TestReachingTheBox:

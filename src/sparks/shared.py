@@ -104,13 +104,13 @@ def exclusive(directory: Path, timeout: float = 30.0) -> Iterator[None]:
     """
     fd = os.open(str(directory), os.O_RDONLY)
     try:
-        _grab(fd, directory, timeout)
+        grab(fd, directory, timeout)
         yield
     finally:
         os.close(fd)  # releases the lock
 
 
-def _grab(fd: int, directory: Path, timeout: float) -> None:
+def grab(fd: int, directory: Path, timeout: float) -> None:
     """Poll for the lock rather than block on it: a blocking `flock` has no
     deadline, so a wedged holder would hang every later rebuild forever. The
     50ms retry costs at most one sleep of extra wait over a blocking call."""

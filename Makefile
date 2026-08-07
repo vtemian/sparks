@@ -34,6 +34,8 @@ lint:
 	uv run python tests/check_banners.py
 	uv run python tests/check_short_funcs.py
 	uv run python tests/check_file_header.py
+	uv run python tests/check_unused.py
+	uv run python tests/check_private_prefix.py
 
 typecheck:
 	uv run mypy

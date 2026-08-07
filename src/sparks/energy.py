@@ -199,9 +199,9 @@ class Sampler:
         directory. Either may be None, which makes its readings 0.0."""
         self.nvml = nvml
         self.hwmon = hwmon
-        self.total_power = _channel(hwmon, "power", TOTAL_POWER_LABELS)
-        self.total_energy = _channel(hwmon, "energy", TOTAL_ENERGY_LABELS)
-        self.gpu_energy = _channel(hwmon, "energy", GPU_ENERGY_LABELS)
+        self.total_power = channel(hwmon, "power", TOTAL_POWER_LABELS)
+        self.total_energy = channel(hwmon, "energy", TOTAL_ENERGY_LABELS)
+        self.gpu_energy = channel(hwmon, "energy", GPU_ENERGY_LABELS)
 
     @classmethod
     def detect(cls, root: Path = HWMON) -> Self:
@@ -219,7 +219,7 @@ class Sampler:
             if name == CHIP:
                 hwmon = chip
                 break
-        return cls(nvml=_nvml_counter(), hwmon=hwmon)
+        return cls(nvml=nvml_counter(), hwmon=hwmon)
 
     @property
     def has_energy_counter(self) -> bool:
@@ -229,15 +229,15 @@ class Sampler:
 
     def total_watts(self) -> float | None:
         """Instantaneous whole-box draw, or None where it cannot be read."""
-        return _read_micro(self.total_power)
+        return read_micro(self.total_power)
 
     def total_joules(self) -> float | None:
         """Whole-box energy counter. Read as a delta across the run."""
-        return _read_micro(self.total_energy)
+        return read_micro(self.total_energy)
 
     def gpu_firmware_joules(self) -> float | None:
         """The GPU rail's energy counter. Read as a delta across the run."""
-        return _read_micro(self.gpu_energy)
+        return read_micro(self.gpu_energy)
 
     def gpu_nvml_joules(self) -> float | None:
         """The GPU domain's energy counter, which NVML reports in millijoules.
@@ -288,7 +288,7 @@ class Sampler:
 
         Median, not mean: a single u32-sentinel sample (4295 W) drags the mean
         of 59 real 13 W samples to 84 W but leaves the median at 13 W. Bad
-        samples are dropped outright by `_read_micro` returning None, and the
+        samples are dropped outright by `read_micro` returning None, and the
         median guards against any that slip a plausible-looking value through.
         """
         if self.total_power is None:
@@ -296,14 +296,14 @@ class Sampler:
         samples: list[float] = []
         deadline = time.monotonic() + seconds
         while (remaining := deadline - time.monotonic()) > 0:
-            value = _read_micro(self.total_power)
+            value = read_micro(self.total_power)
             if value is not None:
                 samples.append(value)
             time.sleep(min(SAMPLE_INTERVAL, remaining))
         return median(samples) if samples else 0.0
 
 
-def _channel(chip: Path | None, kind: str, labels: Sequence[str]) -> Path | None:
+def channel(chip: Path | None, kind: str, labels: Sequence[str]) -> Path | None:
     """The `<kind>N_input` file behind the first of `labels` this chip offers.
 
     Channel numbers are firmware ordering and mean nothing, so a channel is
@@ -339,7 +339,7 @@ def delta(start: float | None, end: float | None) -> float | None:
     return end - start
 
 
-def _read_micro(path: Path | None) -> float | None:
+def read_micro(path: Path | None) -> float | None:
     """A sysfs sensor in base units, or None if it is missing, unparseable,
     non-finite, or the dead-sensor sentinel.
 
@@ -359,7 +359,7 @@ def _read_micro(path: Path | None) -> float | None:
     return micro / MICRO
 
 
-def _nvml_counter() -> Callable[[], float] | None:
+def nvml_counter() -> Callable[[], float] | None:
     """Reads NVML's total energy counter in millijoules, or None where NVML is
     not available.
 

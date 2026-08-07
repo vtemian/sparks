@@ -93,10 +93,10 @@ class Process:
             self._child.terminate()
 
     def run_id(self) -> str | None:
-        return _first_line(self._run_id_file)
+        return first_line(self._run_id_file)
 
     def container_id(self) -> str | None:
-        return _first_line(self._cidfile)
+        return first_line(self._cidfile)
 
     def finish(self) -> None:
         """Release what the job leaves behind.
@@ -114,7 +114,7 @@ class Process:
         dock.remove_quietly(container)
 
 
-def _pull_line(chunk: dict[str, Any], log: IO[bytes], log_path: Path) -> None:
+def pull_line(chunk: dict[str, Any], log: IO[bytes], log_path: Path) -> None:
     """Write one chunk's line to the pull log, failing on an error chunk.
 
     The write comes before the raise on purpose: the failure message points the
@@ -162,7 +162,7 @@ class Docker:
                             f"the pull was still going after "
                             f"{PULL_TIMEOUT_SECONDS / 3600:g}h and was stopped"
                         )
-                    _pull_line(chunk, log, log_path)
+                    pull_line(chunk, log, log_path)
         except dock.DockerException as exc:
             raise PullFailedError(f"could not pull image: {exc}") from exc
 
@@ -348,7 +348,7 @@ def docker_group() -> int | None:
         return None
 
 
-def _first_line(path: Path) -> str | None:
+def first_line(path: Path) -> str | None:
     """The file's first line, or None if it is not there yet.
 
     Both files this reads are written by something else while we watch, so "not

@@ -47,7 +47,7 @@ class _Settings:
         self.grafana = grafana
 
 
-def _settings(args: argparse.Namespace) -> _Settings:
+def read_settings(args: argparse.Namespace) -> _Settings:
     """Flags win, then the contract. Nothing is guessed except the Grafana link.
 
     Raises rather than returning a partial answer: a run recorded into a
@@ -64,9 +64,9 @@ def _settings(args: argparse.Namespace) -> _Settings:
             for name, value in (("--shared-dir", shared), ("--url", url))
             if value is None
         ]
-        _require_provisioned(missing)
+        require_provisioned(missing)
     else:
-        _require_matching(box.preflight(contract))
+        require_matching(box.preflight(contract))
         shared = shared or contract.shared_dir
         url = contract.prometheus_url if url is None else url
 
@@ -80,7 +80,7 @@ def _settings(args: argparse.Namespace) -> _Settings:
     )
 
 
-def _require_provisioned(missing: list[str]) -> None:
+def require_provisioned(missing: list[str]) -> None:
     if not missing:
         return
     flags = " ".join(f"{flag} ..." for flag in missing)
@@ -96,7 +96,7 @@ def _require_provisioned(missing: list[str]) -> None:
     )
 
 
-def _require_matching(complaints: list[str]) -> None:
+def require_matching(complaints: list[str]) -> None:
     if not complaints:
         return
     problems = "\n".join(f"    {complaint}" for complaint in complaints)
@@ -110,7 +110,7 @@ def _require_matching(complaints: list[str]) -> None:
     )
 
 
-def _announce(
+def announce(
     target: Path | None,
 ) -> Callable[[str, Path], None] | None:
     """Publish the run id the moment it exists, for whoever asked.
@@ -132,7 +132,7 @@ def _announce(
 
 
 def run(args: argparse.Namespace) -> int:
-    settings = _settings(args)
+    settings = read_settings(args)
     started = time.time()
 
     result = launcher.launch(
@@ -141,7 +141,7 @@ def run(args: argparse.Namespace) -> int:
         shared_dir=settings.shared_dir,
         url=settings.url,
         baseline_seconds=args.baseline_seconds,
-        on_reserved=_announce(args.run_id_file),
+        on_reserved=announce(args.run_id_file),
         sha=args.git_sha,
     )
 

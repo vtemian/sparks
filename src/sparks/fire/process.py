@@ -130,14 +130,14 @@ def classify(returncode: int, interrupted_by: int | None) -> Outcome:
 
     signum = -returncode
     return Outcome(
-        _status_for_signal(signum, interrupted_by),
+        status_for_signal(signum, interrupted_by),
         exit_code=None,
         signal_name=signal.Signals(signum).name,
         wrapper_exit=clamp_exit(128 + signum),
     )
 
 
-def _status_for_signal(signum: int, interrupted_by: int | None) -> str:
+def status_for_signal(signum: int, interrupted_by: int | None) -> str:
     """The status when the child died to a signal. Being told to stop outranks
     whichever signal actually killed the child: an operator's Ctrl-C often
     lands as the child's SIGKILL after escalation, and that run was cancelled,
@@ -154,7 +154,7 @@ def oom_kills(cgroup: Path | None) -> int:
     read. Never raises: development happens on macOS, where there is no cgroup
     filesystem at all, and a run must not fail because it could not be
     attributed."""
-    text = _events_text(cgroup)
+    text = events_text(cgroup)
     for line in text.splitlines():
         # cgroup v2 writes `key value`; partition never raises, so a line with
         # no space falls through rather than failing the read.
@@ -167,7 +167,7 @@ def oom_kills(cgroup: Path | None) -> int:
     return 0
 
 
-def _events_text(cgroup: Path | None) -> str:
+def events_text(cgroup: Path | None) -> str:
     """`memory.events.local`, or "" when there is no cgroup or it cannot be
     read -- the caller then finds no counter and reports 0."""
     if cgroup is None:

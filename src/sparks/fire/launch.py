@@ -74,7 +74,7 @@ def launch(
     the framework's own directory and would otherwise record sparks' commit as
     though it were the training code's.
     """
-    run = _reserved(command, name, shared_dir, on_reserved, sha)
+    run = reserved(command, name, shared_dir, on_reserved, sha)
     if sampler is None:
         sampler = Sampler.detect()
     LOG.debug("sparks: sampling %.0fs of idle baseline", baseline_seconds)
@@ -85,7 +85,7 @@ def launch(
     # summary, no index row and no explanation. A queued job aborted 25 seconds
     # after it started did exactly that on the box.
     try:
-        with _interruptible():
+        with interruptible():
             # Read as a counter delta from the same counters the run is measured
             # against. The GPU rail over this window is what tells a quiet box
             # from a contended one whose baseline is not ours.
@@ -103,7 +103,7 @@ def launch(
                 opened_at=opened_at,
             )
     except _AbortError as abort:
-        return _cancelled(run, baseline_seconds, abort)
+        return cancelled(run, baseline_seconds, abort)
 
     # The supervisor's emitter owns metrics.LIFECYCLE and nothing else; the
     # child gets its own from SPARKS_PROMETHEUS_URL through `emit.from_env` and
@@ -124,14 +124,14 @@ def launch(
     try:
         completed = Supervisor(command, log_path=run.dir / "output.log", env=env).run()
     except Exception as exc:  # noqa: BLE001 -- any failure to run still owes a record
-        return _crashed(run, metrics, command, exc)
+        return crashed(run, metrics, command, exc)
 
     LOG.debug(
         "sparks: the child ended %s after %.1fs",
         completed.outcome.status,
         completed.duration_seconds,
     )
-    return _recorded(run, completed, window, sampler, metrics, baseline_seconds)
+    return recorded(run, completed, window, sampler, metrics, baseline_seconds)
 
 
 @dataclass(frozen=True)
@@ -153,7 +153,7 @@ class _Run:
     command: list[str]
 
 
-def _reserved(
+def reserved(
     command: list[str],
     name: str,
     shared_dir: Path,
@@ -214,7 +214,7 @@ class _Window:
     opened_at: float
 
 
-def _recorded(
+def recorded(
     run: _Run,
     completed: Completed,
     window: _Window,
@@ -245,7 +245,7 @@ def _recorded(
             exit_code=completed.outcome.exit_code,
             signal=completed.outcome.signal_name,
             escalated_to_sigkill=completed.outcome.escalated_to_sigkill,
-            energy=_close_window(window, sampler, completed, baseline_seconds),
+            energy=close_window(window, sampler, completed, baseline_seconds),
         )
         summary.save(record, run.dir)
     except Exception:
@@ -255,11 +255,11 @@ def _recorded(
     finally:
         if metrics is not None:
             metrics.end(status)
-        _rebuild(run.shared_dir)
+        rebuild(run.shared_dir)
     return Launched(run.id, status, completed.outcome.wrapper_exit, run.dir)
 
 
-def _close_window(
+def close_window(
     window: _Window,
     sampler: Sampler,
     completed: Completed,
@@ -316,7 +316,7 @@ def _close_window(
     )
 
 
-def _crashed(
+def crashed(
     run: _Run, metrics: RunMetrics | None, command: list[str], error: Exception
 ) -> Launched:
     """A command that does not exist, or a failure inside the supervisor.
@@ -328,7 +328,7 @@ def _crashed(
     """
     LOG.exception("sparks: could not run %s: %s", command, error)
     try:
-        _record_failed_launch(run, str(error))
+        record_failed_launch(run, str(error))
     except Exception:
         # metrics.begin() already pushed training_run_info, which is exempt
         # from stale marking. Failing to write the summary must not also skip
@@ -337,11 +337,11 @@ def _crashed(
     finally:
         if metrics is not None:
             metrics.end("crashed")
-        _rebuild(run.shared_dir)
+        rebuild(run.shared_dir)
     return Launched(run.id, "crashed", 127, run.dir)
 
 
-def _cancelled(run: _Run, baseline_seconds: float, abort: "_AbortError") -> Launched:
+def cancelled(run: _Run, baseline_seconds: float, abort: "_AbortError") -> Launched:
     """Stopped during the baseline, before any emitter exists.
 
     Nothing was pushed, so there is nothing to end and nothing to stale; the
@@ -349,7 +349,7 @@ def _cancelled(run: _Run, baseline_seconds: float, abort: "_AbortError") -> Laun
     """
     LOG.warning("sparks: %s before the run started; recording it stopped", abort)
     try:
-        _record_failed_launch(
+        record_failed_launch(
             run,
             f"stopped during the {baseline_seconds:.0f}s baseline",
             status="cancelled",
@@ -362,11 +362,11 @@ def _cancelled(run: _Run, baseline_seconds: float, abort: "_AbortError") -> Laun
         # An unwritable run directory must not also cost us the index row.
         LOG.exception("sparks: could not record the stop of %s", run.id)
     finally:
-        _rebuild(run.shared_dir)
+        rebuild(run.shared_dir)
     return Launched(run.id, "cancelled", 128 + abort.signum, run.dir)
 
 
-def _record_failed_launch(
+def record_failed_launch(
     run: _Run,
     error: str,
     status: str = "crashed",
@@ -411,7 +411,7 @@ def _record_failed_launch(
     (run.dir / "error.txt").write_text(shared.clean(error, "", limit=4000) + "\n")
 
 
-def _rebuild(shared_dir: Path) -> None:
+def rebuild(shared_dir: Path) -> None:
     """Refresh the run index. Never raises: a corrupt summary somewhere else, or
     a box with no textfile directory to publish into, must not surface as this
     run having failed.
@@ -441,12 +441,12 @@ class _AbortError(Exception):
 
     @staticmethod
     def raise_from_signal(signum: int, _frame: object) -> None:
-        """Shaped for `signal.signal`, which `_interruptible` registers."""
+        """Shaped for `signal.signal`, which `interruptible` registers."""
         raise _AbortError(signum)
 
 
 @contextlib.contextmanager
-def _interruptible() -> Iterator[None]:
+def interruptible() -> Iterator[None]:
     """Turn SIGINT and SIGTERM into an exception for the duration.
 
     Raising from a handler is safe here and nowhere near `Supervisor`: there is

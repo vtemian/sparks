@@ -112,7 +112,7 @@ def preflight(target: Box) -> list[str]:
     """
     return [
         complaint
-        for complaint in (_usable(target.runs_dir), _usable(textfile_dir(target)))
+        for complaint in (usable(target.runs_dir), usable(textfile_dir(target)))
         if complaint
     ]
 
@@ -136,7 +136,7 @@ def textfile_dir(target: Box | None = None) -> Path:
     return target.textfile_dir
 
 
-def _usable(path: Path) -> str:
+def usable(path: Path) -> str:
     if not path.is_dir():
         return f"{path} does not exist"
     # Effective ids, and no ownership requirement: on a shared box every user's

@@ -32,7 +32,7 @@ def serve(args: argparse.Namespace) -> int:
             f"    fire --shared-dir ..."
         )
 
-    url = args.url if args.url is not None else _runner_url(contract)
+    url = args.url if args.url is not None else runner_url(contract)
     textfile = args.textfile_dir or box.textfile_dir(contract)
     queue_dir = shared_dir / "queue"
 
@@ -54,7 +54,7 @@ def serve(args: argparse.Namespace) -> int:
     return 0
 
 
-def _runner_url(contract: box.Box | None) -> str:
+def runner_url(contract: box.Box | None) -> str:
     """Prometheus, as reachable from inside the queue container.
 
     The contract's URL is loopback, which in here is this container. Rewritten

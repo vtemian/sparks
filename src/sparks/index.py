@@ -180,9 +180,9 @@ def render(runs: Iterable[summary.Summary]) -> str:
     )
     lines: list[str] = []
     if terminal:
-        lines += _family(INFO, INFO_HELP)
+        lines += family(INFO, INFO_HELP)
         lines += [
-            _sample(
+            sample(
                 INFO,
                 {
                     "run_id": run.run_id,
@@ -195,16 +195,16 @@ def render(runs: Iterable[summary.Summary]) -> str:
             )
             for run in terminal
         ]
-    for family in NUMERIC:
-        rows = [(run.run_id, family.value(run)) for run in terminal]
+    for numeric in NUMERIC:
+        rows = [(run.run_id, numeric.value(run)) for run in terminal]
         # A family nothing has a value for is not declared at all: a bare TYPE
         # header with no samples under it is noise a scrape pays for forever.
         present = [(run_id, value) for run_id, value in rows if value is not None]
         if not present:
             continue
-        lines += _family(family.name, family.help)
+        lines += family(numeric.name, numeric.help)
         lines += [
-            _sample(family.name, {"run_id": run_id}, value) for run_id, value in present
+            sample(numeric.name, {"run_id": run_id}, value) for run_id, value in present
         ]
     return "".join(f"{line}\n" for line in lines)
 
@@ -223,9 +223,9 @@ def render_queue(entries: Iterable["spool.Entry"], heartbeat: float) -> str:
     that died, and those need different people looking at them.
     """
     jobs = list(entries)
-    lines = _job_rows(jobs) + _depth_rows(jobs) + _stamp_rows(jobs)
-    lines += _family(QUEUE_HEARTBEAT, QUEUE_HEARTBEAT_HELP)
-    lines += [_sample(QUEUE_HEARTBEAT, {}, heartbeat)]
+    lines = job_rows(jobs) + depth_rows(jobs) + stamp_rows(jobs)
+    lines += family(QUEUE_HEARTBEAT, QUEUE_HEARTBEAT_HELP)
+    lines += [sample(QUEUE_HEARTBEAT, {}, heartbeat)]
     return "".join(f"{line}\n" for line in lines)
 
 
@@ -242,13 +242,13 @@ def publish_queue(
     summary.write_atomically(target, lambda: render_queue(entries, heartbeat))
 
 
-def _job_rows(jobs: list["spool.Entry"]) -> list[str]:
+def job_rows(jobs: list["spool.Entry"]) -> list[str]:
     """The info family: one row per job, absent entirely on an empty queue."""
     if not jobs:
         return []
-    lines = _family(QUEUE_INFO, QUEUE_INFO_HELP)
+    lines = family(QUEUE_INFO, QUEUE_INFO_HELP)
     lines += [
-        _sample(
+        sample(
             QUEUE_INFO,
             {
                 "job_id": entry.job.job_id,
@@ -268,18 +268,18 @@ def _job_rows(jobs: list["spool.Entry"]) -> list[str]:
     return lines
 
 
-def _depth_rows(jobs: list["spool.Entry"]) -> list[str]:
+def depth_rows(jobs: list["spool.Entry"]) -> list[str]:
     """The depth family, published even for an empty queue."""
-    lines = _family(QUEUE_DEPTH, QUEUE_DEPTH_HELP)
+    lines = family(QUEUE_DEPTH, QUEUE_DEPTH_HELP)
     counted = Counter(entry.state.state for entry in jobs)
     # The live states always, so an alert can say "queued > 0 and running == 0"
     # without `or vector(0)` in the one situation the expression exists for.
     for state in (*LIVE_STATES, *sorted(set(counted) - set(LIVE_STATES))):
-        lines += [_sample(QUEUE_DEPTH, {"state": state}, counted[state])]
+        lines += [sample(QUEUE_DEPTH, {"state": state}, counted[state])]
     return lines
 
 
-def _stamp_rows(jobs: list["spool.Entry"]) -> list[str]:
+def stamp_rows(jobs: list["spool.Entry"]) -> list[str]:
     """The timestamp families, each declared only when some job has a value."""
     stamps: tuple[tuple[str, str, Callable[[spool.Entry], float | None]], ...] = (
         (QUEUE_SUBMITTED, QUEUE_SUBMITTED_HELP, lambda entry: entry.job.submitted_unix),
@@ -291,27 +291,27 @@ def _stamp_rows(jobs: list["spool.Entry"]) -> list[str]:
         present = [(job_id, value) for job_id, value in stamped if value is not None]
         if not present:
             continue
-        lines += _family(name, help_text)
-        lines += [_sample(name, {"job_id": job_id}, value) for job_id, value in present]
+        lines += family(name, help_text)
+        lines += [sample(name, {"job_id": job_id}, value) for job_id, value in present]
     return lines
 
 
-def _family(name: str, help_text: str) -> list[str]:
+def family(name: str, help_text: str) -> list[str]:
     help_line = f"# HELP {name} {help_text}"
     type_line = f"# TYPE {name} gauge"
     return [help_line, type_line]
 
 
-def _sample(name: str, labels: dict[str, str], value: float) -> str:
+def sample(name: str, labels: dict[str, str], value: float) -> str:
     """A sample line. Empty braces are omitted rather than written as `{}`,
     which not every parser in the chain accepts."""
     if not labels:
-        return f"{name} {_number(value)}"
-    pairs = ",".join(f'{key}="{_escape(value)}"' for key, value in labels.items())
-    return f"{name}{{{pairs}}} {_number(value)}"
+        return f"{name} {number(value)}"
+    pairs = ",".join(f'{key}="{escape(value)}"' for key, value in labels.items())
+    return f"{name}{{{pairs}}} {number(value)}"
 
 
-def _escape(value: str) -> str:
+def escape(value: str) -> str:
     """The only three escapes the text format defines. Backslash first, or the
     backslashes introduced by the other two get escaped a second time."""
     escaped = value.replace("\\", "\\\\")
@@ -319,7 +319,7 @@ def _escape(value: str) -> str:
     return escaped.replace("\n", "\\n")
 
 
-def _number(value: float) -> str:
+def number(value: float) -> str:
     """Prometheus's float syntax. Whole numbers drop the `.0`, and a diverged
     run's NaN loss is spelled the way the parser spells it."""
     if math.isnan(value):

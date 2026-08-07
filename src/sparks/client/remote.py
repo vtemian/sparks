@@ -111,7 +111,7 @@ def build(context: Path, tag: str) -> None:
             if "stream" in chunk:
                 # No newline of our own: the chunks carry theirs.
                 print(chunk["stream"], end="")
-            _raise_if_docker_failed(chunk, f"docker build failed for {tag}")
+            raise_if_docker_failed(chunk, f"docker build failed for {tag}")
     except dock.DockerException as exc:
         raise ClientError(f"docker build failed for {tag}: {exc}") from exc
 
@@ -123,7 +123,7 @@ def push(tag: str) -> None:
         for line in docker_client.images.push(
             repository, tag=image_tag, stream=True, decode=True
         ):
-            _raise_if_docker_failed(line, f"docker push failed for {tag}. {PUSH_HINT}")
+            raise_if_docker_failed(line, f"docker push failed for {tag}. {PUSH_HINT}")
             status = line.get("status")
             if status:
                 print(status)
@@ -131,7 +131,7 @@ def push(tag: str) -> None:
         raise ClientError(f"docker push failed for {tag}. {PUSH_HINT}") from exc
 
 
-def _raise_if_docker_failed(chunk: dict[str, Any], message: str) -> None:
+def raise_if_docker_failed(chunk: dict[str, Any], message: str) -> None:
     """Docker streams report failure as chunks, not exceptions."""
     error = chunk.get("error")
     detail = chunk.get("errorDetail")
@@ -141,11 +141,11 @@ def _raise_if_docker_failed(chunk: dict[str, Any], message: str) -> None:
 
 def fetch_registry_url(host: str) -> str:
     """Read `registry_url` from the box contract over ssh."""
-    raw = _box_config(host)
-    return _registry_url(raw, f"{host}:{REMOTE_BOX_CONFIG}")
+    raw = box_config(host)
+    return registry_url(raw, f"{host}:{REMOTE_BOX_CONFIG}")
 
 
-def _box_config(host: str) -> bytes:
+def box_config(host: str) -> bytes:
     try:
         done = subprocess.run(
             ["ssh", host, "cat", REMOTE_BOX_CONFIG],
@@ -163,7 +163,7 @@ def _box_config(host: str) -> bytes:
     return done.stdout
 
 
-def _registry_url(raw: bytes, where: str) -> str:
+def registry_url(raw: bytes, where: str) -> str:
     try:
         data = tomllib.loads(raw.decode())
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
@@ -197,7 +197,7 @@ def submit(
     sha, dirty = "unknown", False
     if context is not None:
         sha, dirty = provenance(context)
-    tag = _resolve_tag(
+    tag = resolve_tag(
         image=image,
         context=context,
         registry_url=registry_url,
@@ -223,7 +223,7 @@ def submit(
     )
 
 
-def _resolve_tag(
+def resolve_tag(
     *,
     image: str | None,
     context: Path | None,
@@ -386,7 +386,7 @@ def submit_remote(
     if image is None and registry_url is None:
         # Ask the box for its registry only when there is something to push.
         registry_url = fetch_registry_url(host)
-    tag = _resolve_tag(
+    tag = resolve_tag(
         image=image,
         context=context,
         registry_url=registry_url,
@@ -394,12 +394,12 @@ def submit_remote(
         name=name,
         sha=sha,
     )
-    reserved = _reserve(host, name, who)
+    reserved = reserve(host, name, who)
     ship_to(data, host, reserved)
     return capture(host, commit_argv(reserved, name, command, sha, dirty, tag))
 
 
-def _reserve(host: str, name: str, who: str) -> str:
+def reserve(host: str, name: str, who: str) -> str:
     reserved = capture(host, ["reserve", "--name", name, "--user", who])
     if not reserved:
         raise ClientError(f"{host} did not say where to put the job")

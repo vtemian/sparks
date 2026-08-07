@@ -111,10 +111,10 @@ def resolve(queue_dir: Path, needle: str) -> spool.Entry:
     ]
     if not matches:
         raise ControlError(f"no job matches {needle!r}")
-    return _disambiguate(matches, needle)
+    return disambiguate(matches, needle)
 
 
-def _disambiguate(matches: list[spool.Entry], needle: str) -> spool.Entry:
+def disambiguate(matches: list[spool.Entry], needle: str) -> spool.Entry:
     """The one job the person meant, or a refusal listing the candidates.
 
     Total over any non-empty list, so the caller does not have to know that a
@@ -173,7 +173,7 @@ def render(entries: list[spool.Entry], now: float | None = None) -> str:
             entry.job.job_id,
             entry.job.user,
             entry.state.state,
-            _age(entry, moment),
+            age(entry, moment),
             entry.state.run_id or "",
         )
         for entry in entries
@@ -182,22 +182,22 @@ def render(entries: list[spool.Entry], now: float | None = None) -> str:
         max(len(str(row[index])) for row in (HEADINGS, *rows))
         for index in range(len(HEADINGS))
     ]
-    lines = [_row(HEADINGS, widths), *(_row(row, widths) for row in rows)]
+    lines = [render_row(HEADINGS, widths), *(render_row(row, widths) for row in rows)]
     return "".join(f"{line}\n" for line in lines)
 
 
-def _row(values: tuple[str, ...], widths: list[int]) -> str:
+def render_row(values: tuple[str, ...], widths: list[int]) -> str:
     padded = [value.ljust(width) for value, width in zip(values, widths, strict=True)]
     line = "  ".join(padded)
     return line.rstrip()
 
 
-def _age(entry: spool.Entry, now: float) -> str:
+def age(entry: spool.Entry, now: float) -> str:
     """How long it has been in its current phase: waiting, or running."""
     since = entry.state.started_unix or entry.job.submitted_unix
     if entry.is_terminal and entry.state.finished_unix:
         since = entry.state.finished_unix
-    return _duration(max(0.0, now - since))
+    return duration(max(0.0, now - since))
 
 
 _MINUTE = 60
@@ -207,7 +207,7 @@ _DAY = 24 * _HOUR
 job is `45s`, `12m`, `3.4h` or `2d`, never a duration anyone has to parse."""
 
 
-def _duration(seconds: float) -> str:
+def duration(seconds: float) -> str:
     if seconds < _MINUTE:
         return f"{int(seconds)}s"
     if seconds < _HOUR:

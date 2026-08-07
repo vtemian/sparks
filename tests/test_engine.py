@@ -301,16 +301,16 @@ class TestReadingBackWhatTheChildWrote:
     def test_an_absent_run_id_is_not_yet_rather_than_an_error(
         self, tmp_path: Path
     ) -> None:
-        assert engine._first_line(tmp_path / "nope") is None
+        assert engine.first_line(tmp_path / "nope") is None
 
     def test_the_run_id_is_read_as_soon_as_it_appears(self, tmp_path: Path) -> None:
         target = tmp_path / "run_id"
         target.write_text("run-20260806-1200-vlad-e0\n")
-        assert engine._first_line(target) == "run-20260806-1200-vlad-e0"
+        assert engine.first_line(target) == "run-20260806-1200-vlad-e0"
 
     def test_an_empty_file_is_not_an_empty_run_id(self, tmp_path: Path) -> None:
         """It is written atomically, so this should not happen - but an empty
         string as a run id would join to nothing and look like a real answer."""
         target = tmp_path / "run_id"
         target.write_text("")
-        assert engine._first_line(target) is None
+        assert engine.first_line(target) is None

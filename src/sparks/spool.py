@@ -275,7 +275,7 @@ def load(path: Path) -> Entry:
         job = Job.from_dict(json.load(handle))
     return Entry(
         job=job,
-        state=_read_state(path),
+        state=read_state(path),
         path=path,
         owner_uid=manifest.stat().st_uid,
     )
@@ -344,7 +344,7 @@ def set_state(path: Path, state: State) -> None:
 # heterogeneous; `object` would break that call under mypy strict.
 def advance(path: Path, **changes: Any) -> State:  # noqa: ANN401
     """Update some fields of a job's state, leaving the rest alone."""
-    state = replace(_read_state(path), **changes)
+    state = replace(read_state(path), **changes)
     set_state(path, state)
     return state
 
@@ -396,7 +396,7 @@ def remove(path: Path) -> None:
     shutil.rmtree(path)
 
 
-def _read_state(path: Path) -> State:
+def read_state(path: Path) -> State:
     """The runner's file, or a default.
 
     Absent means queued: the runner has not touched the job yet, which is

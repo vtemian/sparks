@@ -70,8 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"the box to talk to over ssh. Defaults to ${remote.HOST_ENV}",
     )
     subparsers = parser.add_subparsers(dest="command_name", required=True)
-    _add_submit(subparsers, host)
-    _add_queue(subparsers, host)
+    add_submit(subparsers, host)
+    add_queue(subparsers, host)
     for verb, helping, func in (
         ("cancel", "drop a job that has not started yet", cancel),
         ("abort", "stop a job, whether it has started or not", abort),
@@ -90,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _add_submit(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
+def add_submit(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
     submit_parser = subparsers.add_parser(
         "submit",
         parents=[host],
@@ -118,7 +118,7 @@ def _add_submit(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
     submit_parser.set_defaults(func=submit)
 
 
-def _add_queue(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
+def add_queue(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
     queue_parser = subparsers.add_parser(
         "queue",
         parents=[host],
