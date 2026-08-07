@@ -1,11 +1,6 @@
-"""Samples waiting for the next flush.
-
-Two samples for one series with the same millisecond timestamp and different
-values is `duplicate sample for timestamp`, an HTTP 400, and remote-write 1.0
-has no partial write: one bad sample rolls back every series in the request. A
-training loop logging on every step will collide on a fast step, so the
-de-duplication happens here and never reaches the wire.
-"""
+"""Samples waiting for the next flush. Two values for one series in the same
+millisecond are an HTTP 400 that rolls back every series in the request, so the
+collision is resolved here rather than on the wire."""
 
 import threading
 from typing import Any
@@ -28,8 +23,7 @@ class Buffer:
             if ts_ms <= self._last.get(series, -1):
                 return
             slot = self._pending.setdefault(series, {})
-            # First value wins: a repeat within one flush window is the
-            # collision case, and the earlier reading is the truthful one.
+            # First value wins: the earlier reading is the truthful one.
             slot.setdefault(ts_ms, value)
 
     def drain(self) -> list[dict[str, Any]]:
@@ -52,12 +46,7 @@ class Buffer:
             return out
 
     def seen(self) -> dict[Series, int]:
-        """Every series sent so far, mapped to its last timestamp.
-
-        The timestamp is what lets a stale marker land strictly after the real
-        sample it ends. One marker sharing a millisecond with its last sample
-        costs every marker in that batch, and all of those series flat-line
-        instead of ending.
-        """
+        """Every series sent so far, mapped to its last timestamp: that is what
+        lets a stale marker land strictly after the sample it ends."""
         with self._lock:
             return dict(self._last)

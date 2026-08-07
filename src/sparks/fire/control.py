@@ -41,11 +41,7 @@ def queue_dir(shared_dir: Path | None = None) -> Path:
 
 def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
     """Submit the same job again, reusing the image and data already on the box.
-
-    A new job rather than a second attempt recorded inside the old one: "what
-    did this job do" has to have one answer, and the link runs the other way,
-    through `retry_of`.
-    """
+    A new job, linked back through `retry_of`."""
     if not entry.is_terminal:
         raise ControlError(
             f"{entry.job.job_id} is {entry.state.state}. Retrying a job that has "
@@ -61,10 +57,8 @@ def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
     job_id, path = spool.reserve(queue_dir, entry.job.name, who)
     source = entry.data_dir
     if source.is_dir():
-        # Hardlink the tree where the filesystem allows it: a data folder can
-        # be gigabytes and a retry does not change it, so copying the bytes
-        # again is pure waste. Hardlinks are safe here because nothing ever
-        # writes into a committed job's `data/` after submit.
+        # Hardlink where the filesystem allows it. Safe only because nothing
+        # ever writes into a committed job's `data/` after submit.
         destination = path / spool.DATA_DIR
         try:
             shutil.copytree(source, destination, copy_function=os.link)
@@ -89,12 +83,9 @@ def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
 
 
 def resolve(queue_dir: Path, needle: str) -> spool.Entry:
-    """Find one job from whatever the person typed.
-
-    A full id, a unique suffix of one, or a unique job name. Job ids are long
-    and nobody retypes them; ambiguity is refused rather than guessed at,
-    because the wrong guess here aborts somebody's training.
-    """
+    """One job from whatever the person typed: a full id, a unique part of one,
+    or a job name. Ambiguity is refused, because the wrong guess here aborts
+    somebody's training."""
     found = spool.entries(queue_dir)
     if not found:
         raise ControlError("there are no jobs in the queue")
@@ -103,7 +94,6 @@ def resolve(queue_dir: Path, needle: str) -> spool.Entry:
     if exact:
         return exact[0]
 
-    # Every job whose id contains the needle, or whose name is exactly it.
     matches = [
         entry
         for entry in found
@@ -115,16 +105,11 @@ def resolve(queue_dir: Path, needle: str) -> spool.Entry:
 
 
 def disambiguate(matches: list[spool.Entry], needle: str) -> spool.Entry:
-    """The one job the person meant, or a refusal listing the candidates.
-
-    Total over any non-empty list, so the caller does not have to know that a
-    single match would otherwise be reported as "matches several jobs".
-    """
+    """The one job the person meant, or a refusal listing the candidates."""
     if len(matches) == 1:
         return matches[0]
     live = [entry for entry in matches if not entry.is_terminal]
-    # A name that matches one running job and six finished ones is not
-    # ambiguous in any way the person meant it.
+    # One running job among six finished ones is not ambiguous.
     if len(live) == 1:
         return live[0]
     ids = "\n".join(f"    {entry.job.job_id}  {entry.state.state}" for entry in matches)
@@ -203,8 +188,6 @@ def age(entry: spool.Entry, now: float) -> str:
 _MINUTE = 60
 _HOUR = 60 * _MINUTE
 _DAY = 24 * _HOUR
-"""Thresholds for the queue's age column, which trades precision for width: a
-job is `45s`, `12m`, `3.4h` or `2d`, never a duration anyone has to parse."""
 
 
 def duration(seconds: float) -> str:

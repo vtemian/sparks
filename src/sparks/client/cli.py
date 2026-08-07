@@ -1,10 +1,5 @@
-"""sparks — the laptop client.
-
-Every user-facing verb talks to the box over ssh. Set SPARKS_HOST (or pass
---host). Queue control SSHes `fire-ctl` on the box, which runs `fire <verb>`
-inside the queue container. Job supervision is private
-(`python -m sparks.fire.supervise`).
-"""
+"""sparks — the laptop client. Every verb talks to the box over ssh: set
+SPARKS_HOST or pass --host, and queue control runs `fire-ctl` there."""
 
 import argparse
 import logging
