@@ -1,0 +1,22 @@
+# The same gate a developer runs locally: make check is lint + typecheck +
+# tests + the dashboard allowlist. One job, so CI can never drift from the
+# local command.
+
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync
+      - run: make check
