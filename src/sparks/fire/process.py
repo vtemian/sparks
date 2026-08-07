@@ -213,7 +213,12 @@ class Supervisor:
         self.drain_seconds = drain_seconds
         self.sweep_seconds = sweep_seconds
         self.poll_seconds = poll_seconds
+        self._blank_state()
 
+    def _blank_state(self) -> None:
+        """The run's own state, all of it. Every field must exist before
+        `run()` is called: `_forward` fires between bytecodes and reads them
+        with no launch having happened yet."""
         self.child: subprocess.Popen[bytes] | None = None
         self.pgid: int | None = None
         self.interrupted_by: int | None = None
