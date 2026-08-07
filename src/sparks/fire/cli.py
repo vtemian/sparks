@@ -22,7 +22,7 @@ def serve(args: argparse.Namespace) -> int:
     contract = box.load()
     shared_dir = args.shared_dir or (contract.shared_dir if contract else None)
     if shared_dir is None:
-        raise box.NotProvisioned(_unprovisioned(["--shared-dir"]))
+        raise box.NotProvisionedError(_unprovisioned(["--shared-dir"]))
 
     url = args.url if args.url is not None else _runner_url(contract)
     textfile = args.textfile_dir or box.textfile_dir(contract)
@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(given)
     try:
         return serve(args)
-    except (box.NotProvisioned, box.Malformed) as e:
+    except (box.NotProvisionedError, box.MalformedError) as e:
         print(f"fire: {e}", file=sys.stderr)
         return os.EX_CONFIG
 

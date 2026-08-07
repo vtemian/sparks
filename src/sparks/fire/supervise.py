@@ -62,11 +62,11 @@ def _settings(args: argparse.Namespace) -> _Settings:
             n for n, v in (("--shared-dir", shared), ("--url", url)) if v is None
         ]
         if missing:
-            raise box.NotProvisioned(_unprovisioned(missing))
+            raise box.NotProvisionedError(_unprovisioned(missing))
     else:
         complaints = box.preflight(contract)
         if complaints:
-            raise box.NotProvisioned(_mismatched(complaints))
+            raise box.NotProvisionedError(_mismatched(complaints))
         shared = shared or contract.shared_dir
         url = contract.prometheus_url if url is None else url
 
@@ -198,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return run(args)
-    except (box.NotProvisioned, box.Malformed) as e:
+    except (box.NotProvisionedError, box.MalformedError) as e:
         print(f"sparks: {e}", file=sys.stderr)
         return os.EX_CONFIG
 

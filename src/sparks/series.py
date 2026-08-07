@@ -13,7 +13,7 @@ NAME = re.compile(r"^[a-zA-Z_:][a-zA-Z0-9_:]*$")
 LABEL = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
-class InvalidLabel(ValueError):
+class InvalidLabelError(ValueError):
     """A metric or label name Prometheus would refuse or silently drop."""
 
 
@@ -26,12 +26,12 @@ class Series:
 
     def __init__(self, name: str, labels: dict[str, str]) -> None:
         if not NAME.match(name):
-            raise InvalidLabel(f"{name!r} is not a valid metric name")
+            raise InvalidLabelError(f"{name!r} is not a valid metric name")
         for key in labels:
             if key.startswith("__"):
-                raise InvalidLabel(f"{key!r} is reserved")
+                raise InvalidLabelError(f"{key!r} is reserved")
             if not LABEL.match(key):
-                raise InvalidLabel(f"{key!r} is not a valid label name")
+                raise InvalidLabelError(f"{key!r} is not a valid label name")
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "labels", tuple(sorted(labels.items())))
 

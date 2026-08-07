@@ -14,7 +14,7 @@ import pytest
 import sparks.dock as dock
 from sparks import spool
 from sparks.fire import contain, engine
-from sparks.fire.runner import PullFailed
+from sparks.fire.runner import PullFailedError
 
 
 @pytest.fixture
@@ -232,7 +232,7 @@ class TestPull:
         fake.api.pull.side_effect = dock.APIError("boom")
         monkeypatch.setattr("sparks.dock.client", lambda: fake)
         eng = engine.Docker(shared_dir=tmp_path, url="http://example")
-        with pytest.raises(PullFailed, match="pull"):
+        with pytest.raises(PullFailedError, match="pull"):
             eng.pull("missing:tag", log)
         assert log.exists()
         fake.api.pull.assert_called_once_with("missing:tag", stream=True, decode=True)

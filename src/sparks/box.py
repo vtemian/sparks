@@ -27,18 +27,18 @@ PATHS = ("shared_dir", "textfile_dir")
 STRINGS = ("shared_group", "prometheus_url", "grafana_url", "registry_url")
 
 
-class NotProvisioned(Exception):
+class NotProvisionedError(Exception):
     """This box carries no sparks contract, so nothing here knows where to write."""
 
 
-class Malformed(Exception):
+class MalformedError(Exception):
     """The contract exists but cannot be read. Someone edited it by hand."""
 
 
 @dataclass(frozen=True)
 class Box:
     """The provisioned box, exactly as declared. Never partially filled in: a
-    contract missing a field is Malformed, because a default here is the same
+    contract missing a field is MalformedError, because a default here is the same
     guess this module refuses to make."""
 
     shared_dir: Path
@@ -59,7 +59,7 @@ class Box:
         Not a guess of the kind this module refuses to make: the box states
         where its shared tree is, and this is a fixed place inside it. Adding a
         field would make every box provisioned by an older sparkup read as
-        Malformed for no gain.
+        MalformedError for no gain.
         """
         return self.shared_dir / "queue"
 
@@ -77,14 +77,14 @@ def load(path: Path | None = None) -> Box | None:
     except FileNotFoundError:
         return None
     except OSError as e:
-        raise Malformed(f"{path} cannot be read: {e}") from e
+        raise MalformedError(f"{path} cannot be read: {e}") from e
     try:
         data = tomllib.loads(raw.decode())
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as e:
-        raise Malformed(f"{path} is not valid TOML: {e}") from e
+        raise MalformedError(f"{path} is not valid TOML: {e}") from e
     missing = [f for f in (*PATHS, *STRINGS) if f not in data]
     if missing:
-        raise Malformed(f"{path} is missing {', '.join(sorted(missing))}")
+        raise MalformedError(f"{path} is missing {', '.join(sorted(missing))}")
     return Box(
         shared_dir=Path(data["shared_dir"]),
         shared_group=str(data["shared_group"]),
@@ -125,7 +125,7 @@ def textfile_dir(target: Box | None = None) -> Path:
         return Path(override)
     target = target or load()
     if target is None:
-        raise NotProvisioned(
+        raise NotProvisionedError(
             f"{config_path()} does not exist, so there is nowhere to publish the "
             "run index that Prometheus would scrape"
         )

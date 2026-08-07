@@ -58,7 +58,7 @@ class Engine(Protocol):
     """Everything the runner needs from Docker."""
 
     def pull(self, image: str, log_path: Path) -> None:
-        """Pull `image`. Raises `PullFailed`."""
+        """Pull `image`. Raises `PullFailedError`."""
 
     def start(self, entry: spool.Entry, image: str, log_path: Path) -> Handle:
         """Start the job's container under supervise, as the job's owner."""
@@ -67,7 +67,7 @@ class Engine(Protocol):
         """Remove a container this runner is no longer supervising."""
 
 
-class PullFailed(Exception):
+class PullFailedError(Exception):
     """The registry did not yield an image the runner can run."""
 
 
@@ -188,7 +188,7 @@ class Runner:
             return
         try:
             self.engine.pull(entry.job.image, entry.path / spool.PULL_LOG)
-        except PullFailed as e:
+        except PullFailedError as e:
             LOG.warning("sparks: %s failed to pull: %s", entry.job.job_id, e)
             self._fail(entry, f"pull failed: {e}")
             return

@@ -72,7 +72,7 @@ class FakeEngine:
     def pull(self, image: str, log_path: Path) -> None:
         self.pulled.append(image)
         if self.pull_error:
-            raise runner.PullFailed(self.pull_error)
+            raise runner.PullFailedError(self.pull_error)
 
     def start(self, entry: spool.Entry, image: str, log_path: Path) -> FakeHandle:
         self.started.append((entry.job.job_id, image))

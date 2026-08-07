@@ -40,7 +40,7 @@ def test_registry_url_is_required(
         'grafana_url = "http://spark.local"\n'
     )
     monkeypatch.setenv("SPARKS_BOX_CONFIG", str(path))
-    with pytest.raises(box.Malformed, match="registry_url"):
+    with pytest.raises(box.MalformedError, match="registry_url"):
         box.load()
 
 
@@ -86,7 +86,7 @@ def test_malformed_toml_names_the_file_rather_than_reading_as_absent(
     # would send them to fix the wrong thing.
     path = tmp_path / "box.toml"
     path.write_text('shared_dir = "unterminated\n')
-    with pytest.raises(box.Malformed) as e:
+    with pytest.raises(box.MalformedError) as e:
         box.load(path)
     assert str(path) in str(e.value)
 
@@ -94,7 +94,7 @@ def test_malformed_toml_names_the_file_rather_than_reading_as_absent(
 def test_a_contract_missing_a_field_is_malformed_not_defaulted(tmp_path: Path) -> None:
     path = tmp_path / "box.toml"
     path.write_text('shared_dir = "/srv/spark"\n')
-    with pytest.raises(box.Malformed) as e:
+    with pytest.raises(box.MalformedError) as e:
         box.load(path)
     assert "textfile_dir" in str(e.value)
 
@@ -192,7 +192,7 @@ def test_an_unprovisioned_box_has_nowhere_to_put_the_index(
     # refuses, and either is better than writing where no one reads.
     monkeypatch.setenv("SPARKS_BOX_CONFIG", str(tmp_path / "absent.toml"))
     monkeypatch.delenv("SPARKS_TEXTFILE_DIR", raising=False)
-    with pytest.raises(box.NotProvisioned):
+    with pytest.raises(box.NotProvisionedError):
         box.textfile_dir()
 
 

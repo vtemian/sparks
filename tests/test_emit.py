@@ -5,7 +5,7 @@ import pytest
 
 from sparks.emit import RunMetrics, from_env
 from sparks.metrics import LIFECYCLE
-from sparks.series import InvalidLabel
+from sparks.series import InvalidLabelError
 
 
 def names(drained: list[dict[str, Any]]) -> set[str]:
@@ -148,9 +148,9 @@ def test_a_stale_marker_lands_after_the_sample_it_ends() -> None:
 def test_an_invalid_label_is_refused_on_the_caller_thread() -> None:
     # Not five seconds later on the pump, where it would kill telemetry for the
     # rest of the run behind a bare threading traceback.
-    with pytest.raises(InvalidLabel):
+    with pytest.raises(InvalidLabelError):
         RunMetrics(run_id="r", url="http://unused", autostart=False, info={"g-s": "a"})
-    with pytest.raises(InvalidLabel):
+    with pytest.raises(InvalidLabelError):
         RunMetrics(
             run_id="r", url="http://unused", autostart=False, labels={"a b": "c"}
         )

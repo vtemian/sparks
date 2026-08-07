@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import IO
 
 from sparks import dock, spool
-from sparks.fire.runner import PullFailed
+from sparks.fire.runner import PullFailedError
 
 LOG = logging.getLogger("sparks")
 
@@ -147,20 +147,20 @@ class Docker:
             with log_path.open("wb") as log:
                 for chunk in client.api.pull(image, stream=True, decode=True):
                     if time.monotonic() > deadline:
-                        raise PullFailed(
+                        raise PullFailedError(
                             f"the pull was still going after "
                             f"{PULL_TIMEOUT_SECONDS / 3600:g}h and was stopped"
                         )
                     line = chunk.get("status") or chunk.get("error") or str(chunk)
                     log.write((line + "\n").encode())
                     if chunk.get("error") or chunk.get("errorDetail"):
-                        raise PullFailed(
+                        raise PullFailedError(
                             f"docker pull failed; the output is in {log_path.name}"
                         )
-        except PullFailed:
+        except PullFailedError:
             raise
         except dock.DockerException as e:
-            raise PullFailed(f"could not pull image: {e}") from e
+            raise PullFailedError(f"could not pull image: {e}") from e
 
     def start(self, entry: spool.Entry, image: str, log_path: Path) -> Process:
         """Start the job, as its owner."""

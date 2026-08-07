@@ -77,7 +77,7 @@ def commit(args: argparse.Namespace) -> int:
 def contract(_args: argparse.Namespace) -> int:
     c = box.load()
     if c is None:
-        raise box.NotProvisioned(
+        raise box.NotProvisionedError(
             f"{box.config_path()} does not exist; this box has no sparks contract"
         )
 
@@ -143,6 +143,6 @@ def main(argv: list[str]) -> int:
     except control.ControlError as e:
         print(f"fire: {e}", file=sys.stderr)
         return 1
-    except (box.NotProvisioned, box.Malformed) as e:
+    except (box.NotProvisionedError, box.MalformedError) as e:
         print(f"fire: {e}", file=sys.stderr)
         return os.EX_CONFIG

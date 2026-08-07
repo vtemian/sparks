@@ -116,7 +116,7 @@ def launch(
             energy_start = sampler.total_joules()
             gpu_nvml_start = sampler.gpu_nvml_joules()
             gpu_firmware_start = sampler.gpu_firmware_joules()
-    except _Interrupted as e:
+    except _AbortError as e:
         LOG.warning("sparks: %s before the run started; recording it stopped", e)
         _record_failed_launch(
             run_dir,
@@ -277,7 +277,7 @@ def _rebuild(shared_dir: Path) -> None:
         LOG.warning("sparks: could not rebuild the run index: %s", e)
 
 
-class _Interrupted(Exception):
+class _AbortError(Exception):
     """A stop signal arrived before there was a child to forward it to."""
 
     def __init__(self, signum: int) -> None:
@@ -300,7 +300,7 @@ def _interruptible() -> Iterator[None]:
     """
 
     def stop(signum: int, _frame: object) -> None:
-        raise _Interrupted(signum)
+        raise _AbortError(signum)
 
     previous = {
         signum: signal.signal(signum, stop)

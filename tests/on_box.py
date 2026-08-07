@@ -155,7 +155,7 @@ def check_contract(report: Report, shared_dir: Path) -> None:
     heading("contract: what sparkup declared this box provides")
     try:
         contract = box.load()
-    except box.Malformed as e:
+    except box.MalformedError as e:
         report.bad("the contract parses", str(e))
         return
     if contract is None:

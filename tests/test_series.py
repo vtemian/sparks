@@ -1,6 +1,6 @@
 import pytest
 
-from sparks.series import InvalidLabel, Series
+from sparks.series import InvalidLabelError, Series
 
 
 def test_labels_are_sorted_and_hashable() -> None:
@@ -19,15 +19,15 @@ def test_label_names_become_prometheus_labels() -> None:
 def test_rejects_a_label_name_prometheus_would_drop() -> None:
     # Prometheus drops these silently and still answers 200, so this is the
     # only place the mistake is ever visible.
-    with pytest.raises(InvalidLabel):
+    with pytest.raises(InvalidLabelError):
         Series("training_loss", {"run-id": "r1"})
 
 
 def test_rejects_a_reserved_label_name() -> None:
-    with pytest.raises(InvalidLabel):
+    with pytest.raises(InvalidLabelError):
         Series("training_loss", {"__name__": "nope"})
 
 
 def test_rejects_an_invalid_metric_name() -> None:
-    with pytest.raises(InvalidLabel):
+    with pytest.raises(InvalidLabelError):
         Series("training loss", {})

@@ -186,7 +186,7 @@ uses, and for the same reason.
 The image registry itself is sparkup's: converge with the `registry` role so `registry_url` names a
 service that exists. `make deploy` here does not start it. **Converge sparkup (registry +
 `registry_url` in box.toml) before deploying this sparks.** An old contract without `registry_url`
-makes every client and runner refuse with `Malformed`. Drain the queue first: `job.json` files
+makes every client and runner refuse with `MalformedError`. Drain the queue first: `job.json` files
 written before `image` was required are skipped by `entries()` rather than failed cleanly.
 
 ## The seam into Grafana
@@ -264,7 +264,7 @@ All six were real. Two were mutation-proven before and after the fix.
   was 2 to 7 ms. A collision is `duplicate sample for timestamp`, a 400, and the rollback means *no*
   series gets a marker and every one of them flat-lines. It now uses `max(now, last + 1)` per series,
   which is why `Buffer.seen()` returns timestamps rather than just names.
-- **The pump loop had no exception guard.** Only `send()` was wrapped, so an `InvalidLabel` from
+- **The pump loop had no exception guard.** Only `send()` was wrapped, so an `InvalidLabelError` from
   `_beat` killed telemetry for the rest of the run behind a bare `threading.excepthook`, with
   `_stop` never set so nothing could detect it. The loop body is guarded now, and `RunMetrics.__init__`
   builds both Series eagerly so a bad label fails on the caller's thread instead.
