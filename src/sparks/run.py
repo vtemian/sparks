@@ -45,4 +45,5 @@ def git_sha(repo: Path | None = None) -> str:
         )
     except (subprocess.SubprocessError, OSError):
         return "unknown"
+
     return out.stdout.strip() or "unknown"

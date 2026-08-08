@@ -134,6 +134,7 @@ class Runner:
             LOG.warning("sparks: %s failed to pull: %s", entry.job.job_id, exc)
             self._fail(entry, f"pull failed: {exc}")
             return
+
         self._run(entry, entry.job.image)
 
     def _fail(self, entry: spool.Entry, detail: str) -> None:

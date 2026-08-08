@@ -302,6 +302,7 @@ def rebuild(shared_dir: Path) -> None:
     except Exception as exc:  # noqa: BLE001 -- the run itself still succeeded
         LOG.warning("sparks: could not rebuild the run index: %s", exc)
         return
+
     LOG.info("sparks: %d runs in %s", written, target)
 
 

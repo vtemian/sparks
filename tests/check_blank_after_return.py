@@ -7,15 +7,28 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "sparks"
 
+BLOCKS = ("body", "orelse", "finalbody")
 
-def ends_in_return(statement: ast.stmt) -> bool:
-    tail: ast.stmt = statement
-    while True:
-        body = getattr(tail, "body", None)
-        if not body:
-            return isinstance(tail, ast.Return)
 
-        tail = body[-1]
+def blocks_of(node: ast.AST) -> list[list[ast.stmt]]:
+    found = [
+        block
+        for field in BLOCKS
+        if isinstance(block := getattr(node, field, None), list) and block
+    ]
+    found += [h.body for h in getattr(node, "handlers", []) if h.body]
+    found += [c.body for c in getattr(node, "cases", []) if c.body]
+
+    return found
+
+
+def exits_by_return(statement: ast.stmt) -> bool:
+    if isinstance(statement, ast.Return):
+        return True
+
+    # Any arm that ends in a return makes this a guard: control either left
+    # here or carried on to the sibling below, and those are two thoughts.
+    return any(exits_by_return(block[-1]) for block in blocks_of(statement) if block)
 
 
 def violations_in(path: Path) -> list[str]:
@@ -23,24 +36,21 @@ def violations_in(path: Path) -> list[str]:
     lines = source.splitlines()
     hits: list[str] = []
     for node in ast.walk(ast.parse(source)):
-        body = getattr(node, "body", None)
-        if not isinstance(body, list):
-            continue
+        for block in blocks_of(node):
+            for statement, following in pairwise(block):
+                if not exits_by_return(statement) or statement.end_lineno is None:
+                    continue
+                # A comment between the two already gives the eye somewhere
+                # to rest.
+                if following.lineno - statement.end_lineno != 1:
+                    continue
 
-        for statement, following in pairwise(body):
-            if not ends_in_return(statement) or statement.end_lineno is None:
-                continue
-            # A comment between the two counts as separation: the eye already
-            # has somewhere to rest.
-            if following.lineno - statement.end_lineno != 1:
-                continue
+                hits.append(
+                    f"{path}:{following.lineno}: blank line needed before "
+                    f"`{lines[following.lineno - 1].strip()}`"
+                )
 
-            hits.append(
-                f"{path}:{statement.end_lineno}: blank line needed after "
-                f"`{lines[statement.end_lineno - 1].strip()}`"
-            )
-
-    return sorted(hits)
+    return sorted(set(hits))
 
 
 def check() -> list[str]:

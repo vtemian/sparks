@@ -136,6 +136,7 @@ class Sampler:
             value = self.nvml() / 1000.0
         except Exception:  # noqa: BLE001 -- NVML's own error type, and a driver
             return None  # reload invalidates the handle mid-run.
+
         return value if math.isfinite(value) else None
 
     def baseline(self, seconds: float) -> Baseline:
@@ -215,9 +216,11 @@ def nvml_counter() -> Callable[[], float] | None:
         nvml = importlib.import_module("pynvml")
     except ImportError:
         return None
+
     try:
         nvml.nvmlInit()
         device = nvml.nvmlDeviceGetHandleByIndex(0)
     except Exception:  # noqa: BLE001 -- NVML's own error type, raised past the import
         return None
+
     return functools.partial(nvml.nvmlDeviceGetTotalEnergyConsumption, device)

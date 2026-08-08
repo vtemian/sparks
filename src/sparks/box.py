@@ -41,6 +41,7 @@ def load(path: Path | None = None) -> Box | None:
         return None
     except OSError as exc:
         raise MalformedError(f"{path} cannot be read: {exc}") from exc
+
     try:
         data = tomllib.loads(raw.decode())
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:

@@ -232,5 +232,6 @@ def first_line(path: Path) -> str | None:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
+
     stripped = text.strip()
     return stripped.splitlines()[0] if stripped else None

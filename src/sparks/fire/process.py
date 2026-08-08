@@ -385,6 +385,7 @@ class Supervisor:
             return False
         except OSError:
             return True  # someone is there; we may just not signal them
+
         return True
 
     def _tee(self, stream: IO[bytes], log: IO[bytes]) -> None:

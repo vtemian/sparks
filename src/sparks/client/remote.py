@@ -249,6 +249,7 @@ def provenance(context: Path) -> tuple[str, bool]:
         )
     except (OSError, subprocess.SubprocessError):
         return sha, False
+
     return sha, bool(done.stdout.strip())
 
 
