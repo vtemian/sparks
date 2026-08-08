@@ -92,8 +92,21 @@ NUMERIC: tuple[Numeric, ...] = (
 
 def rebuild(runs_dir: Path, target: Path) -> int:
     with shared.exclusive(target.parent):
-        runs = [run for run in load_all(runs_dir) if run.is_terminal]
+        loaded = load_all(runs_dir)
+        runs = [run for run in loaded if run.is_terminal]
+        for run in loaded:
+            if not run.is_terminal:
+                # Silently dropping it makes count(sparks_run_info) smaller
+                # than the runs on disk, with nothing to say which went missing.
+                LOG.warning(
+                    "sparks: %s has status %r, which is not one of %s; "
+                    "leaving it out of the index",
+                    run.run_id,
+                    run.status,
+                    ", ".join(sorted(summary.STATUSES)),
+                )
         summary.write_atomically(target, lambda: render(runs))
+
     return len(runs)
 
 

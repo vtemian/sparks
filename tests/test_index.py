@@ -1,3 +1,4 @@
+import logging
 import re
 import stat
 from pathlib import Path
@@ -100,6 +101,23 @@ def two_runs() -> list[Summary]:
 
 def samples(text: str) -> list[str]:
     return [line for line in text.splitlines() if not line.startswith("#")]
+
+
+def test_a_run_with_an_unknown_status_is_reported_not_dropped(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Dropping it silently loses the run from the permanent record and makes
+    # count(sparks_run_info) quietly smaller than the runs on disk.
+    run_dir = tmp_path / "run-x"
+    run_dir.mkdir()
+    save(a_summary(run_id="run-x", status="sucess"), run_dir)
+
+    with caplog.at_level(logging.WARNING):
+        written = rebuild(tmp_path, tmp_path / "out.prom")
+
+    assert written == 0
+    assert "sucess" in caplog.text
+    assert "run-x" in caplog.text
 
 
 def test_the_index_is_exactly_this_text() -> None:
