@@ -316,7 +316,7 @@ def submit_remote(
     )
     reserved = reserve(host, name, who)
     ship_to(data, host, reserved)
-    return capture(host, commit_argv(reserved, name, command, sha, dirty, tag))
+    return capture(host, commit_argv(reserved, name, command, sha, dirty, tag, who))
 
 
 def reserve(host: str, name: str, who: str) -> str:
@@ -351,6 +351,7 @@ def commit_argv(
     sha: str,
     dirty: bool,
     image: str,
+    who: str | None = None,
 ) -> list[str]:
     argv = [
         "commit",
@@ -358,7 +359,7 @@ def commit_argv(
         "--name",
         name,
         "--user",
-        local_user(),
+        who or local_user(),
         "--git-sha",
         sha,
     ]

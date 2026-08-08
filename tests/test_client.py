@@ -399,6 +399,32 @@ class TestBuildAndPush:
 
 
 class TestWhoSubmitted:
+    def test_reserve_and_commit_agree_on_who_submitted(
+        self, data: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # reserve names the job directory and commit writes the displayed user.
+        # If they disagree, one queue row names two different people.
+        sent: dict[str, str] = {}
+
+        def fake_capture(host: str, argv: list[str]) -> str:
+            sent[argv[0]] = argv[argv.index("--user") + 1]
+            return "/q/job-1" if argv[0] == "reserve" else "job-1"
+
+        monkeypatch.setattr(client, "capture", fake_capture)
+        monkeypatch.setattr(client, "local_user", lambda: "whitemonk")
+        monkeypatch.setattr(client, "provenance", lambda _ctx: ("abc1234", False))
+        monkeypatch.setattr(client, "ship_to", lambda *a, **k: None)
+
+        client.submit_remote(
+            "vlad@spark.local",
+            name="exp",
+            command=["true"],
+            data=data,
+            context=data,
+            image="alpine:3",
+        )
+        assert sent["reserve"] == sent["commit"] == "vlad"
+
     def test_the_ssh_account_is_who_submitted_not_the_laptop_account(self) -> None:
         assert client.submitting_user("vlad@spark.local") == "vlad"
 
