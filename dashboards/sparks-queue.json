@@ -31,11 +31,11 @@
         "uid": "prometheus"
       },
       "type": "stat",
-      "title": "Runner",
+      "title": "Last pass",
       "description": "Seconds since the runner finished a pass. It writes this on every pass including idle ones, so a climbing value means the runner stopped, not that the queue is quiet.",
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 4,
         "x": 0,
         "y": 0
       },
@@ -97,8 +97,8 @@
       "description": "Jobs submitted and not yet picked up.",
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 6,
+        "w": 4,
+        "x": 4,
         "y": 0
       },
       "fieldConfig": {
@@ -155,8 +155,8 @@
       "description": "Jobs with a container up right now.",
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 12,
+        "w": 4,
+        "x": 8,
         "y": 0
       },
       "fieldConfig": {
@@ -209,8 +209,8 @@
       "description": "How long the oldest job that has not started has been waiting. Absent when nothing is queued.",
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 18,
+        "w": 4,
+        "x": 12,
         "y": 0
       },
       "fieldConfig": {
@@ -261,6 +261,118 @@
       ]
     },
     {
+      "id": 7,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Building",
+      "description": "Jobs pulling an image. A long stay here is usually a large pull.",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "instant": true,
+          "expr": "sum(sparks_queue_depth{state=\"building\"}) or vector(0)"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "type": "stat",
+      "title": "Not finished",
+      "description": "Jobs that ended any way other than finished, within the queue's 6h retention. `unknown` means state.json could not be read.",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "value"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "instant": true,
+          "expr": "sum(sparks_queue_depth{state=~\"failed|cancelled|aborted|unknown\"}) or vector(0)"
+        }
+      ]
+    },
+    {
       "id": 5,
       "datasource": {
         "type": "prometheus",
@@ -281,17 +393,17 @@
           "decimals": 0,
           "min": 0,
           "custom": {
-            "drawStyle": "bars",
+            "drawStyle": "line",
             "lineWidth": 2,
-            "fillOpacity": 70,
+            "fillOpacity": 25,
             "stacking": {
               "mode": "normal",
               "group": "A"
             },
-            "barAlignment": 0,
             "showPoints": "never",
             "axisSoftMax": 3,
-            "gradientMode": "none"
+            "gradientMode": "none",
+            "lineInterpolation": "stepAfter"
           },
           "thresholds": {
             "mode": "absolute",
@@ -401,7 +513,7 @@
       },
       "type": "table",
       "title": "Jobs",
-      "description": "Every job the runner can see, newest first. `run` joins to the training board.",
+      "description": "Every job the runner can see. A job has no run until it starts, so the run column is empty and its link goes nowhere until then.",
       "gridPos": {
         "h": 10,
         "w": 24,
@@ -431,18 +543,6 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Value"
-            },
-            "properties": [
-              {
-                "id": "custom.hidden",
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
               "options": "run"
             },
             "properties": [
@@ -451,7 +551,7 @@
                 "value": [
                   {
                     "title": "Open this run",
-                    "url": "/d/training-runs/training-runs?var-run_id=${__data.fields[\"run\"]}",
+                    "url": "/d/training-runs/training-runs?var-run_id=${__data.fields[\"run\"]}&from=${__data.fields[\"submitted\"].numeric}&to=now",
                     "targetBlank": false
                   }
                 ]
@@ -493,11 +593,16 @@
             },
             "renameByName": {
               "job_id": "job",
-              "name": "name",
-              "user": "user",
-              "state": "state",
               "run_id": "run",
               "Value": "submitted"
+            },
+            "indexByName": {
+              "job_id": 0,
+              "name": 1,
+              "user": 2,
+              "state": 3,
+              "Value": 4,
+              "run_id": 5
             }
           }
         }
