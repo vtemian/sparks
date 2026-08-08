@@ -381,3 +381,26 @@ def test_marginal_is_unknown_when_the_total_was_never_measured() -> None:
 def test_a_gpu_source_that_was_not_read_is_unmeasured_not_disagreement() -> None:
     assert a_reading(gpu_nvml_joules=None).gpu_sources == SOURCES_UNMEASURED
     assert a_reading(gpu_firmware_joules=None).gpu_sources == SOURCES_UNMEASURED
+
+
+def test_every_ratio_ever_measured_on_real_hardware_reads_as_agreeing() -> None:
+    # 1.198, 1.225, 1.223 and 1.195 are the four regimes observed on the box.
+    # A tolerance too tight calls a healthy run a counter reset.
+    for ratio in (1.198, 1.225, 1.223, 1.195):
+        reading = a_reading(gpu_nvml_joules=300.0, gpu_firmware_joules=300.0 * ratio)
+        assert reading.gpu_sources == SOURCES_AGREE, ratio
+
+
+def test_a_counter_that_reset_mid_run_is_caught_while_the_run_is_young() -> None:
+    # A reset leaves the two sources far apart. A tolerance wide enough to miss
+    # this reports a bad energy figure as trustworthy.
+    reading = a_reading(gpu_nvml_joules=300.0, gpu_firmware_joules=300.0 * 1.8)
+    assert reading.gpu_sources == SOURCES_DISAGREE
+
+
+def test_a_gpu_rail_already_under_load_yields_no_marginal_energy() -> None:
+    # Absolute watts, not BUSY_GPU_WATTS +/- 1: a test written against the
+    # constant moves with it and pins nothing. 3.8 W is the measured idle rail
+    # on this hardware; 20 W is somebody else's job already running.
+    assert a_reading(gpu_idle_watts=20.0).marginal_joules is None
+    assert a_reading(gpu_idle_watts=3.8).marginal_joules is not None
