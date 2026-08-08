@@ -5,13 +5,13 @@ from pathlib import Path
 import pytest
 
 from sparks.energy import (
-    delta,
     BUSY_GPU_WATTS,
     SOURCES_AGREE,
     SOURCES_DISAGREE,
     SOURCES_UNMEASURED,
     EnergyReading,
     Sampler,
+    delta,
     watt_hours,
 )
 
