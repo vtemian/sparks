@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from sparks.energy import (
+    delta,
     BUSY_GPU_WATTS,
     SOURCES_AGREE,
     SOURCES_DISAGREE,
@@ -404,3 +405,21 @@ def test_a_gpu_rail_already_under_load_yields_no_marginal_energy() -> None:
     # on this hardware; 20 W is somebody else's job already running.
     assert a_reading(gpu_idle_watts=20.0).marginal_joules is None
     assert a_reading(gpu_idle_watts=3.8).marginal_joules is not None
+
+
+def test_a_window_too_short_to_cross_check_says_so_rather_than_guessing() -> None:
+    # Absolute seconds, not the constant: below the floor the two counters may
+    # catch a different number of ticks, so their ratio means nothing.
+    assert a_reading(seconds=0.5).gpu_sources == SOURCES_UNMEASURED
+    # 3s must still be long enough, or a short run loses its cross-check.
+    assert a_reading(seconds=3.0).gpu_sources == SOURCES_AGREE
+
+
+def test_a_delta_needs_both_endpoints_and_refuses_to_run_backwards() -> None:
+    # A missing endpoint coalesced to 0.0 once reported the whole accumulator
+    # as the run's energy; a backwards delta means the counter reset mid-run.
+    # Both are non-measurements, and None is how the rest of the code hears it.
+    assert delta(100.0, 250.0) == 150.0
+    assert delta(None, 250.0) is None
+    assert delta(100.0, None) is None
+    assert delta(250.0, 100.0) is None

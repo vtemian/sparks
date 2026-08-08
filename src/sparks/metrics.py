@@ -3,7 +3,9 @@ METRICS: dict[str, str] = {
     "training_run_start_timestamp_seconds": "unix seconds, written once at start",
     "training_run_heartbeat_timestamp_seconds": "unix seconds, refreshed every flush",
     "training_run_end_timestamp_seconds": "unix seconds, written once at the end",
-    "training_run_status": "1, labelled finished or crashed, written once at the end",
+    "training_run_status": (
+        "1, labelled with one of summary.STATUSES, written once at the end"
+    ),
     "training_run_active": "1 while the run is running, ended by a stale marker",
     "training_progress": "fraction of the whole job complete, 0-1",
     "training_eta_seconds": "estimated seconds remaining until the job finishes",

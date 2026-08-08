@@ -175,7 +175,7 @@ class Supervisor:
             )
             tee.start()
             reaped = self._reap()
-            # Before the join: Detail 7, there is no EOF while strays hold it.
+            # Before the join: there is no EOF while strays still hold the pipe.
             self._sweep()
             tee.join(timeout=self.drain_seconds)
             if tee.is_alive():

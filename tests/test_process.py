@@ -8,7 +8,15 @@ import threading
 import time
 from pathlib import Path
 
-from sparks.fire.process import Completed, Supervisor, clamp_exit, classify
+from sparks.fire.process import (
+    GRACE_SECONDS,
+    POLL_SECONDS,
+    SIGKILL_SECONDS,
+    Completed,
+    Supervisor,
+    clamp_exit,
+    classify,
+)
 
 # Short enough to keep the suite fast, long enough that a loaded laptop does not
 # escalate a child that was about to comply.
@@ -458,3 +466,10 @@ def test_a_missing_cgroup_is_not_an_error(tmp_path: Path) -> None:
         tmp_path, child(tmp_path, "nocgroup", "pass"), cgroup=tmp_path / "absent"
     ).run()
     assert done.outcome.status == "finished"
+
+
+def test_the_poll_is_short_enough_for_the_deadlines_it_bounds() -> None:
+    # Every wait is bounded by POLL_SECONDS, which is how the
+    # escalation deadline is reachable at all. A poll longer than the grace it
+    # checks means the deadline is observed late or not before SIGKILL.
+    assert POLL_SECONDS < SIGKILL_SECONDS < GRACE_SECONDS
