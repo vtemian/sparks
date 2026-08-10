@@ -33,6 +33,13 @@ uv tool install git+https://github.com/vtemian/sparks
 sparks setup
 ```
 
+That form shells out to `git`. On a machine without it, install the tarball instead, which is the
+same package by another route:
+
+```sh
+uv tool install https://github.com/vtemian/sparks/archive/refs/heads/main.tar.gz
+```
+
 `make install` is the same two steps against the working tree you have.
 
 Submit a run, then watch the queue:
