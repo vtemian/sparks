@@ -72,22 +72,28 @@ not your image's, so a bare `python train.py` will not resolve.
 
 ## Instrumenting your loop
 
-Inside a job, the emitter comes from the environment:
+Wrap the loop, and report one step at a time:
 
 ```python
-from sparks.emit import from_env
+from sparks.emit import track
 
-metrics = from_env()
-for step, batch in enumerate(batches):
-    loss = train_one(batch)
-    if metrics is not None:
-        metrics.log(step=step, loss=float(loss))
+with track(total=epochs * len(loader), tokens_per_step=batch_size * BLOCK) as run:
+    for batch in loader:
+        loss = train_one(batch)
+        run.step(loss=float(loss))
 ```
 
-`from_env` returns `None` anywhere but inside a job container, so the same script still runs on your
-laptop. Every push is wrapped, so a metrics outage can never kill a training run.
+`run.step` derives `step`, `progress`, `eta_seconds`, `steps_per_sec` and `tokens_per_sec`; a value
+you pass yourself wins over the derived one. Rates are measured over a sliding window of recent
+steps, so the first step reports none. Leave out `total` or `tokens_per_step` and what they feed is
+simply not emitted, never guessed. `epoch` is yours to pass; nothing derives it. `run.log(...)`
+reports without advancing the step counter, which is what an `eval_loss` at the end of an epoch
+wants.
 
-Metric names are a closed set declared in `sparks.metrics.METRICS`; `log(loss=…)` writes
+Off the box, `track` yields a run that does nothing, so the same script runs on your laptop with no
+guard around it. Every push is wrapped, so a metrics outage can never kill a training run.
+
+Metric names are a closed set declared in `sparks.metrics.METRICS`; `run.step(loss=…)` writes
 `training_loss`, and a name that does not exist raises rather than vanishing. A metric no dashboard
 can query is worse than an error.
 

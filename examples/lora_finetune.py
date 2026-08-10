@@ -1,5 +1,5 @@
 # A LoRA fine-tune with a hand-written loop. No Trainer, so nothing to hang a
-# callback on: sparks is just an object the loop calls.
+# callback on: track() wraps the loop, and each run.step() reports one step.
 #
 #   sparks submit --context ./examples --data ./examples/data \
 #     --name lora-r16 -- python /app/lora_finetune.py --epochs 12
@@ -11,32 +11,17 @@
 import argparse
 import os
 import pathlib
-import time
 
 import torch
 from peft import LoraConfig, get_peft_model
 from torch.utils.data import DataLoader, TensorDataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from sparks.emit import RunMetrics, from_env
+from sparks.emit import track
 
 MODEL = "HuggingFaceTB/SmolLM2-135M"
 BLOCK = 256
 HELD_OUT = 8
-
-
-def metrics_for(run_id: str | None) -> RunMetrics | None:
-    inside_a_job = from_env(arm="lora")
-    if inside_a_job is not None:
-        return inside_a_job
-
-    # Outside one, only build an emitter if somebody said where to push. The
-    # base URL, not the write endpoint: sparks appends /api/v1/write itself.
-    url = os.environ.get("SPARKS_PROMETHEUS_URL")
-    if not url or not run_id:
-        return None
-
-    return RunMetrics(run_id=run_id, url=url, info={"model": MODEL})
 
 
 def blocks_from(data: pathlib.Path, tokenizer: AutoTokenizer) -> torch.Tensor:
@@ -100,7 +85,6 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--lr", type=float, default=2e-4)
-    parser.add_argument("--run-id", default=None)
     args = parser.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -124,14 +108,12 @@ def main() -> None:
 
     total = args.epochs * len(loader)
     schedule = torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=total)
-    metrics = metrics_for(args.run_id)
 
-    started = time.monotonic()
-    step = 0
-    try:
+    # step() derives progress, eta and the rates from these two; passing them
+    # by hand would only overwrite what it already measured.
+    with track(total=total, tokens_per_step=args.batch_size * BLOCK, arm="lora") as run:
         for epoch in range(args.epochs):
             for (batch,) in loader:
-                step += 1
                 ids = batch.to(device)
                 loss = model(input_ids=ids, labels=ids).loss
                 loss.backward()
@@ -140,20 +122,12 @@ def main() -> None:
                 schedule.step()
                 optimiser.zero_grad(set_to_none=True)
 
-                if metrics is None:
-                    continue
-
-                elapsed = time.monotonic() - started
-                metrics.log(
-                    step=step,
+                run.step(
                     epoch=epoch + 1,
-                    loss=float(loss),
+                    loss=float(loss.detach()),
                     grad_norm=float(grad_norm),
-                    progress=step / total,
-                    eta_seconds=(elapsed / step) * (total - step),
-                    tokens_per_sec=step * ids.numel() / elapsed,
                 )
-                metrics.log_group(
+                run.log_group(
                     "training_learning_rate",
                     {
                         str(group["name"]): group["lr"]
@@ -163,11 +137,7 @@ def main() -> None:
 
             held = evaluate(model, held_out, device)
             print(f"epoch {epoch + 1}  held-out loss {held:.4f}")
-            if metrics is not None:
-                metrics.log(eval_loss=held)
-    finally:
-        if metrics is not None:
-            metrics.end("finished")
+            run.log(eval_loss=held)
 
 
 if __name__ == "__main__":

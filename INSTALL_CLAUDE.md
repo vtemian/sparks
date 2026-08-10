@@ -147,28 +147,63 @@ those paths, so a new reader belongs in `fire/ctl.py` beside `queue`, proxied fr
 
 ## Instrument a run
 
+Training code wraps its loop in `track` and reports one step at a time:
+
+```python
+from sparks.emit import track
+
+with track(total=epochs * len(loader), tokens_per_step=batch_size * BLOCK) as run:
+    for batch in loader:
+        loss = train_one(batch)
+        run.step(loss=float(loss))
+```
+
+`track` picks up the run id and Prometheus URL the supervisor exported, so training code
+needs no arguments. Anywhere else it yields a run whose every call is a no-op, which is why
+**the call site carries no `is not None` guard** and the same script runs on a laptop.
+Keyword arguments other than `total`, `tokens_per_step` and `window` become labels on every
+sample. A label named `autostart` would bind to `from_env`'s own argument and silently stop the
+pump, so it is refused rather than accepted.
+
+`run.step` counts the step and derives `step`, `progress`, `eta_seconds`, `steps_per_sec` and
+`tokens_per_sec`. `progress` is clamped to 1 and `eta_seconds` to 0, because a run that
+overshoots its own `total` would otherwise report 167% complete on a panel bounded at 0-1. A value you pass wins over the derived one, so `run.step(step=global_step)`
+reports your own numbering. What `track` was not given is not emitted rather than guessed: no
+`total` means no `progress` and no `eta_seconds`, no `tokens_per_step` means no
+`tokens_per_sec`. A guessed denominator draws a progress bar that lies, which is worse than an
+empty panel. `epoch` is not derived at all; pass it.
+
+Rates are measured over a sliding window of the most recent steps, so the first step reports
+no rate: a rate needs two of them. One missing point at the start of a run is not a bug.
+
+`run.log(...)` reports without advancing the step counter, which is what an `eval_loss` at the
+end of an epoch wants. `run.log_group("training_learning_rate", {"lora": 2e-4, "tables": 2e-5})`
+reports a value that differs per parameter group, and takes the **full** metric name, not the
+short key.
+
+`sparks.emit.from_env` is what `track` is built on: it returns the child emitter, or `None`
+off the box. It is the escape hatch for a framework callback, which owns no loop and so has
+nothing to wrap; there it really can be `None`, so guard it. Anywhere there is a loop, use
+`track`.
+
+Outside a job, when you own the run id, `RunMetrics` is the whole emitter:
+
 ```python
 from sparks.emit import RunMetrics
 
 with RunMetrics(run_id=..., url="http://127.0.0.1:9090", info={"model": "helium-2b"}) as m:
-    for step, batch in enumerate(batches):
-        ...
-        m.log(step=step, loss=float(loss))
+    m.log(step=1, loss=4.2)
 ```
 
 The context manager records `crashed` if the loop raises. Every push is wrapped, so a
 metrics outage cannot kill a training run.
 
 `info` is immutable metadata carried on the run's info metric. `labels` are dimensions on
-every sample — keep them few and low-cardinality. For a value that differs per parameter
-group, use `m.log_group("training_learning_rate", {"lora": 2e-4, "tables": 2e-5})`.
+every sample: keep them few and low-cardinality.
 
-Metric names must be declared in `sparks.metrics.METRICS`; `m.log(loss=…)` writes
+Metric names must be declared in `sparks.metrics.METRICS`; `run.step(loss=…)` writes
 `training_loss`. An undeclared name raises rather than being silently dropped, because a
 metric no dashboard can query is worse than an error.
-
-Inside a job container, `sparks.emit.from_env` picks up the run id and Prometheus URL that
-the supervisor exported, so training code needs no arguments.
 
 ## Where the results are
 

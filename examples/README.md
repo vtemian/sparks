@@ -1,8 +1,9 @@
 # Example
 
 A LoRA fine-tune of `SmolLM2-135M` against the corpus in `data/`, on a hand-written loop with no
-`Trainer` — the shape sparks was built for, where the metrics object is something the loop calls
-rather than a callback the framework owns.
+`Trainer`. That is the shape sparks was built for: `track` wraps the loop and each `run.step`
+reports one step, deriving progress, ETA and throughput rather than waiting for a callback the
+framework owns.
 
 ```sh
 sparks submit --context ./examples --data ./examples/data \
@@ -26,7 +27,8 @@ weights are baked in rather than pulled per run, so an outage at Hugging Face ca
 
 The learning-rate panel carries two series because the adapter and the layer norms beneath it train
 an order of magnitude apart, and one averaged series would describe neither. That is what
-`log_group` is for.
+`run.log_group` is for. The held-out loss goes through `run.log`, which reports without advancing
+the step counter, because an eval at the end of an epoch is not a training step.
 
 One thing to know before your own first run: Grafana floors its query step at the scrape interval,
 so anything shorter than a couple of minutes arrives as a single averaged point no matter how
