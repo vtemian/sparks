@@ -50,6 +50,6 @@ ENV HOME=/tmp \
 # with ImportError on a name main had had for an hour. Its own layer, and last,
 # so bumping it rebuilds seconds rather than the gigabytes above.
 RUN pip install --no-cache-dir \
-    "https://github.com/vtemian/sparks/archive/723dd1c3dec4a3658906db35ab3c17a553f36c4c.tar.gz"
+    "https://github.com/vtemian/sparks/archive/4a1c25f51a41586d0606e5be9ec1bead15d2ae3b.tar.gz"
 
 COPY *.py /app/
