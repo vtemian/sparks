@@ -75,7 +75,9 @@ def launch(
 
     LOG.debug("sparks: starting the child %s", command)
     try:
-        completed = Supervisor(command, log_path=run.dir / "output.log", env=env).run()
+        completed = Supervisor(
+            command, log_path=run.dir / summary.OUTPUT_LOG, env=env
+        ).run()
     except Exception as exc:  # noqa: BLE001 -- any failure to run still owes a record
         return crashed(run, metrics, command, exc)
 
@@ -289,7 +291,9 @@ def record_failed_launch(
     )
     # FileNotFoundError's message carries the bad byte straight from argv, so an
     # uncleaned write_text would raise UnicodeEncodeError inside launch()'s except.
-    (run.dir / "error.txt").write_text(shared.clean(error, "", limit=4000) + "\n")
+    (run.dir / summary.ERROR_FILE).write_text(
+        shared.clean(error, "", limit=4000) + "\n"
+    )
 
 
 def rebuild(shared_dir: Path) -> None:

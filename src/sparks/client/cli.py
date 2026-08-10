@@ -34,6 +34,28 @@ def queue(args: argparse.Namespace, _argv: list[str]) -> int:
     server = ["queue"]
     if args.all:
         server.append("--all")
+    if args.json:
+        server.append("--json")
+
+    return remote.run(args.host, server)
+
+
+def logs(args: argparse.Namespace, _argv: list[str]) -> int:
+    # No default of our own: the box decides how much tail is sensible, and two
+    # copies of that number would drift.
+    server = ["logs", args.job]
+    if args.tail is not None:
+        server += ["--tail", str(args.tail)]
+    if args.all:
+        server.append("--all")
+
+    return remote.run(args.host, server)
+
+
+def status(args: argparse.Namespace, _argv: list[str]) -> int:
+    server = ["status", args.job]
+    if args.json:
+        server.append("--json")
 
     return remote.run(args.host, server)
 
@@ -70,6 +92,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command_name", required=True)
     add_submit(subparsers, host)
     add_queue(subparsers, host)
+    add_logs(subparsers, host)
+    add_status(subparsers, host)
     setup_parser = subparsers.add_parser(
         "setup",
         parents=[host],
@@ -133,7 +157,50 @@ def add_queue(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
         action="store_true",
         help="include jobs that finished long enough ago to have aged out",
     )
+    queue_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="one object per job, for a script to read",
+    )
     queue_parser.set_defaults(func=queue)
+
+
+def add_logs(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
+    logs_parser = subparsers.add_parser(
+        "logs",
+        parents=[host],
+        help="what the job printed",
+    )
+    logs_parser.add_argument("job", help="a job id, a unique part of one, or its name")
+    logs_parser.add_argument(
+        "--tail",
+        type=int,
+        default=None,
+        help="how many lines from the end",
+    )
+    logs_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="every line, not the last --tail of them",
+    )
+    logs_parser.set_defaults(func=logs)
+
+
+def add_status(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
+    status_parser = subparsers.add_parser(
+        "status",
+        parents=[host],
+        help="one job in full: its state, and the record of its run",
+    )
+    status_parser.add_argument(
+        "job", help="a job id, a unique part of one, or its name"
+    )
+    status_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="the whole record as one object, for a script to read",
+    )
+    status_parser.set_defaults(func=status)
 
 
 def main(argv: list[str] | None = None) -> int:

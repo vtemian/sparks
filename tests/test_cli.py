@@ -73,3 +73,38 @@ def test_submit_requires_host_and_never_runs_local(
     code = cli.main(["submit", "--data", str(data), "--", "true"])
     assert code == os.EX_CONFIG
     assert client.HOST_ENV in capsys.readouterr().err
+
+
+def test_queue_json_travels_to_the_box(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(client.HOST_ENV, "box")
+    with patch.object(client, "run", return_value=0) as run_fn:
+        assert cli.main(["queue", "--json"]) == 0
+    run_fn.assert_called_once_with("box", ["queue", "--json"])
+
+
+def test_logs_send_no_tail_of_their_own(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(client.HOST_ENV, "box")
+    with patch.object(client, "run", return_value=0) as run_fn:
+        assert cli.main(["logs", "job-1"]) == 0
+    run_fn.assert_called_once_with("box", ["logs", "job-1"])
+
+
+def test_logs_pass_a_tail_the_user_asked_for(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(client.HOST_ENV, "box")
+    with patch.object(client, "run", return_value=0) as run_fn:
+        assert cli.main(["logs", "job-1", "--tail", "20"]) == 0
+    run_fn.assert_called_once_with("box", ["logs", "job-1", "--tail", "20"])
+
+
+def test_logs_all_asks_for_every_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(client.HOST_ENV, "box")
+    with patch.object(client, "run", return_value=0) as run_fn:
+        assert cli.main(["logs", "job-1", "--all"]) == 0
+    run_fn.assert_called_once_with("box", ["logs", "job-1", "--all"])
+
+
+def test_status_json_travels_to_the_box(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(client.HOST_ENV, "box")
+    with patch.object(client, "run", return_value=0) as run_fn:
+        assert cli.main(["status", "job-1", "--json"]) == 0
+    run_fn.assert_called_once_with("box", ["status", "job-1", "--json"])

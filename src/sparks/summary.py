@@ -11,6 +11,8 @@ from typing import Any, Self
 from sparks.shared import clean
 
 FILENAME = "summary.json"
+OUTPUT_LOG = "output.log"
+ERROR_FILE = "error.txt"
 
 STATUSES = frozenset({"finished", "crashed", "cancelled", "killed", "oom"})
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -14,14 +15,44 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 VERBS = frozenset(
-    {"queue", "cancel", "abort", "retry", "remove", "reserve", "commit", "contract"}
+    {
+        "queue",
+        "logs",
+        "status",
+        "cancel",
+        "abort",
+        "retry",
+        "remove",
+        "reserve",
+        "commit",
+        "contract",
+    }
 )
 
 
 def queue(args: argparse.Namespace) -> int:
     directory = control.queue_dir(args.shared_dir)
     entries = spool.entries(directory) if args.all else spool.publishable(directory)
-    print(control.render(entries), end="")
+    print(control.as_json(entries) if args.json else control.render(entries), end="")
+    return 0
+
+
+def logs(args: argparse.Namespace) -> int:
+    entry = control.resolve(control.queue_dir(args.shared_dir), args.job)
+    tail = None if args.all else args.tail
+    print(control.logs(entry, args.shared_dir, tail), end="")
+    return 0
+
+
+def status(args: argparse.Namespace) -> int:
+    entry = control.resolve(control.queue_dir(args.shared_dir), args.job)
+    payload = control.status(entry, args.shared_dir)
+    rendered = (
+        json.dumps(payload, indent=2) + "\n"
+        if args.json
+        else control.render_status(payload)
+    )
+    print(rendered, end="")
     return 0
 
 
@@ -101,6 +132,8 @@ def build_parser() -> argparse.ArgumentParser:
     shared.add_argument("--shared-dir", type=Path, default=None)
     subparsers = parser.add_subparsers(dest="verb", required=True)
     add_queue(subparsers, shared)
+    add_logs(subparsers, shared)
+    add_status(subparsers, shared)
     for verb, help_text, func in (
         ("cancel", "drop a job that has not started yet", cancel),
         ("abort", "stop a job, whether it has started or not", abort),
@@ -121,7 +154,35 @@ def add_queue(subparsers: Subparsers, shared: argparse.ArgumentParser) -> None:
         help="what is running and what is waiting",
     )
     queue_parser.add_argument("--all", action="store_true")
+    queue_parser.add_argument("--json", action="store_true")
     queue_parser.set_defaults(func=queue)
+
+
+def add_logs(subparsers: Subparsers, shared: argparse.ArgumentParser) -> None:
+    logs_parser = subparsers.add_parser(
+        "logs",
+        parents=[shared],
+        help="what the job printed",
+    )
+    logs_parser.add_argument("job")
+    logs_parser.add_argument("--tail", type=int, default=control.TAIL_LINES)
+    logs_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="every line, not the last --tail of them",
+    )
+    logs_parser.set_defaults(func=logs)
+
+
+def add_status(subparsers: Subparsers, shared: argparse.ArgumentParser) -> None:
+    status_parser = subparsers.add_parser(
+        "status",
+        parents=[shared],
+        help="one job in full, with the record of its run",
+    )
+    status_parser.add_argument("job")
+    status_parser.add_argument("--json", action="store_true")
+    status_parser.set_defaults(func=status)
 
 
 def add_rpc_verbs(subparsers: Subparsers, shared: argparse.ArgumentParser) -> None:

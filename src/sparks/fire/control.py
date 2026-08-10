@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
+import shlex
 import shutil
 import time
 from pathlib import Path
+from typing import Any
 
-from sparks import box, spool
+from sparks import box, spool, summary
 
 LOG = logging.getLogger("sparks")
 
@@ -16,24 +19,37 @@ class ControlError(Exception): ...
 
 HEADINGS = ("JOB", "USER", "STATE", "AGE", "RUN")
 
+TAIL_LINES = 200
+
+
+def fetch_contract() -> box.Box:
+    provisioned = box.load()
+    if provisioned is None:
+        raise ControlError(
+            f"{box.config_path()} does not exist; this box has no sparks contract"
+        )
+
+    return provisioned
+
 
 def queue_dir(shared_dir: Path | None = None) -> Path:
     if shared_dir is not None:
         return Path(shared_dir) / "queue"
 
-    contract = box.load()
-    if contract is None:
-        raise ControlError(
-            f"{box.config_path()} does not exist; this box has no sparks contract"
-        )
-
-    directory = contract.queue_dir
+    directory = fetch_contract().queue_dir
     if not directory.is_dir():
         raise ControlError(
             f"this box is provisioned for sparks but not for the queue: "
             f"{directory} does not exist"
         )
     return directory
+
+
+def runs_dir(shared_dir: Path | None = None) -> Path:
+    if shared_dir is not None:
+        return Path(shared_dir) / "runs"
+
+    return fetch_contract().runs_dir
 
 
 def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
@@ -137,6 +153,135 @@ def remove(queue_dir: Path, needle: str) -> spool.Entry:
 
     spool.remove(entry.path)
     return entry
+
+
+def run_dir(entry: spool.Entry, shared_dir: Path | None = None) -> Path:
+    if entry.state.run_id is None:
+        raise ControlError(nothing_ran_yet(entry))
+
+    return runs_dir(shared_dir) / entry.state.run_id
+
+
+def nothing_ran_yet(entry: spool.Entry) -> str:
+    said = f"{entry.job.job_id} is {entry.state.state} and has no run directory yet"
+    if entry.state.detail:
+        return f"{said}: {entry.state.detail}"
+
+    return f"{said}. sparks status {entry.job.job_id} says where it is"
+
+
+def logs(
+    entry: spool.Entry,
+    shared_dir: Path | None = None,
+    tail: int | None = TAIL_LINES,
+) -> str:
+    directory = run_dir(entry, shared_dir)
+    written = tail_of(directory / summary.OUTPUT_LOG, tail)
+    # Labelled, not concatenated: what the container printed and why sparks
+    # could not run it are different claims, and a run that died on exec has
+    # only the second.
+    failed = read_text(directory / summary.ERROR_FILE)
+    if failed:
+        written += f"\nsparks could not run this job:\n{failed}"
+    if not written:
+        raise ControlError(f"{entry.job.job_id} has written no output yet")
+
+    return written
+
+
+def tail_of(path: Path, lines: int | None) -> str:
+    text = read_text(path)
+    if lines is None or not text:
+        return text
+
+    return "".join(text.splitlines(keepends=True)[-lines:])
+
+
+def read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return ""
+
+
+def status(entry: spool.Entry, shared_dir: Path | None = None) -> dict[str, Any]:
+    record = find_summary(entry, shared_dir)
+    return {
+        "job": entry.job.to_dict(),
+        "state": entry.state.to_dict(),
+        "summary": None if record is None else record.to_dict(),
+    }
+
+
+def find_summary(
+    entry: spool.Entry, shared_dir: Path | None = None
+) -> summary.Summary | None:
+    if entry.state.run_id is None:
+        return None
+
+    path = runs_dir(shared_dir) / entry.state.run_id / summary.FILENAME
+    try:
+        return summary.load(path)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        LOG.warning("sparks: %s has an unreadable record: %s", entry.state.run_id, exc)
+        return None
+
+
+def as_json(entries: list[spool.Entry]) -> str:
+    rows = [
+        {
+            "job_id": entry.job.job_id,
+            "name": entry.job.name,
+            "user": entry.job.user,
+            "state": entry.state.state,
+            "run_id": entry.state.run_id,
+            "image": entry.job.image,
+            "command": list(entry.job.command),
+            "submitted_unix": entry.job.submitted_unix,
+            "started_unix": entry.state.started_unix,
+            "finished_unix": entry.state.finished_unix,
+            "exit_code": entry.state.exit_code,
+            "detail": entry.state.detail,
+        }
+        for entry in entries
+    ]
+    return json.dumps(rows, indent=2) + "\n"
+
+
+def render_status(payload: dict[str, Any]) -> str:
+    job, state = payload["job"], payload["state"]
+    rows = [
+        ("job", job["job_id"]),
+        ("name", job["name"]),
+        ("user", job["user"]),
+        ("state", state["state"]),
+        ("image", job["image"]),
+        ("command", shlex.join(job["command"])),
+        ("run", state["run_id"] or ""),
+        ("exit", "" if state["exit_code"] is None else str(state["exit_code"])),
+        ("detail", state["detail"] or ""),
+        *record_rows(payload["summary"]),
+    ]
+    width = max(len(label) for label, _ in rows)
+    shown = [f"{label.ljust(width)}  {value}" for label, value in rows if value != ""]
+    return "".join(f"{line}\n" for line in shown)
+
+
+def record_rows(record: dict[str, Any] | None) -> list[tuple[str, str]]:
+    if record is None:
+        return []
+
+    joules = record["energy"]["total_joules"]
+    loss = record.get("final_loss")
+    return [
+        ("status", record["status"]),
+        ("duration", duration(record["duration_seconds"])),
+        ("signal", record["signal"] or ""),
+        ("energy", "" if joules is None else f"{joules / 3600:.0f} Wh"),
+        ("loss", "" if loss is None else f"{loss:.4f}"),
+    ]
 
 
 def render(entries: list[spool.Entry], now: float | None = None) -> str:
