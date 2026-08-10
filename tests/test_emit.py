@@ -277,7 +277,7 @@ def test_track_outside_a_job_yields_a_run_that_does_nothing(
     with track(total=10) as run:
         run.step(loss=1.0)
         run.log(eval_loss=0.5)
-        run.log_group("training_learning_rate", {"adapter": 2e-4})
+        run.log(learning_rate={"adapter": 2e-4})
 
     assert run._metrics is None
     assert run.count == 1
@@ -511,7 +511,7 @@ def test_every_way_of_reporting_stops_once_the_run_has_ended(
 
     run.step(loss=1.0)
     run.log(eval_loss=1.0)
-    run.log_group("training_learning_rate", {"adapter": 1.0})
+    run.log(learning_rate={"adapter": 1.0})
 
     assert emitter._buffer.drain() == []
     assert len([r for r in caplog.records if "already ended" in r.message]) == 1
@@ -546,7 +546,7 @@ def test_an_undeclared_name_is_refused_off_the_box_too() -> None:
         run.step(perplexity=1.0)
 
     with pytest.raises(KeyError, match="training_nonsense"):
-        run.log_group("training_nonsense", {"a": 1.0})
+        run.log(nonsense={"a": 1.0})
 
 
 def test_the_runs_own_label_cannot_be_taken_from_under_it(
@@ -597,3 +597,47 @@ def test_a_job_with_no_prometheus_url_says_so_out_loud(
 
     assert run._metrics is None
     assert "SPARKS_PROMETHEUS_URL" in caplog.text
+
+
+def test_a_step_reports_a_mapping_as_one_series_per_group() -> None:
+    emitter = child()
+    run = Run(emitter)
+
+    run.step(
+        loss=0.5,
+        learning_rate={"adapter": 2e-4, "norms": 2e-5},
+    )
+
+    by_group = {
+        d["metric"]["group"]: d["values"][0]
+        for d in emitter._buffer.drain()
+        if d["metric"]["__name__"] == "training_learning_rate"
+    }
+    assert by_group == {"adapter": 2e-4, "norms": 2e-5}
+
+
+def test_a_grouped_value_takes_the_short_key_like_every_other() -> None:
+    # log_group used to want "training_learning_rate" while step and log took
+    # the key without its prefix. One convention, not two.
+    emitter = child()
+    run = Run(emitter)
+
+    run.log(learning_rate={"adapter": 1.0})
+
+    assert names(emitter._buffer.drain()) == {"training_learning_rate"}
+
+
+def test_a_step_still_reports_its_plain_values_alongside_a_mapping() -> None:
+    emitter = child()
+    run = Run(emitter)
+
+    run.step(loss=0.5, learning_rate={"adapter": 1.0})
+
+    assert names(emitter._buffer.drain()) >= {"training_loss", "training_learning_rate"}
+
+
+def test_an_undeclared_grouped_name_is_refused_off_the_box_too() -> None:
+    run = Run(None)
+
+    with pytest.raises(KeyError, match="training_nonsense"):
+        run.log(nonsense={"a": 1.0})

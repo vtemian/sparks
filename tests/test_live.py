@@ -220,9 +220,9 @@ def test_a_tracked_child_lands_the_values_it_derived(tmp_path: Path) -> None:
         "import time\n"
         "from sparks.emit import track\n"
         "with track(total=2, tokens_per_step=100, arm='tracked') as run:\n"
-        "    run.step(loss=0.25)\n"
+        "    run.step(loss=0.25, learning_rate={'adapter': 2e-4})\n"
         "    time.sleep(0.5)\n"
-        "    run.step(loss=0.20)\n",
+        "    run.step(loss=0.20, learning_rate={'adapter': 1e-4})\n",
     ]
     result = launcher.launch(
         child, name="live-tracked", shared_dir=tmp_path, url=URL, baseline_seconds=0.0
@@ -241,6 +241,11 @@ def test_a_tracked_child_lands_the_values_it_derived(tmp_path: Path) -> None:
     # tokens each makes the throughput follow it.
     rate = wait_for(f'last_over_time(training_steps_per_sec{{run_id="{run_id}"}}[1h])')
     assert float(rate[0]["value"][1]) == pytest.approx(2.0, rel=0.5)
+    grouped = wait_for(
+        f'last_over_time(training_learning_rate{{run_id="{run_id}"}}[1h])'
+    )
+    assert grouped[0]["metric"]["group"] == "adapter"
+
     tokens = wait_for(
         f'last_over_time(training_tokens_per_sec{{run_id="{run_id}"}}[1h])'
     )

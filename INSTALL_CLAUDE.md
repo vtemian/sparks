@@ -166,7 +166,7 @@ then raise on the box. Reporting after the run has ended warns once and drops th
 Keyword arguments other than `total`, `tokens_per_step` and `window` become labels on every
 sample, except `run_id`, which is refused: a label of that name would otherwise overwrite the
 run's own and every sample would be filed under a run that does not exist. `group` belongs to
-`log_group` and is overwritten there. A label name must be a valid identifier and must not
+the grouped form and is overwritten there. A label name must be a valid identifier and must not
 start with `__`, or `track` raises.
 
 `run.step` counts the step and derives `step`, `progress`, `eta_seconds`, `steps_per_sec` and
@@ -181,9 +181,11 @@ Rates are measured over a sliding window of the most recent steps, so the first 
 no rate: a rate needs two of them. One missing point at the start of a run is not a bug.
 
 `run.log(...)` reports without advancing the step counter, which is what an `eval_loss` at the
-end of an epoch wants. `run.log_group("training_learning_rate", {"lora": 2e-4, "tables": 2e-5})`
-reports a value that differs per parameter group, and takes the **full** metric name, not the
-short key.
+end of an epoch wants. A value that differs per parameter group is a mapping rather than a
+number, `run.step(learning_rate={"lora": 2e-4, "tables": 2e-5})`, giving one series per group
+labelled `group`. There is no separate method: nothing else a metric can be is a mapping, and a
+second one would have been a second naming convention, since it wanted the full metric name
+while `step` and `log` want the short key.
 
 `track` is the only way training code gets an emitter, and `RunMetrics` is the supervisor's,
 not yours: it defaults to owning the run's lifecycle, so a training script that builds one

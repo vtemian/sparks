@@ -27,7 +27,7 @@ weights are baked in rather than pulled per run, so an outage at Hugging Face ca
 
 The learning-rate panel carries two series because the adapter and the layer norms beneath it train
 an order of magnitude apart, and one averaged series would describe neither. That is what
-`run.log_group` is for. The held-out loss goes through `run.log`, which reports without advancing
+passing a mapping instead of a number is for. The held-out loss goes through `run.log`, which reports without advancing
 the step counter, because an eval at the end of an epoch is not a training step.
 
 One thing to know before your own first run: Grafana floors its query step at the scrape interval,

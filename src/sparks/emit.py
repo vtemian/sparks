@@ -296,7 +296,7 @@ class Run:
         self._warned = True
         LOG.warning("sparks: this run already ended; later samples are dropped")
 
-    def step(self, **values: float) -> None:
+    def step(self, **values: float | dict[str, float]) -> None:
         if self._ended:
             self._warn_once()
             return
@@ -307,30 +307,26 @@ class Run:
         self._marks.append(self.clock())
         self.log(**{**self.derived(), **values})
 
-    def log(self, **values: float) -> None:
+    def log(self, **values: float | dict[str, float]) -> None:
         if self._ended:
             self._warn_once()
             return
 
-        # Names are checked even with nowhere to send them. Checking only when
-        # an emitter exists is how a typo survives every laptop run and raises
-        # on the box, after submit already reported success.
-        for key in values:
-            training_metric(key)
+        plain: dict[str, float] = {}
+        for key, value in values.items():
+            # Checked even with nowhere to send it. Checking only when an
+            # emitter exists is how a typo survives every laptop run and then
+            # raises on the box, after submit already reported success.
+            name = training_metric(key)
+            if not isinstance(value, dict):
+                plain[key] = value
+            elif self._metrics is not None:
+                # A mapping is one series per group. Nothing else a metric can
+                # be is a mapping, so this needs no keyword of its own.
+                self._metrics.log_group(name, value)
 
-        if self._metrics is not None:
-            self._metrics.log(**values)
-
-    def log_group(self, name: str, by_group: dict[str, float]) -> None:
-        if self._ended:
-            self._warn_once()
-            return
-
-        if name not in METRICS:
-            raise KeyError(f"{name} is not declared in sparks.metrics.METRICS")
-
-        if self._metrics is not None:
-            self._metrics.log_group(name, by_group)
+        if plain and self._metrics is not None:
+            self._metrics.log(**plain)
 
     def derived(self) -> dict[str, float]:
         values = {"step": float(self.count)}

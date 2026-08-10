@@ -6,7 +6,7 @@
 #
 # Two parameter groups on purpose. The adapter wants a learning rate an order of
 # magnitude above the layer norms underneath it, and one averaged series would
-# describe neither, which is what log_group is for.
+# describe neither, which is what a mapping value is for.
 
 import argparse
 import os
@@ -131,10 +131,10 @@ def main() -> None:
                     epoch=epoch + 1,
                     loss=float(loss.detach()),
                     grad_norm=float(grad_norm),
-                )
-                run.log_group(
-                    "training_learning_rate",
-                    {
+                    # A mapping is one series per group: the adapter and the
+                    # norms train an order of magnitude apart, and one averaged
+                    # series would describe neither.
+                    learning_rate={
                         str(group["name"]): group["lr"]
                         for group in optimiser.param_groups
                     },

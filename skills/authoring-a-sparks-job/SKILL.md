@@ -47,7 +47,7 @@ millisecond and the buffer drops the rest. A loop running faster than 1kHz is do
 rather than refused, so `training_step` shows gaps. Report every N steps if that matters.
 
 `run.log(...)` reports without advancing the step counter: an `eval_loss` at the end of an
-epoch is not a training step. `run.log_group(...)` is below.
+epoch is not a training step.
 
 Off the box, `track` yields a run that reports nothing, so the same script runs on a laptop
 **with no `is not None` guard around it**. It still counts steps and still checks your metric
@@ -85,10 +85,11 @@ Anything else in `METRICS` belongs to the box (`sparks_*`) or to the supervisor
 ### Values that differ per parameter group
 
 ```python
-run.log_group("training_learning_rate", {"lora": 2e-4, "tables": 2e-5})
+run.step(loss=…, learning_rate={"lora": 2e-4, "tables": 2e-5})
 ```
 
-Full metric name here, not the short key. The label is always `group`, whatever the metric.
+Pass a mapping instead of a number and you get one series per group, labelled `group`. Nothing
+else a metric can be is a mapping, so this needs no method of its own. `run.log` takes them too.
 Use it wherever one averaged series would describe neither half — a LoRA adapter and the
 layer norms beneath it train at learning rates an order of magnitude apart, and a single
 `training_learning_rate` series describes neither.
