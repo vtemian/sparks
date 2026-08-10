@@ -14,17 +14,17 @@ container's entrypoint on the box. You never invoke `fire` directly.
 
 # Using it
 
-Install the client into any venv:
-
-```sh
-uv pip install -e .
-```
-
-Point it at your box. This is an environment variable, read by the client itself:
+Point it at your box, then install:
 
 ```sh
 export SPARKS_HOST=you@your-box
+make install
 ```
+
+That installs the client and lets this machine's Docker push to the box registry, which is plain
+HTTP on the LAN. It prints a Docker restart command; run it, because a restart stops whatever
+containers you have. Without that step `docker push` fails and submit dies before the job is
+reserved. `sparks setup` does the same thing on its own if you installed the client some other way.
 
 Submit a run, then watch the queue:
 
@@ -53,16 +53,12 @@ guessed at.
 [`examples/`](examples/) has three runnable starting points: a dependency-free smoke run to prove
 the path works, a hand-written LoRA loop, and a HuggingFace `Trainer` callback.
 
-The registry is plain HTTP on the LAN, the same trust boundary as ssh, so Docker on the laptop
-must be told to allow it. In `daemon.json`, using the same host:port as `registry_url` in the box
-contract:
+`sparks setup` writes the registry into Docker's `daemon.json` for you, reading its address from
+the box contract. To do it by hand instead, add the same host:port as `registry_url`:
 
 ```json
 { "insecure-registries": ["your-box:5000"] }
 ```
-
-Restart Docker afterwards. Without this, `docker push` fails and submit dies before the job is
-reserved.
 
 ## Instrumenting a run
 
