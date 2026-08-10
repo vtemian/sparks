@@ -50,8 +50,7 @@ sparks remove <job>     # delete a finished job
 `<job>` is a full id, a unique fragment of one, or a job name. Ambiguity is refused rather than
 guessed at.
 
-[`examples/`](examples/) has three runnable starting points: a dependency-free smoke run to prove
-the path works, a hand-written LoRA loop, and a HuggingFace `Trainer` callback.
+[`examples/`](examples/) is a runnable LoRA fine-tune, with a screenshot of the run it produced.
 
 `sparks setup` writes the registry into Docker's `daemon.json` for you, reading its address from
 the box contract. To do it by hand instead, add the same host:port as `registry_url`:

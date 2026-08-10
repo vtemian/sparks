@@ -1,58 +1,33 @@
-# Examples
+# Example
 
-Three runnable jobs, in the order worth running them.
-
-## smoke_loop.py
-
-A fake fine-tune with no GPU and no ML dependencies, so it proves the whole path — image pushed,
-data mounted, run recorded, curves in Grafana — before you spend an hour finding out the last step
-is broken.
+A LoRA fine-tune of `SmolLM2-135M` against the corpus in `data/`, on a hand-written loop with no
+`Trainer` — the shape sparks was built for, where the metrics object is something the loop calls
+rather than a callback the framework owns.
 
 ```sh
 sparks submit --context ./examples --data ./examples/data \
-  --name smoke -- python /app/smoke_loop.py
+  --name lora-r16 -- python /app/lora_finetune.py --epochs 12
 ```
 
-That builds the `Dockerfile` here, which installs sparks and copies the scripts to `/app`. The
-command names the script by absolute path because the container's working directory is the box's
-shared directory, not the image's.
+![the run in Grafana](screenshots/lora.png)
 
-The default finishes in about fifteen seconds. Grafana floors its query step at the scrape
-interval, so a run that short arrives as one averaged point rather than a curve; pass `--steps 1200
---step-seconds 0.5` for something to look at.
+That is a real run: 2040 steps over twelve epochs, twenty-three minutes on the box.
 
-![smoke run](screenshots/smoke.png)
+The command names the script by absolute path because the container's working directory is the
+box's shared directory, not the image's. `--data` is mounted read-only at `/data`, also
+`$SPARKS_DATA`, and the corpus is synthetic — generated rather than collected, so the example needs
+no download and carries no licence. Point it at your own text and it will read every `.txt` there.
 
-## finetune/
+Three things in the `Dockerfile` are worth copying into your own, each of which failed a run first.
+It needs a C compiler, because torch builds Triton kernels on the first backward pass even though
+nothing compiles at image time. It needs `HOME` on a writable path, because the job runs as
+whoever submitted it rather than as root, and the Triton cache otherwise lands on `/`. And the
+weights are baked in rather than pulled per run, so an outage at Hugging Face cannot fail a job.
 
-Two real fine-tunes of `SmolLM2-135M` against the corpus in `data/`. They share an image that
-carries torch, transformers and peft, which is why they live in their own build context: it is
-multi-gigabyte, and the smoke run should not need any of it.
+The learning-rate panel carries two series because the adapter and the layer norms beneath it train
+an order of magnitude apart, and one averaged series would describe neither. That is what
+`log_group` is for.
 
-`lora_finetune.py` is a hand-written loop with no `Trainer` — the shape sparks was built for. It
-trains a LoRA adapter and the layer norms beneath it at learning rates an order of magnitude apart,
-and reports them as two series through `log_group`, because one averaged series would describe
-neither.
-
-```sh
-sparks submit --context ./examples/finetune --data ./examples/data \
-  --name lora-r16 -- python /app/lora_finetune.py --epochs 3
-```
-
-![lora run](screenshots/lora.png)
-
-`hf_trainer_callback.py` bridges `sparks.emit` to a HuggingFace `Trainer` in about twenty lines. It
-maps Trainer's log keys to declared metric names explicitly, because those keys vary by version and
-by task and an undeclared name raises.
-
-```sh
-sparks submit --context ./examples/finetune --data ./examples/data \
-  --name sft -- python /app/hf_trainer_callback.py
-```
-
-![trainer run](screenshots/sft.png)
-
-## data/
-
-A synthetic corpus, generated rather than collected, so the examples need no download and carry no
-licence. Replace it with your own text; both fine-tunes read every `.txt` under `$SPARKS_DATA`.
+One thing to know before your own first run: Grafana floors its query step at the scrape interval,
+so anything shorter than a couple of minutes arrives as a single averaged point no matter how
+densely you push.

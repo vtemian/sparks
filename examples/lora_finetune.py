@@ -1,8 +1,8 @@
 # A LoRA fine-tune with a hand-written loop. No Trainer, so nothing to hang a
 # callback on: sparks is just an object the loop calls.
 #
-#   sparks submit --context ./examples/finetune --data ./examples/data \
-#     --name lora-r16 -- python /app/lora_finetune.py --epochs 3
+#   sparks submit --context ./examples --data ./examples/data \
+#     --name lora-r16 -- python /app/lora_finetune.py --epochs 12
 #
 # Two parameter groups on purpose. The adapter wants a learning rate an order of
 # magnitude above the layer norms underneath it, and one averaged series would
