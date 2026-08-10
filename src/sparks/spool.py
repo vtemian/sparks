@@ -141,10 +141,34 @@ def reserve(
     return shared.reserve_dir(queue_dir, name, user, prefix="job", when=when)
 
 
+SSH_UID_ENV = "SPARKS_SSH_UID"
+
+
+def authenticated_uid() -> int | None:
+    # Set by fire-ctl from `id -u` on the far side of the ssh connection. It is
+    # the only identity in the chain sshd vouched for; a --user on the command
+    # line is whatever the client typed, and is display only.
+    raw = os.environ.get(SSH_UID_ENV)
+    if raw is None or not raw.isdigit():
+        return None
+
+    return int(raw)
+
+
 def commit(path: Path, job: Job) -> Entry:
     summary.write_atomically(
         path / JOB_FILE, lambda: json.dumps(job.to_dict(), indent=2) + "\n"
     )
+    # After the write, never before: write_atomically replaces job.json with a
+    # fresh file owned by whoever ran commit, and job.json is what owner_uid
+    # reads. Without this the queue container's root owns the job, the
+    # privilege drop has nothing to drop to, and the run is recorded as root.
+    uid = authenticated_uid()
+    if uid is not None and os.geteuid() == 0:
+        for target in (path, path / JOB_FILE):
+            with contextlib.suppress(OSError):
+                os.chown(target, uid, -1)
+
     return load(path)
 
 

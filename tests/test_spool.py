@@ -283,3 +283,68 @@ def test_terminal_states_are_terminal(tmp_path: Path, state: str) -> None:
     entry = a_job(tmp_path)
     spool.set_state(entry.path, spool.State(state=state))
     assert spool.load(entry.path).is_terminal
+
+
+def test_the_job_is_owned_by_the_account_ssh_authenticated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # owner_uid is read from job.json, which write_atomically recreates as
+    # whoever ran commit -- root, inside the queue container. Without this the
+    # privilege drop has nothing to drop to and the job runs as host root.
+    chowned: list[tuple[Path, int]] = []
+    monkeypatch.setenv("SPARKS_SSH_UID", "501")
+    monkeypatch.setattr("sparks.spool.os.geteuid", lambda: 0)
+    monkeypatch.setattr(
+        "sparks.spool.os.chown",
+        lambda path, uid, _gid: chowned.append((Path(path), uid)),
+    )
+
+    _, path = spool.reserve(tmp_path, "e0", "vlad")
+    spool.commit(
+        path,
+        spool.Job(
+            job_id=path.name,
+            name="e0",
+            user="vlad",
+            command=["true"],
+            submitted_unix=1.0,
+            image=IMAGE,
+        ),
+    )
+
+    assert (path, 501) in chowned
+    assert (path / spool.JOB_FILE, 501) in chowned
+
+
+def test_a_claimed_uid_is_ignored_when_ssh_did_not_vouch_for_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No SPARKS_SSH_UID means nobody authenticated: leave ownership alone
+    # rather than trusting whatever the client asked for.
+    chowned: list[tuple[Path, int]] = []
+    monkeypatch.delenv("SPARKS_SSH_UID", raising=False)
+    monkeypatch.setattr("sparks.spool.os.geteuid", lambda: 0)
+    monkeypatch.setattr(
+        "sparks.spool.os.chown",
+        lambda path, uid, _gid: chowned.append((Path(path), uid)),
+    )
+
+    # Other uid-shaped variables in the environment are not a substitute: only
+    # the one fire-ctl set from the authenticated connection counts.
+    monkeypatch.setenv("SUDO_UID", "501")
+    monkeypatch.setenv("SPARKS_CLAIMED_UID", "501")
+
+    _, path = spool.reserve(tmp_path, "e0", "vlad")
+    spool.commit(
+        path,
+        spool.Job(
+            job_id=path.name,
+            name="e0",
+            user="vlad",
+            command=["true"],
+            submitted_unix=1.0,
+            image=IMAGE,
+        ),
+    )
+
+    assert chowned == []
