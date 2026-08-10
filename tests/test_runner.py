@@ -13,7 +13,7 @@ class FakeHandle:
         self,
         code: int = 0,
         alive_for: int = 0,
-        run_id: str | None = "run-20260806-1200-vlad-e0",
+        run_id: str | None = "run-20260806-1200-rex-e0",
     ) -> None:
         self.code = code
         self.alive_for = alive_for
@@ -106,7 +106,7 @@ def a_job(
     entry = spool.submit(
         queue,
         name=name,
-        user="vlad",
+        user="rex",
         command=["python", "train.py"],
         when=when,
         image=image,
@@ -141,7 +141,7 @@ class TestHappyPath:
         r = a_runner(tmp_path, textfile)
         entry = a_job(r.queue_dir)
         r.tick()
-        assert spool.load(entry.path).state.run_id == "run-20260806-1200-vlad-e0"
+        assert spool.load(entry.path).state.run_id == "run-20260806-1200-rex-e0"
 
     def test_a_nonzero_exit_is_a_failure_not_a_finish(
         self, tmp_path: Path, textfile: Path

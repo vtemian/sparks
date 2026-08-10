@@ -32,7 +32,7 @@ def a_summary(**over: Any) -> Summary:
     fields: dict[str, Any] = {
         "run_id": "run-20260805-1420-e0",
         "run_name": "e0",
-        "user": "vlad",
+        "user": "rex",
         "git_sha": "abc1234",
         "command": ["python", "train.py"],
         "started_unix": 1785847319.0,

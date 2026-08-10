@@ -45,7 +45,7 @@ EXPECTED = (
         [
             "# HELP sparks_run_info Identity of a completed training run. Always 1.",
             "# TYPE sparks_run_info gauge",
-            'sparks_run_info{run_id="run-20260805-1420-e0",user="vlad"'
+            'sparks_run_info{run_id="run-20260805-1420-e0",user="rex"'
             ',run_name="e0",status="finished",energy_sources="agree"} 1',
             'sparks_run_info{run_id="run-20260805-1500-e1",user="ana"'
             ',run_name="e1",status="crashed",energy_sources="agree"} 1',

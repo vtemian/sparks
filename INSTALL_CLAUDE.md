@@ -36,20 +36,25 @@ On the box, sparks ships inside the queue image; converge sparkup rather than in
 by hand. To put a working tree on the box for development:
 
 ```sh
-make deploy                              # SPARKS_HOST defaults to spark.local
-make deploy SPARKS_HOST=you@spark.local  # if your SSH login differs
+make deploy                            # SPARKS_HOST and SPARKS_VENV from local.mk
+make deploy SPARKS_HOST=you@your-box   # or inline
 ```
 
-That rsyncs the tree, installs it into the training venv, and copies the dashboards where
-Grafana reads them (it rescans within 10 seconds; no restart, no root). It refuses early
-if the box has no contract, or if your `SPARKS_SHARED_DIR` disagrees with the box's.
+That rsyncs the tree, installs it into `SPARKS_VENV` (the venv your *training* code runs
+in), and copies `monitoring/dashboards/` where Grafana reads them; it rescans within 10
+seconds, no restart and no root. Neither `SPARKS_HOST` nor `SPARKS_VENV` has a default and
+deploy refuses without them. It also refuses early if the box has no contract, or if your
+`SPARKS_SHARED_DIR` disagrees with the box's.
+
+`make deploy` does **not** update the queue server. `fire` ships as a container image:
+push, let CI build the tag, then converge sparkup to pull it.
 
 ## Configure
 
 **`SPARKS_HOST`** is how the client finds the box. Export it, or pass `--host`:
 
 ```sh
-export SPARKS_HOST=vlad@spark.local
+export SPARKS_HOST=you@your-box
 ```
 
 **`/etc/sparks/box.toml`** is written by sparkup and read on the box. It carries the shared
@@ -63,7 +68,7 @@ boundary is the SSH one. Without this, `docker push` fails and submit dies befor
 reserved:
 
 ```json
-{ "insecure-registries": ["spark.local:5000"] }
+{ "insecure-registries": ["your-box:5000"] }
 ```
 
 Restart Docker afterwards, and use the same host:port that `registry_url` names.

@@ -23,7 +23,7 @@ def an_entry(tmp_path: Path, command: list[str] | None = None) -> spool.Entry:
     entry = spool.submit(
         tmp_path / "queue",
         name="e0",
-        user="vlad",
+        user="rex",
         command=command or ["python", "train.py"],
         image=IMAGE,
     )
@@ -176,7 +176,7 @@ class TestTheWholeCommand:
         entry = spool.submit(
             tmp_path / "queue",
             name="e0",
-            user="vlad",
+            user="rex",
             command=["true"],
             image=IMAGE,
             git_sha="feedface",
@@ -274,8 +274,8 @@ class TestReadingBackWhatTheChildWrote:
 
     def test_the_run_id_is_read_as_soon_as_it_appears(self, tmp_path: Path) -> None:
         target = tmp_path / "run_id"
-        target.write_text("run-20260806-1200-vlad-e0\n")
-        assert engine.first_line(target) == "run-20260806-1200-vlad-e0"
+        target.write_text("run-20260806-1200-rex-e0\n")
+        assert engine.first_line(target) == "run-20260806-1200-rex-e0"
 
     def test_an_empty_file_is_not_an_empty_run_id(self, tmp_path: Path) -> None:
         target = tmp_path / "run_id"

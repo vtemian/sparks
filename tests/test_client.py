@@ -56,8 +56,8 @@ def _submit(
 class TestTagFor:
     def test_tag_for_uses_registry_user_and_name(self) -> None:
         assert (
-            client.tag_for("http://spark.local:5000", "vlad", "exp", "abc1234")
-            == "spark.local:5000/vlad/exp:abc1234"
+            client.tag_for("http://spark.local:5000", "rex", "exp", "abc1234")
+            == "spark.local:5000/rex/exp:abc1234"
         )
 
     def test_tag_for_strips_trailing_slash(self) -> None:
@@ -307,10 +307,10 @@ class TestReachingTheBox:
             command=["python", "train.py"],
             sha="deadbeef",
             dirty=False,
-            image="spark.local:5000/vlad/n:deadbeef",
+            image="spark.local:5000/rex/n:deadbeef",
         )
         assert "--image" in argv
-        assert "spark.local:5000/vlad/n:deadbeef" in argv
+        assert "spark.local:5000/rex/n:deadbeef" in argv
 
     def test_commit_argv_passes_local_user_for_display(self) -> None:
         argv = client.commit_argv("/q/job-1", "e0", ["true"], "abc", False, IMAGE)
@@ -411,34 +411,34 @@ class TestWhoSubmitted:
             return "/q/job-1" if argv[0] == "reserve" else "job-1"
 
         monkeypatch.setattr(client, "capture", fake_capture)
-        monkeypatch.setattr(client, "local_user", lambda: "whitemonk")
+        monkeypatch.setattr(client, "local_user", lambda: "ana")
         monkeypatch.setattr(client, "provenance", lambda _ctx: ("abc1234", False))
         monkeypatch.setattr(client, "ship_to", lambda *a, **k: None)
 
         client.submit_remote(
-            "vlad@spark.local",
+            "rex@your-box",
             name="exp",
             command=["true"],
             data=data,
             context=data,
             image="alpine:3",
         )
-        assert sent["reserve"] == sent["commit"] == "vlad"
+        assert sent["reserve"] == sent["commit"] == "rex"
 
     def test_the_ssh_account_is_who_submitted_not_the_laptop_account(self) -> None:
-        assert client.submitting_user("vlad@spark.local") == "vlad"
+        assert client.submitting_user("rex@your-box") == "rex"
 
     def test_a_host_with_no_account_falls_back_to_the_local_one(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(client, "local_user", lambda: "whitemonk")
-        assert client.submitting_user("spark.local") == "whitemonk"
+        monkeypatch.setattr(client, "local_user", lambda: "ana")
+        assert client.submitting_user("spark.local") == "ana"
 
     def test_an_ipv6_style_host_is_not_mistaken_for_an_account(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(client, "local_user", lambda: "whitemonk")
-        assert client.submitting_user("[fe80::1]") == "whitemonk"
+        monkeypatch.setattr(client, "local_user", lambda: "ana")
+        assert client.submitting_user("[fe80::1]") == "ana"
 
 
 class TestSubmitRemote:
@@ -468,7 +468,7 @@ class TestSubmitRemote:
         monkeypatch.setattr("sparks.dock.client", lambda: fake_client)
         monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
         monkeypatch.setattr(client, "capture", fake_capture)
-        monkeypatch.setattr(client, "local_user", lambda: "vlad")
+        monkeypatch.setattr(client, "local_user", lambda: "rex")
         monkeypatch.setattr(client, "provenance", lambda _ctx: ("abc1234", False))
 
         job_id = client.submit_remote(
@@ -481,20 +481,20 @@ class TestSubmitRemote:
         )
         assert job_id == "job-1"
 
-        tag = "spark.local:5000/vlad/exp:abc1234"
+        tag = "spark.local:5000/rex/exp:abc1234"
         fake_client.api.build.assert_called_once()
         build_kwargs = fake_client.api.build.call_args.kwargs
         assert build_kwargs["path"] == str(project)
         assert build_kwargs["tag"] == tag
         fake_client.images.push.assert_called_once_with(
-            "spark.local:5000/vlad/exp", tag="abc1234", stream=True, decode=True
+            "spark.local:5000/rex/exp", tag="abc1234", stream=True, decode=True
         )
 
         kinds = [kind for kind, _ in calls]
         assert kinds == ["ssh", "run", "ssh"]
         assert calls[0] == (
             "ssh",
-            ["reserve", "--name", "exp", "--user", "vlad"],
+            ["reserve", "--name", "exp", "--user", "rex"],
         )
         assert calls[1][1][0] == "rsync"
         assert calls[1][1][-1] == f"box:/q/job-1/{spool.DATA_DIR}/"
@@ -534,7 +534,7 @@ class TestSubmitRemote:
         monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
         monkeypatch.setattr(client, "capture", fake_capture)
         monkeypatch.setattr(client, "fetch_registry_url", fake_fetch)
-        monkeypatch.setattr(client, "local_user", lambda: "vlad")
+        monkeypatch.setattr(client, "local_user", lambda: "rex")
         monkeypatch.setattr(client, "provenance", lambda _ctx: ("abc1234", False))
 
         client.submit_remote(

@@ -10,7 +10,7 @@ def an_entry(
     tmp_path: Path,
     name: str,
     state: str = spool.QUEUED,
-    user: str = "vlad",
+    user: str = "rex",
     **fields: object,
 ) -> spool.Entry:
     entry = spool.submit(
@@ -30,7 +30,7 @@ def test_a_queued_job_shows_up_with_its_identity(tmp_path: Path) -> None:
     rendered = index.render_queue([an_entry(tmp_path, "e0")], heartbeat=1785849100.0)
     assert 'state="queued"' in rendered
     assert 'name="e0"' in rendered
-    assert 'user="vlad"' in rendered
+    assert 'user="rex"' in rendered
 
 
 def test_depth_is_published_at_zero_so_the_series_exists(tmp_path: Path) -> None:
@@ -83,10 +83,10 @@ def test_the_image_label_is_present_but_empty_before_a_build(
 
 def test_the_run_id_joins_the_queue_to_the_run_index(tmp_path: Path) -> None:
     entry = an_entry(
-        tmp_path, "e0", state=spool.RUNNING, run_id="run-20260806-1200-vlad-e0"
+        tmp_path, "e0", state=spool.RUNNING, run_id="run-20260806-1200-rex-e0"
     )
     rendered = index.render_queue([entry], heartbeat=1.0)
-    assert 'run_id="run-20260806-1200-vlad-e0"' in rendered
+    assert 'run_id="run-20260806-1200-rex-e0"' in rendered
 
 
 def test_an_empty_queue_still_produces_a_valid_file(tmp_path: Path) -> None:

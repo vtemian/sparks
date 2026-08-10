@@ -10,7 +10,7 @@ from sparks import spool
 IMAGE = "spark.local:5000/demo:1"
 
 
-def a_job(queue: Path, name: str = "e0", user: str = "vlad") -> spool.Entry:
+def a_job(queue: Path, name: str = "e0", user: str = "rex") -> spool.Entry:
     return spool.submit(
         queue, name=name, user=user, command=["python", "train.py"], image=IMAGE
     )
@@ -76,10 +76,10 @@ def test_the_id_carries_who_and_what_so_a_listing_needs_no_lookup(
 
 def test_jobs_run_oldest_first(tmp_path: Path) -> None:
     first = spool.submit(
-        tmp_path, name="a", user="vlad", command=["true"], image=IMAGE, when=1000.0
+        tmp_path, name="a", user="rex", command=["true"], image=IMAGE, when=1000.0
     )
     second = spool.submit(
-        tmp_path, name="b", user="vlad", command=["true"], image=IMAGE, when=2000.0
+        tmp_path, name="b", user="rex", command=["true"], image=IMAGE, when=2000.0
     )
     assert [e.job.job_id for e in spool.entries(tmp_path)] == [
         first.job.job_id,
@@ -90,7 +90,7 @@ def test_jobs_run_oldest_first(tmp_path: Path) -> None:
 
 
 def test_a_half_written_submission_is_invisible(tmp_path: Path) -> None:
-    _, path = spool.reserve(tmp_path, name="e0", user="vlad")
+    _, path = spool.reserve(tmp_path, name="e0", user="rex")
     (path / "context").mkdir()
     (path / "context" / "half.py").write_text("incomplete\n")
     assert spool.entries(tmp_path) == []
@@ -112,14 +112,14 @@ def test_the_runner_records_progress_and_it_survives_a_reload(
         spool.State(
             state=spool.RUNNING,
             image="sha256:abc",
-            run_id="run-20260806-120000-vlad-e0",
+            run_id="run-20260806-120000-rex-e0",
             container_id="deadbeef",
             started_unix=1234.0,
         ),
     )
     reloaded = spool.load(entry.path)
     assert reloaded.state.state == spool.RUNNING
-    assert reloaded.state.run_id == "run-20260806-120000-vlad-e0"
+    assert reloaded.state.run_id == "run-20260806-120000-rex-e0"
     assert reloaded.state.container_id == "deadbeef"
     # The submission is untouched by anything the runner does.
     assert reloaded.job == entry.job
@@ -153,7 +153,7 @@ def test_provenance_is_recorded_when_there_is_any(tmp_path: Path) -> None:
     entry = spool.submit(
         tmp_path,
         name="e0",
-        user="vlad",
+        user="rex",
         command=["true"],
         image=IMAGE,
         git_sha="abc1234",
@@ -299,13 +299,13 @@ def test_the_job_is_owned_by_the_account_ssh_authenticated(
         lambda path, uid, _gid: chowned.append((Path(path), uid)),
     )
 
-    _, path = spool.reserve(tmp_path, "e0", "vlad")
+    _, path = spool.reserve(tmp_path, "e0", "rex")
     spool.commit(
         path,
         spool.Job(
             job_id=path.name,
             name="e0",
-            user="vlad",
+            user="rex",
             command=["true"],
             submitted_unix=1.0,
             image=IMAGE,
@@ -334,13 +334,13 @@ def test_a_claimed_uid_is_ignored_when_ssh_did_not_vouch_for_it(
     monkeypatch.setenv("SUDO_UID", "501")
     monkeypatch.setenv("SPARKS_CLAIMED_UID", "501")
 
-    _, path = spool.reserve(tmp_path, "e0", "vlad")
+    _, path = spool.reserve(tmp_path, "e0", "rex")
     spool.commit(
         path,
         spool.Job(
             job_id=path.name,
             name="e0",
-            user="vlad",
+            user="rex",
             command=["true"],
             submitted_unix=1.0,
             image=IMAGE,

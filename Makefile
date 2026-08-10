@@ -1,13 +1,18 @@
-.PHONY: sync fmt lint typecheck test dashboard check live on-box harness-up harness-down deploy deploy-preflight
+.PHONY: sync fmt lint typecheck test dashboard check live on-box harness-up harness-down deploy deploy-preflight sparks
 
 # Your box's values, untracked, same split sparkup uses between tracked
 # defaults and an untracked host file. Copy local.mk.example to local.mk.
 # Included first, so what it sets wins over the defaults below.
 -include local.mk
 
-# The box. Defaults to your own SSH login, since nobody else's belongs in a
-# tracked file.
-SPARKS_HOST ?= spark.local
+# The box, as ssh addresses it. No default: nobody else's hostname belongs in a
+# tracked file, and a wrong guess here talks to the wrong machine.
+#
+# Exported, so `sparks submit` run from this directory sees the same value the
+# Makefile does. Without that, local.mk sets a Make variable the client cannot
+# read, and you get "set SPARKS_HOST" while looking at a file that sets it.
+SPARKS_HOST ?=
+export SPARKS_HOST
 
 # Where training artifacts live: sparkup's `spark_shared_dir`. The repo default
 # is /srv/spark; a box that overrode it in host_vars needs the same value here.
@@ -80,6 +85,10 @@ harness-down:
 # would record itself where nothing reads. Checked over one SSH round trip,
 # before anything is written.
 deploy-preflight:
+	@test -n "$(SPARKS_HOST)" || { \
+	  echo "set SPARKS_HOST to the box, as ssh addresses it."; \
+	  echo "cp local.mk.example local.mk and edit it, or pass it inline:"; \
+	  echo "  make deploy SPARKS_HOST=you@your-box"; exit 2; }
 	@test -n "$(SPARKS_VENV)" || { \
 	  echo "set SPARKS_VENV to the venv your training code runs in."; \
 	  echo "cp local.mk.example local.mk and edit it, or pass it inline:"; \
@@ -118,3 +127,10 @@ deploy: deploy-preflight
 	scp -q monitoring/dashboards/*.json \
 	  $(SPARKS_HOST):$(SPARKS_SHARED_DIR)/dashboards/
 	@echo "deployed to $(SPARKS_HOST):$(SPARKS_SHARED_DIR)"
+
+# The client, with SPARKS_HOST already set from local.mk, so a checkout has one
+# source of truth for which box it talks to:
+#   make sparks ARGS="queue"
+#   make sparks ARGS="submit --data ./corpus --name e0 -- python train.py"
+sparks:
+	uv run sparks $(ARGS)
