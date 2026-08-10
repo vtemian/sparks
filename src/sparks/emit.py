@@ -240,7 +240,6 @@ class Run:
         self.clock = clock
         self.count = 0
         self.marks: deque[float] = deque(maxlen=window)
-        self.marks.append(clock())
 
     def __enter__(self) -> Self:
         return self
@@ -291,8 +290,11 @@ class Run:
         return values
 
     def rate(self) -> float | None:
-        # A lone mark spans zero, so this covers "too early to say" as well as
-        # a clock that has not moved between two steps.
+        if not self.marks:
+            return None
+
+        # One step spans zero, which is right: a rate needs two of them. So
+        # does a clock that has not moved, and both land here.
         span = self.marks[-1] - self.marks[0]
         if span <= 0:
             return None

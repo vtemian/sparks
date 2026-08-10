@@ -208,3 +208,44 @@ def test_a_child_that_emits_lands_alongside_the_supervisor_lifecycle(
         "training_run_status",
     ):
         assert wait_for(f'{metric}{{run_id="{result.run_id}"}}')
+
+
+def test_a_tracked_child_lands_the_values_it_derived(tmp_path: Path) -> None:
+    # track() derives progress and the rates rather than taking them from the
+    # caller, so the only proof they are right is reading them back off a real
+    # receiver. The sleep is load-bearing twice: it puts the two steps in
+    # different milliseconds, which the buffer needs to keep both, and it gives
+    # the rate a span to divide by.
+    child = [
+        sys.executable,
+        "-c",
+        "import time\n"
+        "from sparks.emit import track\n"
+        "with track(total=2, tokens_per_step=100, arm='tracked') as run:\n"
+        "    run.step(loss=0.25)\n"
+        "    time.sleep(0.5)\n"
+        "    run.step(loss=0.20)\n",
+    ]
+    result = launcher.launch(
+        child, name="live-tracked", shared_dir=tmp_path, url=URL, baseline_seconds=0.0
+    )
+    assert result.status == "finished"
+
+    run_id = result.run_id
+    progress = wait_for(f'last_over_time(training_progress{{run_id="{run_id}"}}[1h])')
+    assert float(progress[0]["value"][1]) == pytest.approx(1.0)
+    assert progress[0]["metric"]["arm"] == "tracked"
+
+    step = wait_for(f'last_over_time(training_step{{run_id="{run_id}"}}[1h])')
+    assert float(step[0]["value"][1]) == pytest.approx(2.0)
+
+    # Two steps half a second apart is about two per second, and a hundred
+    # tokens each makes the throughput follow it.
+    rate = wait_for(f'last_over_time(training_steps_per_sec{{run_id="{run_id}"}}[1h])')
+    assert float(rate[0]["value"][1]) == pytest.approx(2.0, rel=0.5)
+    tokens = wait_for(
+        f'last_over_time(training_tokens_per_sec{{run_id="{run_id}"}}[1h])'
+    )
+    assert float(tokens[0]["value"][1]) == pytest.approx(
+        float(rate[0]["value"][1]) * 100, rel=0.01
+    )

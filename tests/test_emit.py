@@ -336,24 +336,30 @@ def test_a_value_you_pass_wins_over_the_one_track_derived(
 
 
 def test_steps_per_second_is_measured_over_the_recent_window() -> None:
-    # Two steps half a second apart is two per second, and the mark laid down
-    # at construction is what the first step measures against.
-    run = Run(None, clock=ticking(0.0, 0.5, 1.0))
+    run = Run(None, clock=ticking(0.0, 0.5))
 
+    run.step()
     run.step()
 
     assert run.rate() == 2.0
 
 
-def test_a_rate_needs_two_marks_before_it_means_anything() -> None:
-    run = Run(None, clock=ticking(0.0))
+def test_one_step_is_too_early_to_call_it_a_rate() -> None:
+    # Seeding a mark at construction would give the first step a free
+    # zero-length interval and report a rate several times the real one.
+    run = Run(None, clock=ticking(0.0, 0.5))
+
+    assert run.rate() is None
+
+    run.step()
 
     assert run.rate() is None
 
 
 def test_tokens_per_second_follows_the_step_rate() -> None:
-    run = Run(None, tokens_per_step=1000, clock=ticking(0.0, 0.5, 1.0))
+    run = Run(None, tokens_per_step=1000, clock=ticking(0.0, 0.5))
 
+    run.step()
     run.step()
 
     assert run.derived()["tokens_per_sec"] == 2000.0
@@ -362,7 +368,7 @@ def test_tokens_per_second_follows_the_step_rate() -> None:
 def test_the_window_forgets_steps_older_than_itself() -> None:
     # Without maxlen the rate is a lifetime average, which is the bug this
     # replaces: a slow tail stays hidden behind a fast start.
-    run = Run(None, window=2, clock=ticking(0.0, 1.0, 2.0, 10.0))
+    run = Run(None, window=2, clock=ticking(1.0, 2.0, 10.0))
 
     run.step()
     run.step()
