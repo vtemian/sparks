@@ -15,8 +15,7 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu13
 RUN pip install --no-cache-dir \
     "transformers==4.57.1" \
     "peft==0.18.0" \
-    "accelerate==1.11.0" \
-    "https://github.com/vtemian/sparks/archive/refs/heads/main.tar.gz"
+    "accelerate==1.11.0"
 
 # Weights are baked in rather than downloaded per run: a job container that
 # reaches Hugging Face on every start turns an outage there into a failed run.
@@ -44,5 +43,13 @@ RUN apt-get update \
 ENV HOME=/tmp \
     TRITON_CACHE_DIR=/tmp/triton \
     HF_HUB_OFFLINE=1
+
+# Pinned to a commit, not to a branch. Docker keys this layer on the text of
+# the instruction, so a branch URL never changes and the cache serves whatever
+# sparks it first built with, however far main has moved. That failed a run
+# with ImportError on a name main had had for an hour. Its own layer, and last,
+# so bumping it rebuilds seconds rather than the gigabytes above.
+RUN pip install --no-cache-dir \
+    "https://github.com/vtemian/sparks/archive/723dd1c3dec4a3658906db35ab3c17a553f36c4c.tar.gz"
 
 COPY *.py /app/
