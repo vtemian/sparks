@@ -32,7 +32,7 @@
       },
       "type": "stat",
       "title": "Last pass",
-      "description": "Seconds since the runner finished a pass. It writes this on every pass including idle ones, so a climbing value means the runner stopped, not that the queue is quiet.",
+      "description": "Seconds since the runner finished a pass. It writes this every pass including idle ones, so a climbing value means the runner stopped. A healthy value cycles up to ~60s: that is the scrape interval, not a slow runner.",
       "gridPos": {
         "h": 4,
         "w": 4,
@@ -52,7 +52,7 @@
               },
               {
                 "color": "orange",
-                "value": 60
+                "value": 180
               },
               {
                 "color": "red",
