@@ -97,6 +97,8 @@ changing code means rebuilding and submitting from a laptop.
 ```sh
 sparks queue            # what is running and waiting
 sparks queue --all      # include finished jobs
+sparks logs <job>       # the last 200 lines the job printed; --all for every line
+sparks status <job>     # one job in full: state, exit code, duration, energy
 sparks cancel <job>     # drop a job that has not started
 sparks abort <job>      # stop one whether or not it has started
 sparks retry <job>      # resubmit, reusing the image and data already on the box
@@ -106,7 +108,18 @@ sparks remove <job>     # delete a finished job
 `<job>` is a full job id, a unique fragment of one, or a job name. Ambiguity is refused
 rather than guessed, except that one running job among several finished ones is taken to be
 the one you meant. Only the account that submitted a job may control it; root may control
-any.
+any — but anyone may read any job's `queue`, `logs` and `status`, as reading is not
+controlling.
+
+`queue --json` and `status --json` are the machine-readable forms, and are what a script or
+an agent should parse: the plain output is a padded table meant for a person. `status --json`
+carries three keys — `job` (what was submitted), `state` (where it is now), and `summary`
+(the run's permanent record, `null` until the run ends).
+
+`logs` needs the job to have reached a run: before that it fails and names the state, with
+the runner's `detail` when there is one (a failed pull says so). When the launch itself
+failed there is no container output, so `logs` prints `error.txt` under a
+`sparks could not run this job:` heading rather than passing it off as the job's own.
 
 ## Instrument a run
 
@@ -156,8 +169,9 @@ work around it.
 **Submit fails at push** — check `insecure-registries` above, and that `SPARKS_HOST` is
 reachable. The error names the tag that failed.
 
-**A job fails immediately with a pull error** — `pull.log` in the job directory has the
-registry's own output. The usual cause is a tag that was never pushed.
+**A job fails immediately with a pull error** — `sparks status <job>` says so in `detail`,
+and `pull.log` in the job directory has the registry's own output. The usual cause is a tag
+that was never pushed.
 
 **A run shows on the dashboard with no end and no status** — that is a run whose record was
 never written. Check the job directory is writable by the submitting account; a full disk or

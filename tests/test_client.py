@@ -411,6 +411,31 @@ class TestBuildAndPush:
         assert kwargs["path"] == str(project)
         assert kwargs["tag"] == "spark.local:5000/u/n:r"
 
+    def test_build_progress_keeps_off_stdout(
+        self,
+        project: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        fake_client = MagicMock()
+        fake_client.api.build.return_value = iter([{"stream": "Step 1\n"}])
+        monkeypatch.setattr("sparks.dock.client", lambda **kwargs: fake_client)
+        client.build(project, "spark.local:5000/u/n:r")
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Step 1" in captured.err
+
+    def test_push_progress_keeps_off_stdout(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        fake_client = MagicMock()
+        fake_client.images.push.return_value = iter([{"status": "Pushed"}])
+        monkeypatch.setattr("sparks.dock.client", lambda **kwargs: fake_client)
+        client.push("spark.local:5000/u/n:r")
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "Pushed" in captured.err
+
     def test_a_push_that_outlives_the_socket_timeout_says_so(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

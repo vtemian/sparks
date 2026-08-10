@@ -41,6 +41,8 @@ laptop path. Pass `--image` to skip the build and reuse a tag already in the reg
 ```sh
 sparks queue            # what is running and waiting
 sparks queue --all      # include finished jobs
+sparks logs <job>       # the last 200 lines the job printed; --all for every line
+sparks status <job>     # one job in full: state, exit code, duration, energy
 sparks cancel <job>     # drop a job that has not started
 sparks abort <job>      # stop one whether or not it has started
 sparks retry <job>      # resubmit, reusing the image and data already on the box
@@ -48,9 +50,12 @@ sparks remove <job>     # delete a finished job
 ```
 
 `<job>` is a full id, a unique fragment of one, or a job name. Ambiguity is refused rather than
-guessed at.
+guessed at. `queue` and `status` take `--json` for a script to read.
 
 [`examples/`](examples/) is a runnable LoRA fine-tune, with a screenshot of the run it produced.
+
+[`skills/`](skills/) has two Claude Code skills, one for writing a job and one for operating the
+queue. `ln -s "$PWD"/skills/* ~/.claude/skills/` installs them.
 
 `sparks setup` writes the registry into Docker's `daemon.json` for you, reading its address from
 the box contract. To do it by hand instead, add the same host:port as `registry_url`:

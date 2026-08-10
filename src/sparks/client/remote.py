@@ -3,6 +3,7 @@ import logging
 import os
 import shlex
 import subprocess
+import sys
 import time
 import tomllib
 from dataclasses import dataclass
@@ -78,8 +79,10 @@ def build(context: Path, tag: str) -> None:
         )
         for chunk in stream:
             if "stream" in chunk:
-                # No newline of our own: the chunks carry theirs.
-                print(chunk["stream"], end="")
+                # stderr, so that submit's stdout is the job id and nothing else
+                # and `JOB=$(sparks submit ...)` means what it looks like. No
+                # newline of our own: the chunks carry theirs.
+                print(chunk["stream"], end="", file=sys.stderr)
             raise_if_docker_failed(chunk, f"docker build failed for {tag}")
     except dock.DockerException as exc:
         raise ClientError(f"docker build failed for {tag}: {exc}") from exc
@@ -97,7 +100,7 @@ def push(tag: str) -> None:
             raise_if_docker_failed(line, f"docker push failed for {tag}. {PUSH_HINT}")
             status = line.get("status")
             if status:
-                print(status)
+                print(status, file=sys.stderr)
     except dock.DockerException as exc:
         raise ClientError(f"docker push failed for {tag}. {PUSH_HINT}") from exc
     except dock.ReadTimeoutError as exc:
