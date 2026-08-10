@@ -641,3 +641,145 @@ def test_an_undeclared_grouped_name_is_refused_off_the_box_too() -> None:
 
     with pytest.raises(KeyError, match="training_nonsense"):
         run.log(nonsense={"a": 1.0})
+
+
+def test_a_value_is_refused_where_the_caller_can_see_it_fail() -> None:
+    # Off the box the value used to be stored untouched, so a tensor or a None
+    # passed every laptop run and raised inside the training loop on the box,
+    # after submit had already reported success.
+    run = Run(None)
+
+    with pytest.raises((TypeError, ValueError)):
+        run.step(loss=None)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="could not convert"):
+        run.step(loss="not a number")  # type: ignore[arg-type]
+
+
+def test_a_grouped_value_is_refused_off_the_box_too() -> None:
+    # Worse than the plain path: off the box the mapping was never iterated at
+    # all, so neither its keys nor its values were ever looked at.
+    run = Run(None)
+
+    with pytest.raises(ValueError, match="could not convert"):
+        run.step(learning_rate={"adapter": "not a number"})  # type: ignore[dict-item]
+
+
+def test_a_group_name_that_is_not_a_name_is_refused() -> None:
+    # Two keys that str() alike become one series on the wire sharing a
+    # timestamp, which is a duplicate-sample 400, and remote-write rolls back
+    # the whole request rather than the one series.
+    run = Run(None)
+
+    with pytest.raises(TypeError, match="group"):
+        run.step(learning_rate={0: 1e-4})  # type: ignore[dict-item]
+
+
+def test_the_group_label_cannot_be_taken_from_under_the_emitter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SPARKS_RUN_ID", "run-9")
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
+
+    with pytest.raises(ValueError, match="group"):
+        track(group="mine")
+
+
+def test_a_token_count_of_zero_is_refused_rather_than_ignored() -> None:
+    with pytest.raises(ValueError, match="tokens_per_step"):
+        Run(None, tokens_per_step=0)
+
+
+def test_the_rate_averages_the_window_rather_than_the_last_interval() -> None:
+    # Four marks where the two readings disagree: 0.3/s across the window,
+    # 0.125/s across the last interval alone. Smoothing that jitter is the
+    # entire reason the window exists, and two marks cannot tell them apart.
+    run = Run(None, window=20, clock=ticking(0.0, 1.0, 2.0, 10.0))
+    for _ in range(4):
+        run.step()
+
+    assert run.rate() == 0.3
+
+
+def test_a_step_reports_the_pace_it_measured() -> None:
+    # rate() being right is not the same as step() sending it: deleting the
+    # line that puts it in derived() kills a dashboard panel in silence.
+    run = Run(None, clock=ticking(0.0, 0.5))
+
+    run.step()
+    run.step()
+
+    assert run.derived()["steps_per_sec"] == 2.0
+
+
+def test_the_first_step_reports_itself_as_step_one() -> None:
+    emitter = child()
+    run = Run(emitter)
+
+    run.step(loss=1.0)
+
+    step = next(
+        d for d in emitter._buffer.drain() if d["metric"]["__name__"] == "training_step"
+    )
+    assert step["values"] == [1.0]
+
+
+def test_a_step_after_the_end_does_not_advance_the_counter() -> None:
+    # log's guard masks step's, so the buffer stays empty either way while the
+    # counter drifts and a clock mark is consumed.
+    emitter = child()
+    run = Run(emitter)
+    run.end()
+
+    run.step(loss=1.0)
+
+    assert run.count == 0
+
+
+def test_track_hands_the_run_what_it_was_given(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Everything else builds a Run directly, so track's own forwarding was the
+    # one path with no test: Run(metrics) alone kept the suite green.
+    monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
+    monkeypatch.delenv("SPARKS_PROMETHEUS_URL", raising=False)
+
+    run = track(total=8, tokens_per_step=64, window=3)
+
+    assert run.total == 8
+    assert run.tokens_per_step == 64
+    assert run._marks.maxlen == 3
+
+
+def test_the_grouped_engine_refuses_a_supervisor_series() -> None:
+    # The plain path was pinned; the grouped one became reachable only when a
+    # mapping value did.
+    emitter = child()
+
+    with pytest.raises(KeyError, match="belongs to the supervisor"):
+        emitter.log_group("training_run_active", {"a": 1.0})
+
+    with pytest.raises(KeyError, match="belongs to the supervisor"):
+        Run(emitter).log(run_active={"a": 1.0})
+
+
+def test_the_grouped_engine_refuses_an_undeclared_metric() -> None:
+    emitter = make()
+
+    with pytest.raises(KeyError, match="training_nonsense"):
+        emitter.log_group("training_nonsense", {"a": 1.0})
+
+
+def test_a_value_reaches_the_buffer_as_a_float() -> None:
+    # Without the coercion an int or a tensor reaches Buffer and raises on the
+    # pump thread, where _flush's broad except drops the whole batch behind a
+    # warning nobody reads.
+    emitter = make()
+
+    emitter.log(step=3)
+    emitter.log_group("training_learning_rate", {"lora": 2})
+
+    assert [type(v) for d in emitter._buffer.drain() for v in d["values"]] == [
+        float,
+        float,
+    ]

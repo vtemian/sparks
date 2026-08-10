@@ -38,6 +38,16 @@ def training_metric(key: str) -> str:
     return name
 
 
+def group_name(group: object) -> str:
+    # Not str() of whatever arrived: 0 and "0" are two series in the buffer and
+    # one on the wire, sharing a timestamp. That is a duplicate sample, and
+    # remote-write answers a 400 by rolling back the whole request.
+    if not isinstance(group, str):
+        raise TypeError(f"group {group!r} is not a name")
+
+    return group
+
+
 def check_run_shape(
     total: int | None, tokens_per_step: int | None, window: int
 ) -> None:
@@ -314,16 +324,20 @@ class Run:
 
         plain: dict[str, float] = {}
         for key, value in values.items():
-            # Checked even with nowhere to send it. Checking only when an
-            # emitter exists is how a typo survives every laptop run and then
-            # raises on the box, after submit already reported success.
+            # Name, group names and values are all checked here rather than
+            # where they are sent. Checking only when an emitter exists is how
+            # a bad one survives every laptop run and then raises on the box,
+            # inside the training loop, after submit reported success.
             name = training_metric(key)
             if not isinstance(value, dict):
-                plain[key] = value
-            elif self._metrics is not None:
-                # A mapping is one series per group. Nothing else a metric can
-                # be is a mapping, so this needs no keyword of its own.
-                self._metrics.log_group(name, value)
+                plain[key] = float(value)
+                continue
+
+            # A mapping is one series per group. Nothing else a metric can be
+            # is a mapping, so this needs no keyword of its own.
+            grouped = {group_name(group): float(each) for group, each in value.items()}
+            if self._metrics is not None:
+                self._metrics.log_group(name, grouped)
 
         if plain and self._metrics is not None:
             self._metrics.log(**plain)
@@ -367,8 +381,9 @@ def track(
     window: int = RATE_WINDOW_STEPS,
     **labels: str,
 ) -> Run:
-    if "run_id" in labels:
-        raise ValueError("run_id is the run's own and cannot be given as a label")
+    for reserved in ("run_id", "group"):
+        if reserved in labels:
+            raise ValueError(f"{reserved} is the emitter's own and cannot be a label")
 
     # Before the emitter, so a rejected argument leaves no pump thread behind.
     check_run_shape(total, tokens_per_step, window)
