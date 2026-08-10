@@ -98,8 +98,13 @@ def main() -> None:
     print(f"{blocks.shape[0]} blocks of {BLOCK} tokens")
 
     held_out = [blocks[i : i + 1] for i in range(min(HELD_OUT, blocks.shape[0]))]
+    # drop_last, because tokens_per_step below is a constant: a ragged final
+    # batch would be counted at full width and overstate the throughput.
     loader = DataLoader(
-        TensorDataset(blocks[HELD_OUT:]), batch_size=args.batch_size, shuffle=True
+        TensorDataset(blocks[HELD_OUT:]),
+        batch_size=args.batch_size,
+        shuffle=True,
+        drop_last=True,
     )
 
     model = adapted(AutoModelForCausalLM.from_pretrained(MODEL)).to(device)

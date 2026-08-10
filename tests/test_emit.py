@@ -1,4 +1,6 @@
 import struct
+import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -194,7 +196,7 @@ def test_track_outside_a_job_reaches_for_no_emitter_at_all(monkeypatch: Any) -> 
     monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
     monkeypatch.delenv("SPARKS_PROMETHEUS_URL", raising=False)
 
-    assert track().metrics is None
+    assert track()._metrics is None
 
 
 def test_track_inside_a_job_builds_a_child_carrying_its_labels(
@@ -204,16 +206,16 @@ def test_track_inside_a_job_builds_a_child_carrying_its_labels(
     monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
     run = track(arm="real")
 
-    assert run.metrics is not None
-    assert run.metrics.run_id == "run-7"
+    assert run._metrics is not None
+    assert run._metrics.run_id == "run-7"
 
     run.step(loss=1.0)
-    sample = run.metrics._buffer.drain()[0]
+    sample = run._metrics._buffer.drain()[0]
     assert sample["metric"]["arm"] == "real"
 
     # Still a child: entering the block writes no lifecycle series.
     with run:
-        assert run.metrics._buffer.drain() == []
+        assert run._metrics._buffer.drain() == []
 
 
 def test_a_child_cannot_write_a_supervisor_series() -> None:
@@ -277,14 +279,11 @@ def test_track_outside_a_job_yields_a_run_that_does_nothing(
         run.log(eval_loss=0.5)
         run.log_group("training_learning_rate", {"adapter": 2e-4})
 
-    assert run.metrics is None
+    assert run._metrics is None
     assert run.count == 1
 
 
-def test_track_inside_a_job_logs_through_a_child_emitter(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    in_a_job(monkeypatch)
+def test_track_inside_a_job_logs_through_a_child_emitter() -> None:
     emitter = child(labels={"arm": "lora"})
     run = Run(emitter)
 
@@ -300,10 +299,7 @@ def ticking(*times: float) -> Callable[[], float]:
     return lambda: next(values)
 
 
-def test_a_tracked_step_derives_progress_from_the_total(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    in_a_job(monkeypatch)
+def test_a_tracked_step_derives_progress_from_the_total() -> None:
     emitter = child()
     run = Run(emitter, total=4)
 
@@ -316,12 +312,9 @@ def test_a_tracked_step_derives_progress_from_the_total(
     assert progress["values"] == [0.25]
 
 
-def test_without_a_total_progress_is_absent_rather_than_wrong(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_without_a_total_progress_is_absent_rather_than_wrong() -> None:
     # A guessed denominator renders a progress bar that lies. Emitting nothing
     # is the honest failure.
-    in_a_job(monkeypatch)
     emitter = child()
     run = Run(emitter)
 
@@ -332,10 +325,7 @@ def test_without_a_total_progress_is_absent_rather_than_wrong(
     assert "training_eta_seconds" not in names(drained)
 
 
-def test_a_value_you_pass_wins_over_the_one_track_derived(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    in_a_job(monkeypatch)
+def test_a_value_you_pass_wins_over_the_one_track_derived() -> None:
     emitter = child()
     run = Run(emitter, total=4)
 
@@ -400,9 +390,9 @@ def test_leaving_the_block_stops_the_pump(monkeypatch: pytest.MonkeyPatch) -> No
     with run:
         run.step(loss=1.0)
 
-    assert run.metrics is not None
-    assert run.metrics._thread is not None
-    assert not run.metrics._thread.is_alive()
+    assert run._metrics is not None
+    assert run._metrics._thread is not None
+    assert not run._metrics._thread.is_alive()
 
 
 def test_an_exception_leaves_the_block_without_being_swallowed(
@@ -461,13 +451,11 @@ def test_no_keyword_is_reserved_out_from_under_a_label(
     # environment itself now, and every keyword it does not name is a label.
     monkeypatch.setenv("SPARKS_RUN_ID", "run-9")
     monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
-    run = track(autostart="no")
+    with track(autostart="no") as run:
+        assert run._metrics is not None
+        run.step(loss=1.0)
 
-    assert run.metrics is not None
-    assert run.metrics._thread is not None
-    run.step(loss=1.0)
-
-    assert run.metrics._buffer.drain()[0]["metric"]["autostart"] == "no"
+        assert run._metrics._buffer.drain()[0]["metric"]["autostart"] == "no"
 
 
 def test_reporting_after_the_run_ended_says_so_rather_than_vanishing(
@@ -477,7 +465,6 @@ def test_reporting_after_the_run_ended_says_so_rather_than_vanishing(
     # Nothing drains the buffer once the pump is stopped, and the whole point
     # of track is that the call site carries no guard, so a stray log after the
     # block is an easy mistake to make and an invisible one to debug.
-    in_a_job(monkeypatch)
     emitter = child()
     run = Run(emitter)
     run.end()
@@ -486,3 +473,127 @@ def test_reporting_after_the_run_ended_says_so_rather_than_vanishing(
 
     assert "already ended" in caplog.text
     assert emitter._buffer.drain() == []
+
+
+def test_a_run_that_owns_its_lifecycle_records_a_start_and_a_crash() -> None:
+    # track only ever builds children, where begin() and the status are both
+    # ignored, so nothing else here would notice these two being deleted.
+    emitter = make()
+    run = Run(emitter)
+
+    with pytest.raises(ValueError, match="boom"), run:
+        emitter._buffer.drain()
+        raise ValueError("boom")
+
+    ended = {
+        d["metric"]["__name__"]: d["metric"].get("status")
+        for d in emitter._buffer.drain()
+    }
+    assert ended["training_run_status"] == "crashed"
+
+
+def test_entering_the_block_writes_the_start_of_a_run_it_owns() -> None:
+    emitter = make()
+
+    with Run(emitter):
+        assert "training_run_start_timestamp_seconds" in names(emitter._buffer.drain())
+
+
+def test_every_way_of_reporting_stops_once_the_run_has_ended(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # step returns before it reaches log, so a guard on log or log_group alone
+    # would go unnoticed by a test that only calls step.
+    emitter = child()
+    run = Run(emitter)
+    run.end()
+    emitter._buffer.drain()
+
+    run.step(loss=1.0)
+    run.log(eval_loss=1.0)
+    run.log_group("training_learning_rate", {"adapter": 1.0})
+
+    assert emitter._buffer.drain() == []
+    assert len([r for r in caplog.records if "already ended" in r.message]) == 1
+
+
+def test_ending_a_run_twice_records_one_ending() -> None:
+    # The sleep is the test: without it both endings share a millisecond and
+    # the buffer drops the second, so a missing guard would look guarded.
+    emitter = make()
+    run = Run(emitter)
+    run.end()
+    time.sleep(0.002)
+
+    run.end()
+
+    # One dict per series carrying every sample, so count the values: counting
+    # the dicts would read the same whether it ended once or twice.
+    status = next(
+        d
+        for d in emitter._buffer.drain()
+        if d["metric"]["__name__"] == "training_run_status"
+    )
+    assert len(status["values"]) == 1
+
+
+def test_an_undeclared_name_is_refused_off_the_box_too() -> None:
+    # Checking only when there is an emitter is how a typo passes every laptop
+    # run and raises on the box, after submit already said it worked.
+    run = Run(None)
+
+    with pytest.raises(KeyError, match="training_perplexity"):
+        run.step(perplexity=1.0)
+
+    with pytest.raises(KeyError, match="training_nonsense"):
+        run.log_group("training_nonsense", {"a": 1.0})
+
+
+def test_the_runs_own_label_cannot_be_taken_from_under_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # It would relabel every sample away from the real run, and the supervisor
+    # keeps writing the true id, so the dashboard shows a live run with no
+    # training metrics and nothing says why.
+    in_a_job(monkeypatch)
+
+    with pytest.raises(ValueError, match="run_id"):
+        track(run_id="somebody-elses-run")
+
+
+def test_a_total_of_no_steps_is_refused_rather_than_ignored() -> None:
+    with pytest.raises(ValueError, match="total"):
+        Run(None, total=0)
+
+
+def test_tokens_that_count_backwards_are_refused() -> None:
+    with pytest.raises(ValueError, match="tokens_per_step"):
+        Run(None, tokens_per_step=-1000)
+
+
+def test_a_refused_argument_leaves_no_pump_behind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SPARKS_RUN_ID", "run-9")
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
+    before = threading.active_count()
+
+    with pytest.raises(ValueError, match="total"):
+        track(total=-1)
+
+    assert threading.active_count() == before
+
+
+def test_a_job_with_no_prometheus_url_says_so_out_loud(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A laptop run is quiet on purpose, but a run id with no url is a
+    # misconfigured box, and nothing else would ever mention it.
+    monkeypatch.setenv("SPARKS_RUN_ID", "run-9")
+    monkeypatch.delenv("SPARKS_PROMETHEUS_URL", raising=False)
+
+    run = track()
+
+    assert run._metrics is None
+    assert "SPARKS_PROMETHEUS_URL" in caplog.text

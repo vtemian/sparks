@@ -49,29 +49,19 @@ rather than refused, so `training_step` shows gaps. Report every N steps if that
 `run.log(...)` reports without advancing the step counter: an `eval_loss` at the end of an
 epoch is not a training step. `run.log_group(...)` is below.
 
-Off the box, `track` yields a run whose every call is a no-op, so the same script runs on a
-laptop **with no `is not None` guard around it**. Leaving the `with` block flushes and stops
+Off the box, `track` yields a run that reports nothing, so the same script runs on a laptop
+**with no `is not None` guard around it**. It still counts steps and still checks your metric
+names, so a typo fails on the laptop rather than surviving to the first step on the box. Leaving the `with` block flushes and stops
 the pump; an exception inside it propagates rather than being swallowed.
 
-Outside a container, when you own the run id, use `RunMetrics` directly:
-
-```python
-from sparks.emit import RunMetrics
-
-with RunMetrics(run_id="local-1", url="http://box:9090", info={"model": "helium-2b"}) as m:
-    m.log(step=1, loss=4.2)
-```
-
-The context manager records `crashed` if the loop raises. Every push is wrapped, so a
-metrics outage can never kill a training run.
-
-`info` is immutable metadata carried on the run's info metric. `labels` are dimensions on
-every sample: keep them few and low-cardinality.
+Extra keyword arguments are labels on every sample: keep them few and low-cardinality.
+`run_id` is not yours to set, and `track` refuses it rather than relabelling the run away from
+the one the supervisor is recording.
 
 ### The metric names are a closed set
 
 `run.step(loss=…)` writes `training_loss`: the key is the metric name minus its `training_`
-prefix, in `step`, `log` and `RunMetrics.log` alike. A name not declared in `sparks.metrics.METRICS` raises `KeyError` rather than being
+prefix, in `run.step` and `run.log` alike. A name not declared in `sparks.metrics.METRICS` raises `KeyError` rather than being
 silently dropped, because a metric no dashboard can query is worse than an error.
 
 Everything a training script may log:
@@ -135,7 +125,8 @@ class SparksCallback(TrainerCallback):
 ```
 
 `**kwargs` on `on_log` is load-bearing: Trainer passes the model, the tokenizer and whatever
-else that version felt like, and the set changes between releases.
+else that version felt like, and the set changes between releases. Build the run once: two
+`track` calls in one process are two writers on one series, which is the 400 above.
 
 **Map the framework's log keys to declared names explicitly**:
 

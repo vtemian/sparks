@@ -17,6 +17,8 @@ from sparks.series import Series
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+__all__ = ["Run", "RunMetrics", "track"]
+
 LOG = logging.getLogger("sparks")
 
 FLUSH_SECONDS = 5.0
@@ -26,6 +28,31 @@ RATE_WINDOW_STEPS = 20  # what "over the last window" means for the rates
 MARKS_FOR_A_RATE = 2  # a rate is an interval, and an interval needs two ends
 
 STALE_NAN = struct.unpack("<d", struct.pack("<Q", 0x7FF0000000000002))[0]
+
+
+def training_metric(key: str) -> str:
+    name = f"training_{key}"
+    if name not in METRICS:
+        raise KeyError(f"{name} is not declared in sparks.metrics.METRICS")
+
+    return name
+
+
+def check_run_shape(
+    total: int | None, tokens_per_step: int | None, window: int
+) -> None:
+    if total is not None and total < 1:
+        raise ValueError(f"total counts steps and cannot be {total}")
+
+    if tokens_per_step is not None and tokens_per_step < 1:
+        raise ValueError(
+            f"tokens_per_step counts tokens and cannot be {tokens_per_step}"
+        )
+
+    # maxlen=1 makes the newest mark the oldest one too, so every span is zero
+    # and no rate is ever reported.
+    if window < MARKS_FOR_A_RATE:
+        raise ValueError(f"window needs {MARKS_FOR_A_RATE} steps, not {window}")
 
 
 class RunMetrics:
@@ -68,9 +95,7 @@ class RunMetrics:
     def log(self, **values: float) -> None:
         now = time.time()
         for key, value in values.items():
-            name = f"training_{key}"
-            if name not in METRICS:
-                raise KeyError(f"{name} is not declared in sparks.metrics.METRICS")
+            name = training_metric(key)
             self._refuse_if_not_ours(name)
             self._sample(Series(name, self._labels), float(value), now)
 
@@ -227,26 +252,19 @@ class Run:
         window: int = RATE_WINDOW_STEPS,
         clock: "Callable[[], float]" = time.monotonic,
     ) -> None:
-        if total is not None and total < 0:
-            raise ValueError(f"total counts steps and cannot be {total}")
-
-        # maxlen=1 makes the newest mark the oldest one too, so every span is
-        # zero and no rate is ever reported.
-        if window < MARKS_FOR_A_RATE:
-            raise ValueError(f"window needs {MARKS_FOR_A_RATE} steps, not {window}")
-
-        self.metrics = metrics
+        check_run_shape(total, tokens_per_step, window)
+        self._metrics = metrics
         self.total = total
         self.tokens_per_step = tokens_per_step
         self.clock = clock
         self.count = 0
-        self.ended = False
-        self.warned = False
-        self.marks: deque[float] = deque(maxlen=window)
+        self._ended = False
+        self._warned = False
+        self._marks: deque[float] = deque(maxlen=window)
 
     def __enter__(self) -> Self:
-        if self.metrics is not None:
-            self.metrics.begin()
+        if self._metrics is not None:
+            self._metrics.begin()
 
         return self
 
@@ -256,56 +274,73 @@ class Run:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        self.end("crashed" if exc_type else "finished")
+        self._close("crashed" if exc_type else "finished")
 
-    def end(self, status: str = "finished") -> None:
-        self.ended = True
-        if self.metrics is not None:
-            self.metrics.end(status)
+    def end(self) -> None:
+        self._close("finished")
 
-    def warn_once(self) -> None:
-        if self.warned:
+    def _close(self, status: str) -> None:
+        if self._ended:
             return
 
-        self.warned = True
+        if self._metrics is not None:
+            self._metrics.end(status)
+
+        # Last, so a failed end leaves the run reporting rather than silent.
+        self._ended = True
+
+    def _warn_once(self) -> None:
+        if self._warned:
+            return
+
+        self._warned = True
         LOG.warning("sparks: this run already ended; later samples are dropped")
 
     def step(self, **values: float) -> None:
-        if self.ended:
-            self.warn_once()
+        if self._ended:
+            self._warn_once()
             return
 
         # Counted even with nowhere to send it, so a laptop run still walks the
         # same path the box does.
         self.count += 1
-        self.marks.append(self.clock())
+        self._marks.append(self.clock())
         self.log(**{**self.derived(), **values})
 
     def log(self, **values: float) -> None:
-        if self.ended:
-            self.warn_once()
+        if self._ended:
+            self._warn_once()
             return
 
-        if self.metrics is not None:
-            self.metrics.log(**values)
+        # Names are checked even with nowhere to send them. Checking only when
+        # an emitter exists is how a typo survives every laptop run and raises
+        # on the box, after submit already reported success.
+        for key in values:
+            training_metric(key)
+
+        if self._metrics is not None:
+            self._metrics.log(**values)
 
     def log_group(self, name: str, by_group: dict[str, float]) -> None:
-        if self.ended:
-            self.warn_once()
+        if self._ended:
+            self._warn_once()
             return
 
-        if self.metrics is not None:
-            self.metrics.log_group(name, by_group)
+        if name not in METRICS:
+            raise KeyError(f"{name} is not declared in sparks.metrics.METRICS")
+
+        if self._metrics is not None:
+            self._metrics.log_group(name, by_group)
 
     def derived(self) -> dict[str, float]:
         values = {"step": float(self.count)}
         rate = self.rate()
         if rate is not None:
             values["steps_per_sec"] = rate
-            if self.tokens_per_step:
+            if self.tokens_per_step is not None:
                 values["tokens_per_sec"] = rate * self.tokens_per_step
 
-        if not self.total:
+        if self.total is None:
             return values
 
         # Clamped: a run that overshoots its own estimate would otherwise
@@ -318,16 +353,16 @@ class Run:
         return values
 
     def rate(self) -> float | None:
-        if not self.marks:
+        if not self._marks:
             return None
 
         # One step spans zero, which is right: a rate needs two of them. So
         # does a clock that has not moved, and both land here.
-        span = self.marks[-1] - self.marks[0]
+        span = self._marks[-1] - self._marks[0]
         if span <= 0:
             return None
 
-        return (len(self.marks) - 1) / span
+        return (len(self._marks) - 1) / span
 
 
 def track(
@@ -336,14 +371,24 @@ def track(
     window: int = RATE_WINDOW_STEPS,
     **labels: str,
 ) -> Run:
+    if "run_id" in labels:
+        raise ValueError("run_id is the run's own and cannot be given as a label")
+
+    # Before the emitter, so a rejected argument leaves no pump thread behind.
+    check_run_shape(total, tokens_per_step, window)
     run_id = os.environ.get("SPARKS_RUN_ID")
-    url = os.environ.get("SPARKS_PROMETHEUS_URL")
+    url = (os.environ.get("SPARKS_PROMETHEUS_URL") or "").strip()
     metrics = None
     if run_id and url:
         # lifecycle=False: the supervisor owns the run record, and two writers
         # on one series is a 400 that rolls back the whole batch.
         metrics = RunMetrics(run_id, url, labels=labels, lifecycle=False)
+    elif run_id:
+        LOG.warning(
+            "sparks: SPARKS_RUN_ID is set but SPARKS_PROMETHEUS_URL is not, "
+            "so this run reports nothing"
+        )
     else:
-        LOG.debug("no run id or prometheus url in the environment; metrics are off")
+        LOG.debug("not inside a job: this run reports nothing")
 
     return Run(metrics, total=total, tokens_per_step=tokens_per_step, window=window)

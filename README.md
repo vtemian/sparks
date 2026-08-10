@@ -90,8 +90,9 @@ simply not emitted, never guessed. `epoch` is yours to pass; nothing derives it.
 reports without advancing the step counter, which is what an `eval_loss` at the end of an epoch
 wants.
 
-Off the box, `track` yields a run that does nothing, so the same script runs on your laptop with no
-guard around it. Every push is wrapped, so a metrics outage can never kill a training run.
+Off the box, `track` yields a run that reports nothing, so the same script runs on your laptop with
+no guard around it. It still checks your metric names there, so a typo fails locally rather than on
+the box. Every push is wrapped, so a metrics outage can never kill a training run.
 
 Metric names are a closed set declared in `sparks.metrics.METRICS`; `run.step(loss=…)` writes
 `training_loss`, and a name that does not exist raises rather than vanishing. A metric no dashboard

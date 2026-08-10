@@ -160,9 +160,14 @@ with track(total=epochs * len(loader), tokens_per_step=batch_size * BLOCK) as ru
 
 `track` picks up the run id and Prometheus URL the supervisor exported, so training code
 needs no arguments. Anywhere else it yields a run whose every call is a no-op, which is why
-**the call site carries no `is not None` guard** and the same script runs on a laptop.
+**the call site carries no `is not None` guard** and the same script runs on a laptop. It still
+counts steps and still checks metric names there, so a typo cannot survive a laptop run and
+then raise on the box. Reporting after the run has ended warns once and drops the sample.
 Keyword arguments other than `total`, `tokens_per_step` and `window` become labels on every
-sample, and no other name is reserved.
+sample, except `run_id`, which is refused: a label of that name would otherwise overwrite the
+run's own and every sample would be filed under a run that does not exist. `group` belongs to
+`log_group` and is overwritten there. A label name must be a valid identifier and must not
+start with `__`, or `track` raises.
 
 `run.step` counts the step and derives `step`, `progress`, `eta_seconds`, `steps_per_sec` and
 `tokens_per_sec`. `progress` is clamped to 1 and `eta_seconds` to 0, because a run that
@@ -180,26 +185,12 @@ end of an epoch wants. `run.log_group("training_learning_rate", {"lora": 2e-4, "
 reports a value that differs per parameter group, and takes the **full** metric name, not the
 short key.
 
-`track` is the only way training code gets an emitter. There was a second one, `from_env`,
-and it was deleted rather than kept alongside: two ways in means half the examples on the
-internet show the one with the `is not None` guard. A framework callback owns no loop, but the
-run `track` returns works without a `with` block, so hold it and call `run.end()` when the
-framework says training is over.
-
-Outside a job, when you own the run id, `RunMetrics` is the whole emitter:
-
-```python
-from sparks.emit import RunMetrics
-
-with RunMetrics(run_id=..., url="http://127.0.0.1:9090", info={"model": "helium-2b"}) as m:
-    m.log(step=1, loss=4.2)
-```
-
-The context manager records `crashed` if the loop raises. Every push is wrapped, so a
-metrics outage cannot kill a training run.
-
-`info` is immutable metadata carried on the run's info metric. `labels` are dimensions on
-every sample: keep them few and low-cardinality.
+`track` is the only way training code gets an emitter, and `RunMetrics` is the supervisor's,
+not yours: it defaults to owning the run's lifecycle, so a training script that builds one
+directly writes the same series the supervisor does and both batches die on a 400. A framework
+callback owns no loop, but the run `track` returns works without a `with` block, so hold it and
+call `run.end()` when the framework says training is over. Build it once: two `track` calls in
+one process are two writers on one series.
 
 Metric names must be declared in `sparks.metrics.METRICS`; `run.step(loss=…)` writes
 `training_loss`. An undeclared name raises rather than being silently dropped, because a
