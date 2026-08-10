@@ -29,6 +29,8 @@ SSH_TIMEOUT_SECONDS = 120.0
 
 PUSH_HINT = "Is the registry in insecure-registries and is SPARKS_HOST reachable?"
 
+TIMED_OUT = "the Docker daemon stopped sending progress"
+
 
 class ClientError(Exception): ...
 
@@ -67,7 +69,7 @@ def build(context: Path, tag: str) -> None:
     if not (context / "Dockerfile").is_file():
         raise ClientError(f"{context}/Dockerfile is missing")
     try:
-        docker_client = dock.client()
+        docker_client = dock.client(timeout=dock.STREAM_TIMEOUT_SECONDS)
         stream = docker_client.api.build(
             path=str(context),
             tag=tag,
@@ -81,12 +83,14 @@ def build(context: Path, tag: str) -> None:
             raise_if_docker_failed(chunk, f"docker build failed for {tag}")
     except dock.DockerException as exc:
         raise ClientError(f"docker build failed for {tag}: {exc}") from exc
+    except dock.ReadTimeoutError as exc:
+        raise ClientError(f"{TIMED_OUT} while building {tag}") from exc
 
 
 def push(tag: str) -> None:
     repository, image_tag = split_tag(tag)
     try:
-        docker_client = dock.client()
+        docker_client = dock.client(timeout=dock.STREAM_TIMEOUT_SECONDS)
         for line in docker_client.images.push(
             repository, tag=image_tag, stream=True, decode=True
         ):
@@ -96,6 +100,8 @@ def push(tag: str) -> None:
                 print(status)
     except dock.DockerException as exc:
         raise ClientError(f"docker push failed for {tag}. {PUSH_HINT}") from exc
+    except dock.ReadTimeoutError as exc:
+        raise ClientError(f"{TIMED_OUT} while pushing {tag}") from exc
 
 
 def raise_if_docker_failed(chunk: dict[str, Any], message: str) -> None:

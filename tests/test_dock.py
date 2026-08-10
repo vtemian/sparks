@@ -10,7 +10,14 @@ def test_client_uses_from_env() -> None:
     fake = MagicMock(name="DockerClient")
     with patch("docker.from_env", return_value=fake) as from_env:
         assert dock.client() is fake
-        from_env.assert_called_once_with()
+        from_env.assert_called_once_with(timeout=dock.DEFAULT_TIMEOUT_SECONDS)
+
+
+def test_a_caller_streaming_an_image_can_ask_for_a_longer_socket_timeout() -> None:
+    fake = MagicMock(name="DockerClient")
+    with patch("docker.from_env", return_value=fake) as from_env:
+        assert dock.client(timeout=dock.STREAM_TIMEOUT_SECONDS) is fake
+        from_env.assert_called_once_with(timeout=dock.STREAM_TIMEOUT_SECONDS)
 
 
 def test_remove_quietly_force_removes() -> None:

@@ -21,6 +21,9 @@ dependencies = [
     # is no GPU and a box may have no monitoring at all.
     "nvidia-ml-py>=12.560",
     "docker>=7.2.0",
+    # Imported directly: a push that outlives the socket timeout raises
+    # urllib3's ReadTimeoutError, which is not a DockerException.
+    "urllib3>=2.0",
 ]
 
 [project.urls]

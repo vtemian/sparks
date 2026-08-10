@@ -5,8 +5,9 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from urllib3.connectionpool import HTTPConnectionPool
 
-from sparks import spool
+from sparks import dock, spool
 from sparks.client import remote as client
 from sparks.fire import control
 
@@ -403,17 +404,50 @@ class TestBuildAndPush:
     ) -> None:
         fake_client = MagicMock()
         fake_client.api.build.return_value = iter([{"stream": "Step 1\n"}])
-        monkeypatch.setattr("sparks.dock.client", lambda: fake_client)
+        monkeypatch.setattr("sparks.dock.client", lambda **kwargs: fake_client)
         client.build(project, "spark.local:5000/u/n:r")
         fake_client.api.build.assert_called_once()
         kwargs = fake_client.api.build.call_args.kwargs
         assert kwargs["path"] == str(project)
         assert kwargs["tag"] == "spark.local:5000/u/n:r"
 
+    def test_a_push_that_outlives_the_socket_timeout_says_so(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_client = MagicMock()
+
+        def stall(*args: Any, **kwargs: Any) -> None:
+            raise dock.ReadTimeoutError(
+                HTTPConnectionPool("localhost"), "unix://", "read timed out"
+            )
+
+        fake_client.images.push.side_effect = stall
+        monkeypatch.setattr("sparks.dock.client", lambda **kwargs: fake_client)
+
+        with pytest.raises(client.ClientError, match="stopped sending progress"):
+            client.push("spark.local:5000/u/n:r")
+
+    def test_push_asks_for_a_client_that_outlasts_a_multi_gigabyte_layer(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        asked: list[int] = []
+        fake_client = MagicMock()
+        fake_client.images.push.return_value = iter([{"status": "Pushed"}])
+
+        def record(timeout: int) -> MagicMock:
+            asked.append(timeout)
+            return fake_client
+
+        monkeypatch.setattr("sparks.dock.client", record)
+        client.push("spark.local:5000/u/n:r")
+
+        assert asked == [dock.STREAM_TIMEOUT_SECONDS]
+        assert dock.STREAM_TIMEOUT_SECONDS > dock.DEFAULT_TIMEOUT_SECONDS
+
     def test_push_failure_is_helpful(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake_client = MagicMock()
         fake_client.images.push.return_value = iter([{"error": "denied"}])
-        monkeypatch.setattr("sparks.dock.client", lambda: fake_client)
+        monkeypatch.setattr("sparks.dock.client", lambda **kwargs: fake_client)
         with pytest.raises(client.ClientError, match="insecure-registries"):
             client.push("spark.local:5000/u/n:r")
 
@@ -485,7 +519,7 @@ class TestSubmitRemote:
                 return "/q/job-1"
             return "job-1"
 
-        monkeypatch.setattr("sparks.dock.client", lambda: fake_client)
+        monkeypatch.setattr("sparks.dock.client", lambda **kwargs: fake_client)
         monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
         monkeypatch.setattr(client, "capture", fake_capture)
         monkeypatch.setattr(client, "local_user", lambda: "rex")
@@ -550,7 +584,7 @@ class TestSubmitRemote:
             fetched.append(host)
             return "http://spark.local:5000"
 
-        monkeypatch.setattr("sparks.dock.client", lambda: fake_client)
+        monkeypatch.setattr("sparks.dock.client", lambda **kwargs: fake_client)
         monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
         monkeypatch.setattr(client, "capture", fake_capture)
         monkeypatch.setattr(client, "fetch_registry_url", fake_fetch)
