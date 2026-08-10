@@ -1,4 +1,4 @@
-.PHONY: sync fmt lint typecheck test dashboard check live on-box harness-up harness-down deploy deploy-preflight sparks
+.PHONY: install sync fmt lint typecheck test dashboard check live on-box harness-up harness-down deploy deploy-preflight sparks
 
 # Your box's values, untracked, same split sparkup uses between tracked
 # defaults and an untracked host file. Copy local.mk.example to local.mk.
@@ -23,6 +23,13 @@ SPARKS_SHARED_DIR ?= /srv/spark
 # not know about.
 SPARKS_VENV ?=
 
+
+# The one command a new user runs: install the client, then ask the box which
+# registry it publishes and let this machine's Docker push to it. Docker still
+# has to be restarted afterwards, which is why setup prints the command rather
+# than running it: a restart kills whatever containers you have running.
+install: sync
+	uv run sparks setup
 
 sync:
 	uv sync

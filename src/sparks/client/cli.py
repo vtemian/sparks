@@ -5,7 +5,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from sparks.client import remote
+from sparks.client import local, remote
 
 LOG = logging.getLogger("sparks")
 
@@ -24,6 +24,10 @@ def submit(args: argparse.Namespace, _argv: list[str]) -> int:
         )
     )
     return 0
+
+
+def setup(args: argparse.Namespace, _argv: list[str]) -> int:
+    return local.trust_box_registry(args.host)
 
 
 def queue(args: argparse.Namespace, _argv: list[str]) -> int:
@@ -66,6 +70,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command_name", required=True)
     add_submit(subparsers, host)
     add_queue(subparsers, host)
+    setup_parser = subparsers.add_parser(
+        "setup",
+        parents=[host],
+        help="let this machine's Docker push to the box registry",
+    )
+    setup_parser.set_defaults(func=setup)
     for verb, helping, func in (
         ("cancel", "drop a job that has not started yet", cancel),
         ("abort", "stop a job, whether it has started or not", abort),

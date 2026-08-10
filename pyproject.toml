@@ -120,6 +120,7 @@ max-statements = 30
 # The CLI surface prints; that is its output contract.
 "src/sparks/client/cli.py" = ["T201"]
 "src/sparks/client/remote.py" = ["T201"]
+"src/sparks/client/local.py" = ["T201"]
 "src/sparks/fire/cli.py" = ["T201"]
 "src/sparks/fire/ctl.py" = ["T201"]
 "src/sparks/fire/supervise.py" = ["T201"]

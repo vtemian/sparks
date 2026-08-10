@@ -66,6 +66,26 @@ class TestTagFor:
             == "spark.local:5000/u/n:r"
         )
 
+    def test_tag_for_keeps_the_host_of_a_registry_written_without_a_scheme(
+        self,
+    ) -> None:
+        assert (
+            client.tag_for("spark.local:5000", "u", "n", "r")
+            == "spark.local:5000/u/n:r"
+        )
+
+
+class TestRegistryNetloc:
+    def test_it_takes_the_host_and_port_out_of_a_registry_url(self) -> None:
+        assert client.registry_netloc("http://spark.local:5000") == "spark.local:5000"
+
+    def test_it_accepts_a_registry_written_without_a_scheme(self) -> None:
+        assert client.registry_netloc("spark.local:5000") == "spark.local:5000"
+
+    def test_it_refuses_a_registry_url_that_names_no_host(self) -> None:
+        with pytest.raises(client.ClientError, match="names no host"):
+            client.registry_netloc("http://")
+
 
 class TestSplitTag:
     def test_split_tag_defaults_latest_without_splitting_the_port_colon(self) -> None:

@@ -39,13 +39,20 @@ class Submitted:
     path: str
 
 
-def tag_for(registry_url: str, user: str, name: str, ref: str) -> str:
-    parsed = urlparse(registry_url)
-    host = parsed.netloc or parsed.path
+def registry_netloc(registry_url: str) -> str:
+    # A scheme-less "box:5000" parses as scheme "box" with path "5000", so read
+    # netloc only when the URL really carried a scheme.
+    raw = registry_url.strip()
+    host = urlparse(raw).netloc if "//" in raw else raw
     host = host.rstrip("/")
     if not host:
-        raise ClientError(f"registry_url {registry_url!r} has no host")
-    return f"{host}/{user}/{name}:{ref}"
+        raise ClientError(f"registry_url {registry_url!r} names no host")
+
+    return host
+
+
+def tag_for(registry_url: str, user: str, name: str, ref: str) -> str:
+    return f"{registry_netloc(registry_url)}/{user}/{name}:{ref}"
 
 
 def split_tag(tag: str) -> tuple[str, str]:
