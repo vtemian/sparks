@@ -23,6 +23,8 @@ FLUSH_SECONDS = 5.0
 
 RATE_WINDOW_STEPS = 20  # what "over the last window" means for the rates
 
+MARKS_FOR_A_RATE = 2  # a rate is an interval, and an interval needs two ends
+
 STALE_NAN = struct.unpack("<d", struct.pack("<Q", 0x7FF0000000000002))[0]
 
 
@@ -234,14 +236,27 @@ class Run:
         window: int = RATE_WINDOW_STEPS,
         clock: "Callable[[], float]" = time.monotonic,
     ) -> None:
+        if total is not None and total < 0:
+            raise ValueError(f"total counts steps and cannot be {total}")
+
+        # maxlen=1 makes the newest mark the oldest one too, so every span is
+        # zero and no rate is ever reported.
+        if window < MARKS_FOR_A_RATE:
+            raise ValueError(f"window needs {MARKS_FOR_A_RATE} steps, not {window}")
+
         self.metrics = metrics
         self.total = total
         self.tokens_per_step = tokens_per_step
         self.clock = clock
         self.count = 0
+        self.ended = False
+        self.warned = False
         self.marks: deque[float] = deque(maxlen=window)
 
     def __enter__(self) -> Self:
+        if self.metrics is not None:
+            self.metrics.begin()
+
         return self
 
     def __exit__(
@@ -250,25 +265,44 @@ class Run:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        self.end()
+        self.end("crashed" if exc_type else "finished")
 
-    def end(self) -> None:
+    def end(self, status: str = "finished") -> None:
+        self.ended = True
         if self.metrics is not None:
-            self.metrics.end()
+            self.metrics.end(status)
 
-    def step(self, **values: float) -> None:
-        self.count += 1
-        self.marks.append(self.clock())
-        if self.metrics is None:
+    def warn_once(self) -> None:
+        if self.warned:
             return
 
-        self.metrics.log(**{**self.derived(), **values})
+        self.warned = True
+        LOG.warning("sparks: this run already ended; later samples are dropped")
+
+    def step(self, **values: float) -> None:
+        if self.ended:
+            self.warn_once()
+            return
+
+        # Counted even with nowhere to send it, so a laptop run still walks the
+        # same path the box does.
+        self.count += 1
+        self.marks.append(self.clock())
+        self.log(**{**self.derived(), **values})
 
     def log(self, **values: float) -> None:
+        if self.ended:
+            self.warn_once()
+            return
+
         if self.metrics is not None:
             self.metrics.log(**values)
 
     def log_group(self, name: str, by_group: dict[str, float]) -> None:
+        if self.ended:
+            self.warn_once()
+            return
+
         if self.metrics is not None:
             self.metrics.log_group(name, by_group)
 
@@ -277,15 +311,18 @@ class Run:
         rate = self.rate()
         if rate is not None:
             values["steps_per_sec"] = rate
-            if self.tokens_per_step is not None:
+            if self.tokens_per_step:
                 values["tokens_per_sec"] = rate * self.tokens_per_step
 
         if not self.total:
             return values
 
-        values["progress"] = self.count / self.total
-        if rate:
-            values["eta_seconds"] = (self.total - self.count) / rate
+        # Clamped: a run that overshoots its own estimate would otherwise
+        # report 167% complete and a negative eta on panels bounded at 0-1.
+        remaining = max(self.total - self.count, 0)
+        values["progress"] = min(self.count / self.total, 1.0)
+        if rate is not None:
+            values["eta_seconds"] = remaining / rate
 
         return values
 
@@ -305,12 +342,16 @@ class Run:
 def track(
     total: int | None = None,
     tokens_per_step: int | None = None,
+    window: int = RATE_WINDOW_STEPS,
     **labels: str,
 ) -> Run:
+    if "autostart" in labels:
+        raise ValueError("autostart is from_env's argument and cannot be a label")
+
     # A label literally named autostart would bind to from_env's own argument
     # instead of becoming a label, which is why mypy cannot prove this call.
     metrics = from_env(**labels)  # type: ignore[arg-type]
     if metrics is None:
         LOG.debug("no run id or prometheus url in the environment; metrics are off")
 
-    return Run(metrics, total=total, tokens_per_step=tokens_per_step)
+    return Run(metrics, total=total, tokens_per_step=tokens_per_step, window=window)

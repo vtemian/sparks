@@ -14,21 +14,44 @@ running job.
 
 ## Instrument the loop
 
-Inside a job container, take the emitter from the environment:
+Wrap the loop in `track`, and report one step at a time:
 
 ```python
-from sparks.emit import from_env
+from sparks.emit import track
 
-metrics = from_env(arm="lora")          # extra kwargs become labels on every sample
-for step, batch in enumerate(batches):
-    loss = train_one(batch)
-    if metrics is not None:
-        metrics.log(step=step, loss=float(loss))
+with track(total=epochs * len(loader), tokens_per_step=batch_size * BLOCK, arm="lora") as run:
+    for batch in loader:
+        loss = train_one(batch)
+        run.step(loss=float(loss))
 ```
 
-`from_env` returns **None** anywhere but inside a job container. It reads `SPARKS_RUN_ID`
-and `SPARKS_PROMETHEUS_URL`, which only the supervisor sets, so `from_env().log(...)` raises
-`AttributeError` the first time anyone runs the script on a laptop. Guard it every time.
+Extra keyword arguments to `track` become labels on every sample.
+
+`run.step` counts the step and derives `step`, `progress`, `eta_seconds`, `steps_per_sec` and
+`tokens_per_sec` from it. **A value you pass wins over the derived one**, so
+`run.step(step=global_step)` reports your own numbering.
+
+What `track` was not given is not emitted, rather than guessed:
+
+- no `total`, no `progress` and no `eta_seconds`. A guessed denominator draws a progress bar
+  that lies, which is worse than an empty panel.
+- no `tokens_per_step`, no `tokens_per_sec`.
+- `epoch` is never derived. Pass it yourself: `run.step(loss=…, epoch=epoch + 1)`.
+
+Rates are measured over a sliding window of the most recent steps, so **the first step reports
+no rate at all**: a rate needs two of them. One missing point at the start of a run is not a
+broken emitter.
+
+Two steps landing in the same millisecond keep only the first: a series carries one value per
+millisecond and the buffer drops the rest. A loop running faster than 1kHz is downsampled
+rather than refused, so `training_step` shows gaps. Report every N steps if that matters.
+
+`run.log(...)` reports without advancing the step counter: an `eval_loss` at the end of an
+epoch is not a training step. `run.log_group(...)` is below.
+
+Off the box, `track` yields a run whose every call is a no-op, so the same script runs on a
+laptop **with no `is not None` guard around it**. Leaving the `with` block flushes and stops
+the pump; an exception inside it propagates rather than being swallowed.
 
 Outside a container, when you own the run id, use `RunMetrics` directly:
 
@@ -47,8 +70,8 @@ every sample: keep them few and low-cardinality.
 
 ### The metric names are a closed set
 
-`m.log(loss=…)` writes `training_loss` — the key is the metric name minus its `training_`
-prefix. A name not declared in `sparks.metrics.METRICS` raises `KeyError` rather than being
+`run.step(loss=…)` writes `training_loss`: the key is the metric name minus its `training_`
+prefix, in `step`, `log` and `RunMetrics.log` alike. A name not declared in `sparks.metrics.METRICS` raises `KeyError` rather than being
 silently dropped, because a metric no dashboard can query is worse than an error.
 
 Everything a training script may log:
@@ -72,7 +95,7 @@ Anything else in `METRICS` belongs to the box (`sparks_*`) or to the supervisor
 ### Values that differ per parameter group
 
 ```python
-m.log_group("training_learning_rate", {"lora": 2e-4, "tables": 2e-5})
+run.log_group("training_learning_rate", {"lora": 2e-4, "tables": 2e-5})
 ```
 
 Full metric name here, not the short key. The label is always `group`, whatever the metric.
@@ -82,20 +105,39 @@ layer norms beneath it train at learning rates an order of magnitude apart, and 
 
 ### What a child emitter must never write
 
-The supervisor owns the run's lifecycle. A `from_env` emitter refuses `training_run_info`,
+The supervisor owns the run's lifecycle. A child emitter, which is what both `track` and
+`from_env` give you inside a job, refuses `training_run_info`,
 `training_run_start_timestamp_seconds`, `training_run_heartbeat_timestamp_seconds`,
 `training_run_end_timestamp_seconds`, `training_run_status` and `training_run_active`. Two
 writers on one series is a 400 from the remote-write receiver that rolls back the whole
 batch — losing your metrics too, not just the duplicated one.
 
-Calling `metrics.end()` on a `from_env` emitter flushes and stops the pump. Its `status`
-argument is **ignored**: the supervisor decides the status from how the process exited.
+Leaving the `track` block, or calling `end()` on a `from_env` emitter, flushes and stops the
+pump. `end`'s `status` argument is **ignored**: the supervisor decides the status from how the
+process exited.
 
 ### Bridging a framework
 
 sparks is deliberately not a `TrainerCallback` — it is a plain object a loop calls, which
-works in both worlds. To use it under a framework, write the adapter in your own code and
-**map the framework's log keys to declared names explicitly**:
+works in both worlds. A callback owns no loop, so there is nothing for `track` to wrap: take
+the emitter from the environment instead.
+
+```python
+from sparks.emit import from_env
+
+metrics = from_env(arm="lora")          # extra kwargs become labels on every sample
+...
+if metrics is not None:
+    metrics.log(**values)
+```
+
+`from_env` returns **None** anywhere but inside a job container. It reads `SPARKS_RUN_ID` and
+`SPARKS_PROMETHEUS_URL`, which only the supervisor sets, so `from_env().log(...)` raises
+`AttributeError` the first time anyone runs the script on a laptop. Guard it. Sparing you that
+guard is most of what `track` is for, so reach for `from_env` only where there is no loop to
+wrap.
+
+Whichever way in, **map the framework's log keys to declared names explicitly**:
 
 ```python
 LOGGED = {"loss": "loss", "eval_loss": "eval_loss", "learning_rate": "learning_rate"}
@@ -110,7 +152,8 @@ values = {
 Passing the framework's dict straight through raises on the first key sparks has never heard
 of, and those keys vary by framework version and by task. A framework also tends to report
 neither pace nor throughput, so `progress`, `eta_seconds` and `tokens_per_sec` have to be
-derived in the adapter — it is the only place that knows how many tokens a step consumed.
+derived in the adapter, which is the only place that knows how many tokens a step consumed.
+That derivation is exactly what `run.step` does for you when you own the loop.
 
 ## Write the Dockerfile
 
@@ -127,7 +170,7 @@ reported success.
   crash rather than a permissions problem.
 - **`/data` is read-only.** That is where `--data` lands, and `$SPARKS_DATA` names it. A
   script with a laptop path hard-coded fails on the box.
-- **sparks must be installed in the image**, or `from sparks.emit import from_env` fails at
+- **sparks must be installed in the image**, or `from sparks.emit import track` fails at
   import. A slim base has no `git`, so `pip install git+https://...` fails there; install the
   tarball instead, and pin a tag rather than a branch in anything you care about.
 - **Bake model weights in.** A container that reaches Hugging Face on every start turns an
@@ -200,14 +243,13 @@ is to prove the path — it imports sparks, reads `/data`, pushes a few points, 
 
 ```python
 import os, pathlib, time
-from sparks.emit import from_env
+from sparks.emit import track
 
 print("data:", sorted(pathlib.Path(os.environ["SPARKS_DATA"]).iterdir()))
-metrics = from_env()
-for step in range(20):
-    if metrics is not None:
-        metrics.log(step=step, loss=1.0 / (step + 1))
-    time.sleep(0.5)
+with track(total=20) as run:
+    for step in range(20):
+        run.step(loss=1.0 / (step + 1))
+        time.sleep(0.5)
 ```
 
 ```sh

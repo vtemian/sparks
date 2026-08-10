@@ -1,4 +1,5 @@
 import struct
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -281,7 +282,7 @@ def test_track_inside_a_job_logs_through_a_child_emitter(
     assert drained[0]["metric"]["arm"] == "lora"
 
 
-def ticking(*times: float) -> Any:
+def ticking(*times: float) -> Callable[[], float]:
     values = iter(times)
     return lambda: next(values)
 
@@ -374,7 +375,9 @@ def test_the_window_forgets_steps_older_than_itself() -> None:
     run.step()
     run.step()
 
-    assert run.marks[0] == 2.0
+    # One step in the eight seconds the window still remembers. Averaging over
+    # the whole run instead would call it 0.22, hiding the stall.
+    assert run.rate() == 0.125
 
 
 def test_leaving_the_block_stops_the_pump(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -402,3 +405,67 @@ def test_an_exception_leaves_the_block_without_being_swallowed(
         raise ValueError("boom")
 
     assert run.count == 0
+
+
+def test_eta_falls_as_the_run_advances() -> None:
+    # Two steps a half-second apart is two per second, and eight of ten steps
+    # remain, so four seconds.
+    run = Run(None, total=10, clock=ticking(0.0, 0.5))
+
+    run.step()
+    run.step()
+
+    assert run.derived()["eta_seconds"] == 4.0
+
+
+def test_overrunning_the_total_does_not_report_more_than_all_of_it() -> None:
+    # training_progress is declared 0-1 and the panel is a percentunit with a
+    # max of 1, so an overrun renders as 167% complete and a negative eta.
+    run = Run(None, total=3, clock=ticking(0.0, 1.0, 2.0, 3.0, 4.0))
+    for _ in range(5):
+        run.step()
+
+    derived = run.derived()
+
+    assert derived["progress"] == 1.0
+    assert derived["eta_seconds"] == 0.0
+
+
+def test_a_total_that_counts_backwards_is_refused() -> None:
+    with pytest.raises(ValueError, match="total"):
+        Run(None, total=-5)
+
+
+def test_a_window_too_small_to_hold_an_interval_is_refused() -> None:
+    # deque(maxlen=1) makes marks[0] and marks[-1] the same sample, so every
+    # rate silently stays None for the life of the run.
+    with pytest.raises(ValueError, match="window"):
+        Run(None, window=1)
+
+
+def test_a_label_named_autostart_is_refused_rather_than_disabling_the_pump(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    in_a_job(monkeypatch)
+
+    with pytest.raises(ValueError, match="autostart"):
+        track(autostart="no")
+
+
+def test_reporting_after_the_run_ended_says_so_rather_than_vanishing(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Nothing drains the buffer once the pump is stopped, and the whole point
+    # of track is that the call site carries no guard, so a stray log after the
+    # block is an easy mistake to make and an invisible one to debug.
+    in_a_job(monkeypatch)
+    emitter = from_env(autostart=False)
+    assert emitter is not None
+    run = Run(emitter)
+    run.end()
+
+    run.step(loss=1.0)
+
+    assert "already ended" in caplog.text
+    assert emitter._buffer.drain() == []
