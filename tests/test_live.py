@@ -180,11 +180,9 @@ def test_a_child_that_emits_lands_alongside_the_supervisor_lifecycle(
         sys.executable,
         "-c",
         "import time\n"
-        "from sparks.emit import from_env\n"
-        "m = from_env(arm='real')\n"
-        "assert m is not None\n"
-        "with m:\n"
-        "    m.log(loss=0.25)\n"
+        "from sparks.emit import track\n"
+        "with track(arm='real') as run:\n"
+        "    run.log(loss=0.25)\n"
         "    time.sleep(0.5)\n",
     ]
     result = launcher.launch(

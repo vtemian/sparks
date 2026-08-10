@@ -162,8 +162,7 @@ with track(total=epochs * len(loader), tokens_per_step=batch_size * BLOCK) as ru
 needs no arguments. Anywhere else it yields a run whose every call is a no-op, which is why
 **the call site carries no `is not None` guard** and the same script runs on a laptop.
 Keyword arguments other than `total`, `tokens_per_step` and `window` become labels on every
-sample. A label named `autostart` would bind to `from_env`'s own argument and silently stop the
-pump, so it is refused rather than accepted.
+sample, and no other name is reserved.
 
 `run.step` counts the step and derives `step`, `progress`, `eta_seconds`, `steps_per_sec` and
 `tokens_per_sec`. `progress` is clamped to 1 and `eta_seconds` to 0, because a run that
@@ -181,10 +180,11 @@ end of an epoch wants. `run.log_group("training_learning_rate", {"lora": 2e-4, "
 reports a value that differs per parameter group, and takes the **full** metric name, not the
 short key.
 
-`sparks.emit.from_env` is what `track` is built on: it returns the child emitter, or `None`
-off the box. It is the escape hatch for a framework callback, which owns no loop and so has
-nothing to wrap; there it really can be `None`, so guard it. Anywhere there is a loop, use
-`track`.
+`track` is the only way training code gets an emitter. There was a second one, `from_env`,
+and it was deleted rather than kept alongside: two ways in means half the examples on the
+internet show the one with the `is not None` guard. A framework callback owns no loop, but the
+run `track` returns works without a `with` block, so hold it and call `run.end()` when the
+framework says training is over.
 
 Outside a job, when you own the run id, `RunMetrics` is the whole emitter:
 

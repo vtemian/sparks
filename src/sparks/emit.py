@@ -218,15 +218,6 @@ class RunMetrics:
         ]
 
 
-def from_env(autostart: bool = True, **labels: str) -> RunMetrics | None:
-    run_id = os.environ.get("SPARKS_RUN_ID")
-    url = os.environ.get("SPARKS_PROMETHEUS_URL")
-    if not run_id or not url:
-        return None
-
-    return RunMetrics(run_id, url, labels=labels, autostart=autostart, lifecycle=False)
-
-
 class Run:
     def __init__(
         self,
@@ -345,13 +336,14 @@ def track(
     window: int = RATE_WINDOW_STEPS,
     **labels: str,
 ) -> Run:
-    if "autostart" in labels:
-        raise ValueError("autostart is from_env's argument and cannot be a label")
-
-    # A label literally named autostart would bind to from_env's own argument
-    # instead of becoming a label, which is why mypy cannot prove this call.
-    metrics = from_env(**labels)  # type: ignore[arg-type]
-    if metrics is None:
+    run_id = os.environ.get("SPARKS_RUN_ID")
+    url = os.environ.get("SPARKS_PROMETHEUS_URL")
+    metrics = None
+    if run_id and url:
+        # lifecycle=False: the supervisor owns the run record, and two writers
+        # on one series is a 400 that rolls back the whole batch.
+        metrics = RunMetrics(run_id, url, labels=labels, lifecycle=False)
+    else:
         LOG.debug("no run id or prometheus url in the environment; metrics are off")
 
     return Run(metrics, total=total, tokens_per_step=tokens_per_step, window=window)

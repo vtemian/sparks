@@ -4,13 +4,20 @@ from typing import Any
 
 import pytest
 
-from sparks.emit import Run, RunMetrics, from_env, track
+from sparks.emit import Run, RunMetrics, track
 from sparks.metrics import LIFECYCLE
 from sparks.series import InvalidLabelError
 
 
 def names(drained: list[dict[str, Any]]) -> set[str]:
     return {d["metric"]["__name__"] for d in drained}
+
+
+def child(**kw: Any) -> RunMetrics:
+    # What track builds inside a job, minus the pump thread.
+    return RunMetrics(
+        run_id="run-9", url="http://unused", autostart=False, lifecycle=False, **kw
+    )
 
 
 def make(**kw: Any) -> RunMetrics:
@@ -182,24 +189,31 @@ def test_a_child_emitter_writes_no_lifecycle_series() -> None:
     assert not written & LIFECYCLE
 
 
-def test_from_env_is_a_no_op_outside_sparks_run(monkeypatch: Any) -> None:
+def test_track_outside_a_job_reaches_for_no_emitter_at_all(monkeypatch: Any) -> None:
     # The same training script must still run standalone without branching.
     monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
     monkeypatch.delenv("SPARKS_PROMETHEUS_URL", raising=False)
-    assert from_env() is None
+
+    assert track().metrics is None
 
 
-def test_from_env_builds_a_child_emitter(monkeypatch: Any) -> None:
+def test_track_inside_a_job_builds_a_child_carrying_its_labels(
+    monkeypatch: Any,
+) -> None:
     monkeypatch.setenv("SPARKS_RUN_ID", "run-7")
-    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:9090")
-    m = from_env(arm="real", autostart=False)
-    assert m is not None
-    assert m.run_id == "run-7"
-    m.log(loss=1.0)
-    sample = m._buffer.drain()[0]
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
+    run = track(arm="real")
+
+    assert run.metrics is not None
+    assert run.metrics.run_id == "run-7"
+
+    run.step(loss=1.0)
+    sample = run.metrics._buffer.drain()[0]
     assert sample["metric"]["arm"] == "real"
-    m.begin()
-    assert m._buffer.drain() == []  # still no lifecycle series
+
+    # Still a child: entering the block writes no lifecycle series.
+    with run:
+        assert run.metrics._buffer.drain() == []
 
 
 def test_a_child_cannot_write_a_supervisor_series() -> None:
@@ -271,8 +285,7 @@ def test_track_inside_a_job_logs_through_a_child_emitter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     in_a_job(monkeypatch)
-    emitter = from_env(autostart=False, arm="lora")
-    assert emitter is not None
+    emitter = child(labels={"arm": "lora"})
     run = Run(emitter)
 
     run.step(loss=0.25)
@@ -291,8 +304,7 @@ def test_a_tracked_step_derives_progress_from_the_total(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     in_a_job(monkeypatch)
-    emitter = from_env(autostart=False)
-    assert emitter is not None
+    emitter = child()
     run = Run(emitter, total=4)
 
     run.step(loss=1.0)
@@ -310,8 +322,7 @@ def test_without_a_total_progress_is_absent_rather_than_wrong(
     # A guessed denominator renders a progress bar that lies. Emitting nothing
     # is the honest failure.
     in_a_job(monkeypatch)
-    emitter = from_env(autostart=False)
-    assert emitter is not None
+    emitter = child()
     run = Run(emitter)
 
     run.step(loss=1.0)
@@ -325,8 +336,7 @@ def test_a_value_you_pass_wins_over_the_one_track_derived(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     in_a_job(monkeypatch)
-    emitter = from_env(autostart=False)
-    assert emitter is not None
+    emitter = child()
     run = Run(emitter, total=4)
 
     run.step(step=99.0)
@@ -443,13 +453,21 @@ def test_a_window_too_small_to_hold_an_interval_is_refused() -> None:
         Run(None, window=1)
 
 
-def test_a_label_named_autostart_is_refused_rather_than_disabling_the_pump(
+def test_no_keyword_is_reserved_out_from_under_a_label(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    in_a_job(monkeypatch)
+    # track used to forward labels to from_env, so a label named autostart
+    # bound to its argument and silently stopped the pump. track reads the
+    # environment itself now, and every keyword it does not name is a label.
+    monkeypatch.setenv("SPARKS_RUN_ID", "run-9")
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
+    run = track(autostart="no")
 
-    with pytest.raises(ValueError, match="autostart"):
-        track(autostart="no")
+    assert run.metrics is not None
+    assert run.metrics._thread is not None
+    run.step(loss=1.0)
+
+    assert run.metrics._buffer.drain()[0]["metric"]["autostart"] == "no"
 
 
 def test_reporting_after_the_run_ended_says_so_rather_than_vanishing(
@@ -460,8 +478,7 @@ def test_reporting_after_the_run_ended_says_so_rather_than_vanishing(
     # of track is that the call site carries no guard, so a stray log after the
     # block is an easy mistake to make and an invisible one to debug.
     in_a_job(monkeypatch)
-    emitter = from_env(autostart=False)
-    assert emitter is not None
+    emitter = child()
     run = Run(emitter)
     run.end()
 

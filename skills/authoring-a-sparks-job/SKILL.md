@@ -105,39 +105,39 @@ layer norms beneath it train at learning rates an order of magnitude apart, and 
 
 ### What a child emitter must never write
 
-The supervisor owns the run's lifecycle. A child emitter, which is what both `track` and
-`from_env` give you inside a job, refuses `training_run_info`,
+The supervisor owns the run's lifecycle. The child emitter `track` gives you inside a job
+refuses `training_run_info`,
 `training_run_start_timestamp_seconds`, `training_run_heartbeat_timestamp_seconds`,
 `training_run_end_timestamp_seconds`, `training_run_status` and `training_run_active`. Two
 writers on one series is a 400 from the remote-write receiver that rolls back the whole
 batch — losing your metrics too, not just the duplicated one.
 
-Leaving the `track` block, or calling `end()` on a `from_env` emitter, flushes and stops the
-pump. `end`'s `status` argument is **ignored**: the supervisor decides the status from how the
-process exited.
+Leaving the `track` block, or calling `run.end()` yourself, flushes and stops the pump. The
+status is **not yours to set**: the supervisor decides it from how the process exited.
 
 ### Bridging a framework
 
 sparks is deliberately not a `TrainerCallback` — it is a plain object a loop calls, which
-works in both worlds. A callback owns no loop, so there is nothing for `track` to wrap: take
-the emitter from the environment instead.
+works in both worlds. A callback owns no loop, so there is nothing for `track` to wrap, but the
+run it returns does not need a `with` block: hold it, report through it, and end it when the
+framework says training is over.
 
 ```python
-from sparks.emit import from_env
+class SparksCallback(TrainerCallback):
+    def __init__(self) -> None:
+        self.run = track(arm="sft")
 
-metrics = from_env(arm="lora")          # extra kwargs become labels on every sample
-...
-if metrics is not None:
-    metrics.log(**values)
+    def on_log(self, args, state, control, logs=None, **kwargs) -> None:
+        self.run.step(**mapped(logs))
+
+    def on_train_end(self, args, state, control, **kwargs) -> None:
+        self.run.end()
 ```
 
-`from_env` returns **None** anywhere but inside a job container. It reads `SPARKS_RUN_ID` and
-`SPARKS_PROMETHEUS_URL`, which only the supervisor sets, so `from_env().log(...)` raises
-`AttributeError` the first time anyone runs the script on a laptop. Guard it. Sparing you that
-guard is most of what `track` is for, so reach for `from_env` only where there is no loop to
-wrap.
+`**kwargs` on `on_log` is load-bearing: Trainer passes the model, the tokenizer and whatever
+else that version felt like, and the set changes between releases.
 
-Whichever way in, **map the framework's log keys to declared names explicitly**:
+**Map the framework's log keys to declared names explicitly**:
 
 ```python
 LOGGED = {"loss": "loss", "eval_loss": "eval_loss", "learning_rate": "learning_rate"}
