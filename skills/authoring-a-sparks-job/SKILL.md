@@ -128,7 +128,8 @@ reported success.
 - **`/data` is read-only.** That is where `--data` lands, and `$SPARKS_DATA` names it. A
   script with a laptop path hard-coded fails on the box.
 - **sparks must be installed in the image**, or `from sparks.emit import from_env` fails at
-  import.
+  import. A slim base has no `git`, so `pip install git+https://...` fails there; install the
+  tarball instead, and pin a tag rather than a branch in anything you care about.
 - **Bake model weights in.** A container that reaches Hugging Face on every start turns an
   outage there into a failed run. Set `HF_HUB_OFFLINE=1` once they are baked; it also stops
   the hub writing cache-miss markers into a read-only tree.
@@ -138,8 +139,24 @@ reported success.
 - **Put the layers most likely to change last.** Multi-gigabyte torch layers above a
   frequently-edited one get pushed again on every submit.
 
-`examples/Dockerfile` is a working instance of all of the above, and every one of those
-points failed a real run before it was written down. Read it before writing your own.
+Every one of those points failed a real run before it was written down. A minimal image that
+satisfies all of them, for a job with no ML dependencies:
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+RUN pip install --no-cache-dir \
+    "https://github.com/vtemian/sparks/archive/refs/heads/main.tar.gz"
+ENV HOME=/tmp
+COPY *.py /app/
+```
+
+Do not build `FROM` an image you found in the box registry. Those belong to other people's
+jobs, they are not a base image, and the tag you borrowed can be overwritten or removed under
+you. Start from a public base and install sparks yourself.
+
+A larger instance carrying torch, CUDA and baked weights is `examples/Dockerfile` in the
+sparks repository, which is worth reading before writing a GPU image of your own.
 
 ## Where output survives
 
