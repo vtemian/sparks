@@ -121,6 +121,21 @@ the runner's `detail` when there is one (a failed pull says so). When the launch
 failed there is no container output, so `logs` prints `error.txt` under a
 `sparks could not run this job:` heading rather than passing it off as the job's own.
 
+## Driving sparks from an agent
+
+`skills/` holds two Claude Code skills, `authoring-a-sparks-job` and
+`operating-the-sparks-queue`, installed with `ln -s "$PWD"/skills/* ~/.claude/skills/`.
+
+They are split because the triggers are different — writing training code is not the same
+task as working out why last night's run died — and they cross-reference each other.
+
+When one of them wants something the CLI cannot do, **add the verb rather than teaching the
+skill to work around it.** `logs` and `status` exist for exactly that reason: the previous
+answer was to parse a padded table for a run id and `ssh` a path assembled from the box
+contract, which is knowledge a skill should never have to carry. The box already resolves
+those paths, so a new reader belongs in `fire/ctl.py` beside `queue`, proxied from
+`client/cli.py` the way `cancel` is.
+
 ## Instrument a run
 
 ```python
