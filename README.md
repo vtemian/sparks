@@ -117,3 +117,7 @@ project this one knows nothing about.
 **Dashboards and alerts.** `make deploy` also copies `monitoring/dashboards/` to the shared
 directory Grafana watches; it rescans within ten seconds, no restart and no root. The alert rules
 are vendored into sparkup and land with a converge.
+
+---
+
+MIT. See [LICENSE](LICENSE).
