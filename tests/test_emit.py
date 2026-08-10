@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from sparks.emit import RunMetrics, from_env
+from sparks.emit import Run, RunMetrics, from_env, track
 from sparks.metrics import LIFECYCLE
 from sparks.series import InvalidLabelError
 
@@ -238,3 +238,161 @@ def test_a_stale_marker_actually_carries_the_stale_nan() -> None:
     )
     (value,) = marker["values"]
     assert struct.pack("<d", value) == struct.pack("<Q", 0x7FF0000000000002)
+
+
+def in_a_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SPARKS_RUN_ID", "run-9")
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://unused")
+
+
+def nowhere_near_a_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
+    monkeypatch.delenv("SPARKS_PROMETHEUS_URL", raising=False)
+
+
+def test_track_outside_a_job_yields_a_run_that_does_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The same training script has to run on a laptop, and the whole point of
+    # track is that the call site carries no `is not None` guard.
+    nowhere_near_a_job(monkeypatch)
+
+    with track(total=10) as run:
+        run.step(loss=1.0)
+        run.log(eval_loss=0.5)
+        run.log_group("training_learning_rate", {"adapter": 2e-4})
+
+    assert run.metrics is None
+    assert run.count == 1
+
+
+def test_track_inside_a_job_logs_through_a_child_emitter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    in_a_job(monkeypatch)
+    emitter = from_env(autostart=False, arm="lora")
+    assert emitter is not None
+    run = Run(emitter)
+
+    run.step(loss=0.25)
+
+    drained = emitter._buffer.drain()
+    assert "training_loss" in names(drained)
+    assert drained[0]["metric"]["arm"] == "lora"
+
+
+def ticking(*times: float) -> Any:
+    values = iter(times)
+    return lambda: next(values)
+
+
+def test_a_tracked_step_derives_progress_from_the_total(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    in_a_job(monkeypatch)
+    emitter = from_env(autostart=False)
+    assert emitter is not None
+    run = Run(emitter, total=4)
+
+    run.step(loss=1.0)
+
+    drained = emitter._buffer.drain()
+    progress = next(
+        d for d in drained if d["metric"]["__name__"] == "training_progress"
+    )
+    assert progress["values"] == [0.25]
+
+
+def test_without_a_total_progress_is_absent_rather_than_wrong(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A guessed denominator renders a progress bar that lies. Emitting nothing
+    # is the honest failure.
+    in_a_job(monkeypatch)
+    emitter = from_env(autostart=False)
+    assert emitter is not None
+    run = Run(emitter)
+
+    run.step(loss=1.0)
+
+    drained = emitter._buffer.drain()
+    assert "training_progress" not in names(drained)
+    assert "training_eta_seconds" not in names(drained)
+
+
+def test_a_value_you_pass_wins_over_the_one_track_derived(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    in_a_job(monkeypatch)
+    emitter = from_env(autostart=False)
+    assert emitter is not None
+    run = Run(emitter, total=4)
+
+    run.step(step=99.0)
+
+    drained = emitter._buffer.drain()
+    step = next(d for d in drained if d["metric"]["__name__"] == "training_step")
+    assert step["values"] == [99.0]
+
+
+def test_steps_per_second_is_measured_over_the_recent_window() -> None:
+    # Two steps half a second apart is two per second, and the mark laid down
+    # at construction is what the first step measures against.
+    run = Run(None, clock=ticking(0.0, 0.5, 1.0))
+
+    run.step()
+
+    assert run.rate() == 2.0
+
+
+def test_a_rate_needs_two_marks_before_it_means_anything() -> None:
+    run = Run(None, clock=ticking(0.0))
+
+    assert run.rate() is None
+
+
+def test_tokens_per_second_follows_the_step_rate() -> None:
+    run = Run(None, tokens_per_step=1000, clock=ticking(0.0, 0.5, 1.0))
+
+    run.step()
+
+    assert run.derived()["tokens_per_sec"] == 2000.0
+
+
+def test_the_window_forgets_steps_older_than_itself() -> None:
+    # Without maxlen the rate is a lifetime average, which is the bug this
+    # replaces: a slow tail stays hidden behind a fast start.
+    run = Run(None, window=2, clock=ticking(0.0, 1.0, 2.0, 10.0))
+
+    run.step()
+    run.step()
+    run.step()
+
+    assert run.marks[0] == 2.0
+
+
+def test_leaving_the_block_stops_the_pump(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A child emitter's end() ignores its status -- the supervisor decides that
+    # from how the process exited -- so all a Run owes is the stopped pump.
+    monkeypatch.setenv("SPARKS_RUN_ID", "run-9")
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
+    run = track()
+
+    with run:
+        run.step(loss=1.0)
+
+    assert run.metrics is not None
+    assert run.metrics._thread is not None
+    assert not run.metrics._thread.is_alive()
+
+
+def test_an_exception_leaves_the_block_without_being_swallowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nowhere_near_a_job(monkeypatch)
+    run = track()
+
+    with pytest.raises(ValueError, match="boom"), run:
+        raise ValueError("boom")
+
+    assert run.count == 0

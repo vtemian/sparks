@@ -4,8 +4,9 @@ import os
 import struct
 import threading
 import time
+from collections import deque
 from types import TracebackType
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from prometheus_remote_writer import RemoteWriter  # type: ignore[import-untyped]
 
@@ -13,9 +14,14 @@ from sparks.buffer import Buffer
 from sparks.metrics import LIFECYCLE, METRICS
 from sparks.series import Series
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 LOG = logging.getLogger("sparks")
 
 FLUSH_SECONDS = 5.0
+
+RATE_WINDOW_STEPS = 20  # what "over the last window" means for the rates
 
 STALE_NAN = struct.unpack("<d", struct.pack("<Q", 0x7FF0000000000002))[0]
 
@@ -217,3 +223,92 @@ def from_env(autostart: bool = True, **labels: str) -> RunMetrics | None:
         return None
 
     return RunMetrics(run_id, url, labels=labels, autostart=autostart, lifecycle=False)
+
+
+class Run:
+    def __init__(
+        self,
+        metrics: RunMetrics | None,
+        total: int | None = None,
+        tokens_per_step: int | None = None,
+        window: int = RATE_WINDOW_STEPS,
+        clock: "Callable[[], float]" = time.monotonic,
+    ) -> None:
+        self.metrics = metrics
+        self.total = total
+        self.tokens_per_step = tokens_per_step
+        self.clock = clock
+        self.count = 0
+        self.marks: deque[float] = deque(maxlen=window)
+        self.marks.append(clock())
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        self.end()
+
+    def end(self) -> None:
+        if self.metrics is not None:
+            self.metrics.end()
+
+    def step(self, **values: float) -> None:
+        self.count += 1
+        self.marks.append(self.clock())
+        if self.metrics is None:
+            return
+
+        self.metrics.log(**{**self.derived(), **values})
+
+    def log(self, **values: float) -> None:
+        if self.metrics is not None:
+            self.metrics.log(**values)
+
+    def log_group(self, name: str, by_group: dict[str, float]) -> None:
+        if self.metrics is not None:
+            self.metrics.log_group(name, by_group)
+
+    def derived(self) -> dict[str, float]:
+        values = {"step": float(self.count)}
+        rate = self.rate()
+        if rate is not None:
+            values["steps_per_sec"] = rate
+            if self.tokens_per_step is not None:
+                values["tokens_per_sec"] = rate * self.tokens_per_step
+
+        if not self.total:
+            return values
+
+        values["progress"] = self.count / self.total
+        if rate:
+            values["eta_seconds"] = (self.total - self.count) / rate
+
+        return values
+
+    def rate(self) -> float | None:
+        # A lone mark spans zero, so this covers "too early to say" as well as
+        # a clock that has not moved between two steps.
+        span = self.marks[-1] - self.marks[0]
+        if span <= 0:
+            return None
+
+        return (len(self.marks) - 1) / span
+
+
+def track(
+    total: int | None = None,
+    tokens_per_step: int | None = None,
+    **labels: str,
+) -> Run:
+    # A label literally named autostart would bind to from_env's own argument
+    # instead of becoming a label, which is why mypy cannot prove this call.
+    metrics = from_env(**labels)  # type: ignore[arg-type]
+    if metrics is None:
+        LOG.debug("no run id or prometheus url in the environment; metrics are off")
+
+    return Run(metrics, total=total, tokens_per_step=tokens_per_step)
