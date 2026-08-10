@@ -85,7 +85,7 @@ Anything else in `METRICS` belongs to the box (`sparks_*`) or to the supervisor
 ### Values that differ per parameter group
 
 ```python
-run.step(loss=…, learning_rate={"lora": 2e-4, "tables": 2e-5})
+run.step(loss=0.5, learning_rate={"adapter": 2e-4, "norms": 2e-5})
 ```
 
 Pass a mapping instead of a number and you get one series per group, labelled `group`. Nothing
@@ -164,15 +164,19 @@ reported success.
   script with a laptop path hard-coded fails on the box.
 - **sparks must be installed in the image**, or `from sparks.emit import track` fails at
   import. A slim base has no `git`, so `pip install git+https://...` fails there; install the
-  tarball instead, and pin a tag rather than a branch in anything you care about.
+  tarball. **Pin a commit or a tag, never a branch.** Docker keys the layer on the text of the
+  instruction, so a branch URL never changes and the cache keeps serving whatever sparks it
+  first built with. That failed a real run with `ImportError` on a name main had had for an
+  hour, and nothing in the build output said why.
 - **Bake model weights in.** A container that reaches Hugging Face on every start turns an
   outage there into a failed run. Set `HF_HUB_OFFLINE=1` once they are baked; it also stops
   the hub writing cache-miss markers into a read-only tree.
 - **Match the box's CUDA.** The DGX Spark is GB10, compute capability sm_121, driver CUDA
   13.0. A cu128 torch build has no kernels for it and falls back to the CPU *silently* — the
   run looks healthy and simply never finishes.
-- **Put the layers most likely to change last.** Multi-gigabyte torch layers above a
-  frequently-edited one get pushed again on every submit.
+- **Put the cheap, often-edited layers below the expensive ones.** Multi-gigabyte torch
+  layers above a frequently-edited one get pushed again on every submit. In practice that
+  means the sparks install and `COPY` go last.
 
 Every one of those points failed a real run before it was written down. A minimal image that
 satisfies all of them, for a job with no ML dependencies:
@@ -180,9 +184,9 @@ satisfies all of them, for a job with no ML dependencies:
 ```dockerfile
 FROM python:3.12-slim
 WORKDIR /app
-RUN pip install --no-cache-dir \
-    "https://github.com/vtemian/sparks/archive/refs/heads/main.tar.gz"
 ENV HOME=/tmp
+RUN pip install --no-cache-dir \
+    "https://github.com/vtemian/sparks/archive/01f3ea95aba2bad1d5a892e87f174c1aa08d6c0d.tar.gz"
 COPY *.py /app/
 ```
 

@@ -29,8 +29,8 @@ AutoModelForCausalLM.from_pretrained(name)" \
 
 # torch compiles Triton kernels at runtime, on the first backward pass, so the
 # image needs a C compiler even though nothing here builds at image time. Late
-# in the file on purpose: it is the layer most likely to change, and everything
-# above it is gigabytes that would otherwise be pushed again.
+# in the file on purpose: everything above it is gigabytes that a change here
+# would otherwise force a rebuild and a re-push of.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
@@ -47,8 +47,8 @@ ENV HOME=/tmp \
 # Pinned to a commit, not to a branch. Docker keys this layer on the text of
 # the instruction, so a branch URL never changes and the cache serves whatever
 # sparks it first built with, however far main has moved. That failed a run
-# with ImportError on a name main had had for an hour. Its own layer, and last,
-# so bumping it rebuilds seconds rather than the gigabytes above.
+# with ImportError on a name main had had for an hour. Its own layer, below
+# everything expensive, so bumping it rebuilds seconds rather than gigabytes.
 RUN pip install --no-cache-dir \
     "https://github.com/vtemian/sparks/archive/4a1c25f51a41586d0606e5be9ec1bead15d2ae3b.tar.gz"
 

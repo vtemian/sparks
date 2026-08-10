@@ -84,7 +84,9 @@ with track(total=epochs * len(loader), tokens_per_step=batch_size * BLOCK) as ru
 ```
 
 `run.step` derives `step`, `progress`, `eta_seconds`, `steps_per_sec` and `tokens_per_sec`; a value
-you pass yourself wins over the derived one. Rates are measured over a sliding window of recent
+you pass yourself wins over the derived one. Pass a mapping instead of a number and you get one
+series per group, which is where the two learning-rate lines in the screenshot come from:
+`run.step(loss=…, learning_rate={"adapter": 2e-4, "norms": 2e-5})`. Rates are measured over a sliding window of recent
 steps, so the first step reports none. Leave out `total` or `tokens_per_step` and what they feed is
 simply not emitted, never guessed. `epoch` is yours to pass; nothing derives it. `run.log(...)`
 reports without advancing the step counter, which is what an `eval_loss` at the end of an epoch
