@@ -43,6 +43,7 @@ sparks queue            # what is running and waiting
 sparks queue --all      # include finished jobs
 sparks logs <job>       # the last 200 lines the job printed; --all for every line
 sparks status <job>     # one job in full: state, exit code, duration, energy
+sparks wait <job>       # block until it ends; exit 0 only if it finished
 sparks cancel <job>     # drop a job that has not started
 sparks abort <job>      # stop one whether or not it has started
 sparks retry <job>      # resubmit, reusing the image and data already on the box

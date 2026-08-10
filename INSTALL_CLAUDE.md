@@ -99,6 +99,7 @@ sparks queue            # what is running and waiting
 sparks queue --all      # include finished jobs
 sparks logs <job>       # the last 200 lines the job printed; --all for every line
 sparks status <job>     # one job in full: state, exit code, duration, energy
+sparks wait <job>       # block until it ends; exit 0 only if it finished
 sparks cancel <job>     # drop a job that has not started
 sparks abort <job>      # stop one whether or not it has started
 sparks retry <job>      # resubmit, reusing the image and data already on the box
@@ -120,6 +121,14 @@ carries three keys — `job` (what was submitted), `state` (where it is now), an
 the runner's `detail` when there is one (a failed pull says so). When the launch itself
 failed there is no container output, so `logs` prints `error.txt` under a
 `sparks could not run this job:` heading rather than passing it off as the job's own.
+
+`wait` exits **0 only when the job finished**, 1 when it ended any other way, and 75
+(`EX_TEMPFAIL`) when `--timeout` expired with the job still going, so `sparks wait "$JOB" &&
+next-step` is safe and a script can tell a broken job from a slow one. It polls
+`status --json` client-side every `--interval` seconds (10 by default) rather than blocking
+on the box: `capture` gives up on any single SSH call after 120s, so a server-side `wait`
+could never outlive two minutes, and an hours-long connection is the first thing a network
+blip kills.
 
 ## Driving sparks from an agent
 

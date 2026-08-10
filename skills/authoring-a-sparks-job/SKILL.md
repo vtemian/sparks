@@ -94,11 +94,23 @@ argument is **ignored**: the supervisor decides the status from how the process 
 ### Bridging a framework
 
 sparks is deliberately not a `TrainerCallback` — it is a plain object a loop calls, which
-works in both worlds. Bridge it in your own code and map the framework's log keys to
-declared names explicitly; passing them straight through raises on the first key sparks has
-never heard of, and those keys vary by framework version and by task.
-`examples/finetune/hf_trainer_callback.py` does this for HuggingFace `Trainer` in about
-twenty lines.
+works in both worlds. To use it under a framework, write the adapter in your own code and
+**map the framework's log keys to declared names explicitly**:
+
+```python
+LOGGED = {"loss": "loss", "eval_loss": "eval_loss", "learning_rate": "learning_rate"}
+
+values = {
+    LOGGED[key]: float(value)
+    for key, value in logs.items()
+    if key in LOGGED and isinstance(value, int | float)
+}
+```
+
+Passing the framework's dict straight through raises on the first key sparks has never heard
+of, and those keys vary by framework version and by task. A framework also tends to report
+neither pace nor throughput, so `progress`, `eta_seconds` and `tokens_per_sec` have to be
+derived in the adapter — it is the only place that knows how many tokens a step consumed.
 
 ## Write the Dockerfile
 
@@ -126,7 +138,8 @@ reported success.
 - **Put the layers most likely to change last.** Multi-gigabyte torch layers above a
   frequently-edited one get pushed again on every submit.
 
-`examples/finetune/Dockerfile` is a working instance of all of the above.
+`examples/Dockerfile` is a working instance of all of the above, and every one of those
+points failed a real run before it was written down. Read it before writing your own.
 
 ## Where output survives
 
@@ -164,17 +177,33 @@ registry. `sparks setup` fixes that; it needs a Docker restart afterwards.
 
 ## Prove the path before you spend an hour on it
 
-The smoke job has no GPU and no ML dependencies, so a failure there is the plumbing rather
-than your model:
+Most of the ways a job fails are plumbing, not modelling, and every one of them is cheaper to
+find with a script that does no training. Before the real submit, send a job whose only work
+is to prove the path — it imports sparks, reads `/data`, pushes a few points, and exits:
 
-```sh
-sparks submit --context ./examples --data ./examples/data --name smoke -- python /app/smoke_loop.py
-sparks logs smoke
+```python
+import os, pathlib, time
+from sparks.emit import from_env
+
+print("data:", sorted(pathlib.Path(os.environ["SPARKS_DATA"]).iterdir()))
+metrics = from_env()
+for step in range(20):
+    if metrics is not None:
+        metrics.log(step=step, loss=1.0 / (step + 1))
+    time.sleep(0.5)
 ```
 
-It finishes in about fifteen seconds. Grafana floors its query step at the scrape interval,
-so a run that short arrives as one averaged point; pass `--steps 1200 --step-seconds 0.5`
-for a curve worth looking at.
+```sh
+JOB=$(sparks submit --data ./corpus --name smoke -- python /app/smoke.py)
+sparks wait "$JOB" && sparks logs "$JOB"
+```
 
-Once the smoke run works end to end, submit the real one. To follow it and to work out what
-went wrong, use the `operating-the-sparks-queue` skill.
+That exercises build, push, pull, the uid the container runs as, the `/data` mount and the
+metrics path — everything except your model. A failure here is never the training code.
+
+Grafana floors its query step at the scrape interval, so a run shorter than a couple of
+minutes arrives as one averaged point no matter how densely you push. Do not read that as a
+broken emitter.
+
+Once it works end to end, submit the real one. To follow it and to work out what went wrong,
+use the `operating-the-sparks-queue` skill.

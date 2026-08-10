@@ -38,14 +38,28 @@ several finished ones is taken to be the one you meant.
 
 ## Follow a run
 
-There is no `wait` verb. Poll `status` and read `.state.state` until it is terminal:
-
 ```sh
-sparks status <job> --json
+sparks wait <job>                    # blocks until it ends
+sparks wait <job> --timeout 3600     # ...but not forever
 ```
 
-The runner's own pass is every 2 seconds, so polling faster than that only produces
-identical answers.
+**The exit code is the point.** 0 only when the job `finished`; 1 when it ended any other way
+(`failed`, `cancelled`, `aborted`); 75 (`EX_TEMPFAIL`) when `--timeout` ran out with the job
+still going. Those last two are deliberately different: a script has to be able to tell "it
+broke" from "it is taking longer than I allowed". So this means what it looks like:
+
+```sh
+sparks wait "$JOB" && ./collect-results.sh
+```
+
+The terminal state goes to stdout; each state change is announced on stderr as it happens.
+Ctrl-C exits 130 and leaves the job running on the box — `wait` only ever watches, and no
+verb here stops a job except `cancel` and `abort`.
+
+`wait` polls `status --json` every 10 seconds (`--interval`) rather than holding one SSH
+connection open for the hours a run takes, so a network blip costs one poll rather than the
+whole wait. Polling faster than the runner's own 2-second pass only produces identical
+answers.
 
 ## Diagnose a failure
 

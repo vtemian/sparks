@@ -5,6 +5,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from sparks import spool
 from sparks.client import local, remote
 
 LOG = logging.getLogger("sparks")
@@ -60,6 +61,21 @@ def status(args: argparse.Namespace, _argv: list[str]) -> int:
     return remote.run(args.host, server)
 
 
+def wait(args: argparse.Namespace, _argv: list[str]) -> int:
+    try:
+        state = remote.wait(args.host, args.job, args.interval, args.timeout)
+    except remote.TimedOutError as exc:
+        # Distinct from a job that failed: the caller is invited to wait again.
+        print(f"sparks: {exc}", file=sys.stderr)
+        return os.EX_TEMPFAIL
+    except KeyboardInterrupt:
+        print(f"sparks: stopped watching; {args.job} runs on", file=sys.stderr)
+        return 130
+
+    print(state)
+    return 0 if state == spool.FINISHED else 1
+
+
 def cancel(args: argparse.Namespace, _argv: list[str]) -> int:
     return remote.run(args.host, ["cancel", args.job])
 
@@ -94,6 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_queue(subparsers, host)
     add_logs(subparsers, host)
     add_status(subparsers, host)
+    add_wait(subparsers, host)
     setup_parser = subparsers.add_parser(
         "setup",
         parents=[host],
@@ -201,6 +218,29 @@ def add_status(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
         help="the whole record as one object, for a script to read",
     )
     status_parser.set_defaults(func=status)
+
+
+def add_wait(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
+    wait_parser = subparsers.add_parser(
+        "wait",
+        parents=[host],
+        help="block until the job ends; exit 0 only if it finished",
+    )
+    wait_parser.add_argument("job", help="a job id, a unique part of one, or its name")
+    wait_parser.add_argument(
+        "--interval",
+        type=float,
+        default=remote.WAIT_INTERVAL_SECONDS,
+        help="seconds between checks",
+    )
+    wait_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=None,
+        help=f"give up after this many seconds, exiting {os.EX_TEMPFAIL}. "
+        f"Waits for as long as the job takes by default",
+    )
+    wait_parser.set_defaults(func=wait)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,4 +1,5 @@
 import getpass
+import json
 import logging
 import os
 import shlex
@@ -27,6 +28,7 @@ ALWAYS_EXCLUDED = (".git/", "__pycache__/", "*.pyc", ".venv/")
 
 RSYNC_TIMEOUT_SECONDS = 1800.0
 SSH_TIMEOUT_SECONDS = 120.0
+WAIT_INTERVAL_SECONDS = 10.0
 
 PUSH_HINT = "Is the registry in insecure-registries and is SPARKS_HOST reachable?"
 
@@ -34,6 +36,9 @@ TIMED_OUT = "the Docker daemon stopped sending progress"
 
 
 class ClientError(Exception): ...
+
+
+class TimedOutError(ClientError): ...
 
 
 @dataclass(frozen=True)
@@ -304,6 +309,51 @@ def capture(host: str, argv: list[str]) -> str:
         raise ClientError(f"{host} refused: {(done.stderr or done.stdout).strip()}")
 
     return done.stdout.strip()
+
+
+def fetch_status(host: str, job: str) -> dict[str, Any]:
+    raw = capture(host, ["status", job, "--json"])
+    try:
+        loaded: dict[str, Any] = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ClientError(f"{host} did not answer with a status: {exc}") from exc
+
+    return loaded
+
+
+def wait(
+    host: str,
+    job: str,
+    interval: float = WAIT_INTERVAL_SECONDS,
+    timeout: float | None = None,
+) -> str:
+    deadline = None if timeout is None else time.monotonic() + timeout
+    seen = ""
+    while True:
+        payload = fetch_status(host, job)
+        state = str(payload["state"]["state"])
+        if state != seen:
+            print(describe(payload), file=sys.stderr)
+        seen = state
+        if state in spool.TERMINAL:
+            return state
+
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimedOutError(f"{job} was still {state} after {timeout:g}s")
+
+        # One short round trip per check, rather than one ssh connection held
+        # open for the hours a training run takes: a dropped network costs a
+        # single poll here, and would cost the whole wait there.
+        time.sleep(interval)
+
+
+def describe(payload: dict[str, Any]) -> str:
+    state = payload["state"]
+    said = f"{state['state']} {state['run_id']}" if state["run_id"] else state["state"]
+    if state["detail"]:
+        return f"{said}: {state['detail']}"
+
+    return str(said)
 
 
 def submit_remote(
