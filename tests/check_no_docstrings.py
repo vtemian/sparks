@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCAN = (ROOT / "src" / "sparks", ROOT / "tests")
+SCAN = (ROOT / "src" / "sparks", ROOT / "tests", ROOT / "examples")
 
 
 def docstring_of(node: ast.AST) -> ast.Constant | None:
