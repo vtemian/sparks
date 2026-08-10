@@ -21,10 +21,19 @@ export SPARKS_HOST=you@your-box
 make install
 ```
 
-That installs the client and lets this machine's Docker push to the box registry, which is plain
-HTTP on the LAN. It prints a Docker restart command; run it, because a restart stops whatever
+That puts `sparks` on your PATH and lets this machine's Docker push to the box registry, which is
+plain HTTP on the LAN. It prints a Docker restart command; run it, because a restart stops whatever
 containers you have. Without that step `docker push` fails and submit dies before the job is
-reserved. `sparks setup` does the same thing on its own if you installed the client some other way.
+reserved.
+
+You run the client from your own project, never from this checkout, so you do not need one at all:
+
+```sh
+uv tool install git+https://github.com/vtemian/sparks
+sparks setup
+```
+
+`make install` is the same two steps against the working tree you have.
 
 Submit a run, then watch the queue:
 
