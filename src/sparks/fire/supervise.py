@@ -14,10 +14,13 @@ LOG = logging.getLogger("sparks")
 
 DASHBOARD = "/d/training-runs/training-runs"
 
-GRAFANA_FALLBACK = "http://spark.local"
 
+def deep_link(grafana: str, run_id: str, started: float) -> str | None:
+    # No Grafana, no link. Guessing a hostname prints something that looks
+    # authoritative and points at somebody else's box, or at nothing.
+    if not grafana:
+        return None
 
-def deep_link(grafana: str, run_id: str, started: float) -> str:
     frm = int((started - 60) * 1000)
     return (
         f"{grafana.rstrip('/')}{DASHBOARD}"
@@ -53,9 +56,7 @@ def read_settings(args: argparse.Namespace) -> _Settings:
     return _Settings(
         shared_dir=shared,
         url=url or "",
-        grafana=args.grafana
-        or (contract.grafana_url if contract else "")
-        or GRAFANA_FALLBACK,
+        grafana=args.grafana or (contract.grafana_url if contract else ""),
     )
 
 
@@ -120,7 +121,9 @@ def run(args: argparse.Namespace) -> int:
     )
 
     print(result.run_id)
-    print(deep_link(settings.grafana, result.run_id, started))
+    link = deep_link(settings.grafana, result.run_id, started)
+    if link:
+        print(link)
     print(f"{result.status}  ->  {result.run_dir}")
     # Faithful status, so `$?` means something to whatever called us.
     return result.wrapper_exit

@@ -17,15 +17,17 @@ def test_no_url_is_left_unset_rather_than_guessed() -> None:
 
 def test_the_deep_link_starts_a_minute_early() -> None:
     # Otherwise the first datapoints are glued to the left edge of the graph.
-    link = deep_link("http://spark.local", "run-1", started=1_754_300_000.0)
+    link = deep_link("http://box:3000", "run-1", started=1_754_300_000.0)
+    assert link is not None
     assert "var-run_id=run-1" in link
     assert "from=1754299940000" in link
     assert link.endswith("&to=now&refresh=10s")
 
 
 def test_the_deep_link_tolerates_a_trailing_slash() -> None:
-    link = deep_link("http://spark.local/", "run-1", started=1_754_300_000.0)
-    assert "spark.local/d/training-runs" in link
+    link = deep_link("http://box:3000/", "run-1", started=1_754_300_000.0)
+    assert link is not None
+    assert "box:3000/d/training-runs" in link
 
 
 def test_run_takes_a_name_and_a_command_after_the_separator() -> None:
@@ -140,3 +142,13 @@ def test_a_crashed_child_makes_the_cli_exit_nonzero(tmp_path: Path) -> None:
         ]
     )
     assert code == 3
+
+
+def test_no_grafana_means_no_link_rather_than_a_guessed_host() -> None:
+    # Baking one box's hostname in as a fallback prints a link to somebody
+    # else's Grafana, or to nothing at all, and looks authoritative either way.
+    assert supervise.deep_link("", "run-1", 1000.0) is None
+
+    link = supervise.deep_link("http://box:3000", "run-1", 1000.0)
+    assert link is not None
+    assert link.startswith("http://box:3000/d/training-runs")
