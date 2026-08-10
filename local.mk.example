@@ -1,15 +1,21 @@
 # Your box, untracked. Copy to local.mk and edit.
 #
 # The same split sparkup uses: tracked defaults suit any box, and the values
-# that identify one particular box stay out of git.
+# that name one particular box stay out of git.
+#
+# The Makefile exports SPARKS_HOST, so `make sparks ARGS="queue"` talks to the
+# same box `make deploy` does. Running the `sparks` client directly reads it
+# from your environment instead, so export it in your shell for that.
 
-# Only needed if your SSH login on the box differs from your local username.
-# SPARKS_HOST = you@spark.local
+# The box, as ssh addresses it. No default: a wrong guess talks to the wrong
+# machine. Required by `make deploy`.
+# SPARKS_HOST = you@your-box
 
 # sparkup's `spark_shared_dir`. The repo default is /srv/spark; set this to
 # whatever your host_vars overrode it to.
 # SPARKS_SHARED_DIR = /srv/spark
 
-# The venv your training code runs in. Required by `make deploy`, and
-# project-specific by nature, so there is no default worth guessing.
+# The venv your *training* code runs in, which `make deploy` installs the
+# metrics library into. Project-specific by nature, so there is no default
+# worth guessing, and deploy refuses without it.
 # SPARKS_VENV = $$HOME/myproject/.venv
