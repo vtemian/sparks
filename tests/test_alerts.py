@@ -8,7 +8,7 @@ from tests.check_dashboard import allowed as dashboard_allowed
 from tests.check_dashboard import metric_names
 
 ROOT = Path(__file__).resolve().parents[1]
-ALERTS = sorted((ROOT / "alerts").glob("*.yml"))
+ALERTS = sorted((ROOT / "monitoring" / "alerts").glob("*.yml"))
 
 # Reuse the dashboard checker's allowlist rather than restating it: the two had
 # drifted, and this copy was the looser one, so a metric the dashboards would

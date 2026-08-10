@@ -72,7 +72,7 @@ make deploy                              # SPARKS_HOST defaults to spark.local
 make deploy SPARKS_HOST=you@spark.local  # if your SSH login differs
 ```
 
-Pushes the tree, installs it into the training venv, and hands Grafana both dashboards. Grafana picks
+Pushes the tree, installs it into the training venv, and hands Grafana the dashboards. Grafana picks
 them up within 10 seconds; no restart, no root. The image registry and queue runner come from
 sparkup (`make apply` there), not from this deploy.
 
@@ -82,5 +82,9 @@ sparkup (`make apply` there), not from this deploy.
 make check   # lint, mypy strict, tests, dashboard
 make live    # the same against a real Prometheus in Docker
 ```
+
+`monitoring/` holds what the box needs to display a run: `dashboards/` for Grafana and
+`alerts/` for Prometheus. Both are validated by `make check` against the metrics this
+code actually emits.
 
 `INSTALL_CLAUDE.md` is the full install-and-use reference.

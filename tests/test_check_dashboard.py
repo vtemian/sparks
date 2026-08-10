@@ -94,7 +94,9 @@ def test_every_shipped_dashboard_is_checked_not_just_one() -> None:
     found = {p.name for p in dashboards()}
     assert "training-runs.json" in found
     assert len(found) == len(list(dashboards()))
-    assert found == {p.name for p in (ROOT / "dashboards").glob("*.json")}
+    assert found == {
+        p.name for p in (ROOT / "monitoring" / "dashboards").glob("*.json")
+    }
 
 
 def test_the_annotation_query_is_checked_too() -> None:

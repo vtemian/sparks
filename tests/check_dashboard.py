@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from sparks.metrics import METRICS
 
 ROOT = Path(__file__).resolve().parents[1]
-DASHBOARDS = ROOT / "dashboards"
+DASHBOARDS = ROOT / "monitoring" / "dashboards"
 
 # Scraped by sparkup, so legitimate here even though sparks never emits them.
 # Prefixes, because node_exporter names a series after every key in

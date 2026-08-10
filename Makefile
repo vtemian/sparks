@@ -115,6 +115,6 @@ deploy: deploy-preflight
 	  ./ $(SPARKS_HOST):sparks/
 	ssh $(SPARKS_HOST) 'PATH=$$HOME/.local/bin:$$PATH \
 	  VIRTUAL_ENV=$(SPARKS_VENV) uv pip install -q -e $$HOME/sparks'
-	scp -q dashboards/*.json \
+	scp -q monitoring/dashboards/*.json \
 	  $(SPARKS_HOST):$(SPARKS_SHARED_DIR)/dashboards/
 	@echo "deployed to $(SPARKS_HOST):$(SPARKS_SHARED_DIR)"
