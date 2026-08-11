@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from sparks import index, spool
 from tests import promtool
 
@@ -89,12 +91,15 @@ def test_the_run_id_joins_the_queue_to_the_run_index(tmp_path: Path) -> None:
     assert 'run_id="run-20260806-1200-rex-e0"' in rendered
 
 
+@pytest.mark.skipif(not promtool.usable(), reason=promtool.REASON)
 def test_an_empty_queue_still_produces_a_valid_file(tmp_path: Path) -> None:
     rendered = index.render_queue([], heartbeat=1785849100.0)
     assert rendered.endswith("\n")
-    promtool.check_metrics(rendered)
+    done = promtool.check_metrics(rendered)
+    assert done.returncode == 0, done.stdout + done.stderr
 
 
+@pytest.mark.skipif(not promtool.usable(), reason=promtool.REASON)
 def test_promtool_accepts_a_full_queue(tmp_path: Path) -> None:
     entries = [
         an_entry(tmp_path, "waiting"),
@@ -115,13 +120,16 @@ def test_promtool_accepts_a_full_queue(tmp_path: Path) -> None:
             finished_unix=1785849090.0,
         ),
     ]
-    promtool.check_metrics(index.render_queue(entries, heartbeat=1785849100.0))
+    done = promtool.check_metrics(index.render_queue(entries, heartbeat=1785849100.0))
+    assert done.returncode == 0, done.stdout + done.stderr
 
 
+@pytest.mark.skipif(not promtool.usable(), reason=promtool.REASON)
 def test_a_hostile_job_name_cannot_poison_the_file(tmp_path: Path) -> None:
     entry = an_entry(tmp_path, 'evil"} 1\nsparks_queue_depth{state="queued')
     rendered = index.render_queue([entry], heartbeat=1.0)
-    promtool.check_metrics(rendered)
+    done = promtool.check_metrics(rendered)
+    assert done.returncode == 0, done.stdout + done.stderr
 
 
 def test_publishing_writes_the_file_readably(tmp_path: Path) -> None:
