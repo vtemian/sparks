@@ -6,9 +6,12 @@ from sparks.series import InvalidLabelError, Series
 def test_labels_are_sorted_and_hashable() -> None:
     a = Series("training_loss", {"seed": "0", "run_id": "r1"})
     b = Series("training_loss", {"run_id": "r1", "seed": "0"})
+
+    # Sorted, not merely consistent: equality and hashing hold for any
+    # deterministic order, so neither of them tests the sorting.
+    assert a.labels == (("run_id", "r1"), ("seed", "0"))
     assert a == b
     assert hash(a) == hash(b)
-    assert {a, b} == {a}
 
 
 def test_label_names_become_prometheus_labels() -> None:

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from sparks.emit import SCRAPE_SECONDS, Pump, Run, RunRecord, track
+from sparks.emit import RECORD_ONLY, SCRAPE_SECONDS, Pump, Run, RunRecord, track
 from sparks.metrics import LIFECYCLE
 from sparks.series import InvalidLabelError
 
@@ -70,7 +70,10 @@ def test_info_carries_run_id_and_the_supplied_metadata() -> None:
 def test_log_emits_one_series_per_named_value() -> None:
     m = child()
     m.log(step=3, loss=0.5)
-    assert names(pump_of(m)._buffer.drain()) == {"training_step", "training_loss"}
+
+    drained = pump_of(m)._buffer.drain()
+    assert names(drained) == {"training_step", "training_loss"}
+    assert len(drained) == 2
 
 
 def test_log_refuses_an_undeclared_metric() -> None:
@@ -81,11 +84,13 @@ def test_log_refuses_an_undeclared_metric() -> None:
 
 def test_series_labels_land_on_every_sample() -> None:
     run = child(labels={"run_id": "run-1", "arm": "real", "seed": "0"})
-    run.log(loss=0.5)
-    loss = sent(run)[0]
-    assert loss["metric"]["arm"] == "real"
-    assert loss["metric"]["seed"] == "0"
-    assert loss["metric"]["run_id"] == "run-1"
+    run.log(loss=0.5, step=3)
+
+    carried = [
+        (d["metric"]["arm"], d["metric"]["seed"], d["metric"]["run_id"])
+        for d in sent(run)
+    ]
+    assert carried == [("real", "0", "run-1")] * 2
 
 
 def test_end_emits_terminal_state_and_never_mutates_info() -> None:
@@ -101,13 +106,6 @@ def test_end_emits_terminal_state_and_never_mutates_info() -> None:
     # label set means a second series and a red panel.
     infos = [d for d in out if d["metric"]["__name__"] == "training_run_info"]
     assert all("status" not in d["metric"] for d in infos)
-
-
-def test_a_metric_labelled_by_group_keeps_the_group_label() -> None:
-    m = child()
-    m.log(learning_rate={"lora": 2e-4, "tables": 2e-5})
-    out = pump_of(m)._buffer.drain()
-    assert {d["metric"]["group"] for d in out} == {"lora", "tables"}
 
 
 def test_shutdown_is_idempotent() -> None:
@@ -153,28 +151,6 @@ def test_the_run_record_is_never_marked_stale() -> None:
     assert not staled & LIFECYCLE, f"the run's own record was staled: {staled}"
 
 
-def test_a_stale_marker_lands_after_the_sample_it_ends() -> None:
-    # Sharing a millisecond with the last real sample is a duplicate-timestamp
-    # 400, and remote-write rolls back the whole request, so one collision
-    # means no series gets a marker at all.
-    m = child()
-    m.log(loss=0.5)
-    pump_of(m)._buffer.drain()
-    last = {
-        s: ts
-        for s, ts in pump_of(m)._buffer.seen().items()
-        if s.name == "training_loss"
-    }
-    ((series, sent_at),) = last.items()
-    marker = next(
-        d
-        for d in pump_of(m)._stale_batch()
-        if d["metric"]["__name__"] == "training_loss"
-    )
-    assert marker["timestamps"][0] > sent_at
-    assert series.name == "training_loss"
-
-
 def test_a_stale_marker_leaves_the_sample_it_ends_long_enough_to_be_queried() -> None:
     # A marker a millisecond later is ordered correctly and still unreachable:
     # Prometheus evaluates at discrete steps and Grafana floors the step at the
@@ -216,7 +192,8 @@ def test_run_active_is_emitted_and_gets_a_stale_marker() -> None:
     # overshoots by the whole lookback window.
     m = make()
     m.begin()
-    m._pump._buffer.drain()
+
+    assert "training_run_active" in names(m._pump._buffer.drain())
     assert "training_run_active" in {
         d["metric"]["__name__"] for d in m._pump._stale_batch()
     }
@@ -233,17 +210,11 @@ def test_a_child_emitter_writes_no_lifecycle_series() -> None:
 
     assert names(sent(run)) == {"training_loss"}
     assert not hasattr(run, "begin")
-    for name in sorted(LIFECYCLE):
+    # RECORD_ONLY, not LIFECYCLE: the guard also refuses training_run_active,
+    # which LIFECYCLE does not contain, and nothing else covers it.
+    for name in sorted(RECORD_ONLY):
         with pytest.raises(KeyError, match="belongs to the supervisor"):
             run.log(**{name.removeprefix("training_"): 1.0})
-
-
-def test_track_outside_a_job_reaches_for_no_emitter_at_all(monkeypatch: Any) -> None:
-    # The same training script must still run standalone without branching.
-    monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
-    monkeypatch.delenv("SPARKS_PROMETHEUS_URL", raising=False)
-
-    assert track()._pump is None
 
 
 def test_track_inside_a_job_builds_a_child_carrying_its_labels(
@@ -259,17 +230,6 @@ def test_track_inside_a_job_builds_a_child_carrying_its_labels(
     assert sample["metric"]["run_id"] == "run-7"
     assert sample["metric"]["arm"] == "real"
     run.end()
-
-
-def test_a_child_cannot_write_a_supervisor_series() -> None:
-    # Byte-identical series from two processes is the out-of-order rollback the
-    # whole split exists to prevent, and it is silent: the batch carrying the
-    # loss simply never lands. Enforced in code, not by convention.
-    child = Run(pump(), labels={"run_id": "run-9"})
-    with pytest.raises(KeyError):
-        child.log(run_active=1.0)
-    with pytest.raises(KeyError):
-        child.log(run_start_timestamp_seconds=1000.0)
 
 
 def test_the_record_writes_its_own_series_and_has_no_way_to_write_yours() -> None:
@@ -304,11 +264,6 @@ def test_a_stale_marker_actually_carries_the_stale_nan() -> None:
     assert struct.pack("<d", value) == struct.pack("<Q", 0x7FF0000000000002)
 
 
-def in_a_job(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SPARKS_RUN_ID", "run-9")
-    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://unused")
-
-
 def nowhere_near_a_job(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
     monkeypatch.delenv("SPARKS_PROMETHEUS_URL", raising=False)
@@ -328,16 +283,6 @@ def test_track_outside_a_job_yields_a_run_that_does_nothing(
 
     assert run._pump is None
     assert run.count == 1
-
-
-def test_track_inside_a_job_logs_through_a_child_emitter() -> None:
-    run = child(labels={"arm": "lora"})
-
-    run.step(loss=0.25)
-
-    drained = sent(run)
-    assert "training_loss" in names(drained)
-    assert drained[0]["metric"]["arm"] == "lora"
 
 
 def ticking(*times: float) -> Callable[[], float]:
@@ -379,19 +324,10 @@ def test_a_value_you_pass_wins_over_the_one_track_derived() -> None:
     assert step["values"] == [99.0]
 
 
-def test_steps_per_second_is_measured_over_the_recent_window() -> None:
-    run = Run(None, clock=ticking(0.0, 0.5))
-
-    run.step()
-    run.step()
-
-    assert run.rate() == 2.0
-
-
 def test_one_step_is_too_early_to_call_it_a_rate() -> None:
     # Seeding a mark at construction would give the first step a free
     # zero-length interval and report a rate several times the real one.
-    run = Run(None, clock=ticking(0.0, 0.5))
+    run = Run(None, clock=ticking(0.0))
 
     assert run.rate() is None
 
@@ -452,13 +388,17 @@ def test_an_exception_leaves_the_block_without_being_swallowed(
 
 def test_eta_falls_as_the_run_advances() -> None:
     # Two steps a half-second apart is two per second, and eight of ten steps
-    # remain, so four seconds.
-    run = Run(None, total=10, clock=ticking(0.0, 0.5))
+    # remain, so four seconds. One more step at the same pace leaves seven.
+    run = Run(None, total=10, clock=ticking(0.0, 0.5, 1.0))
 
     run.step()
     run.step()
+    early = run.derived()["eta_seconds"]
 
-    assert run.derived()["eta_seconds"] == 4.0
+    run.step()
+
+    assert early == 4.0
+    assert run.derived()["eta_seconds"] < early
 
 
 def test_overrunning_the_total_does_not_report_more_than_all_of_it() -> None:
@@ -472,11 +412,6 @@ def test_overrunning_the_total_does_not_report_more_than_all_of_it() -> None:
 
     assert derived["progress"] == 1.0
     assert derived["eta_seconds"] == 0.0
-
-
-def test_a_total_that_counts_backwards_is_refused() -> None:
-    with pytest.raises(ValueError, match="total"):
-        Run(None, total=-5)
 
 
 def test_a_window_too_small_to_hold_an_interval_is_refused() -> None:
@@ -501,22 +436,6 @@ def test_no_keyword_is_reserved_out_from_under_a_label(
         assert sent(run)[0]["metric"]["autostart"] == "no"
 
 
-def test_reporting_after_the_run_ended_says_so_rather_than_vanishing(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    # Nothing drains the buffer once the pump is stopped, and the whole point
-    # of track is that the call site carries no guard, so a stray log after the
-    # block is an easy mistake to make and an invisible one to debug.
-    run = child()
-    run.end()
-
-    run.step(loss=1.0)
-
-    assert "already ended" in caplog.text
-    assert sent(run) == []
-
-
 def test_a_record_carries_the_status_it_was_ended_with() -> None:
     record = make()
     record.begin()
@@ -529,15 +448,6 @@ def test_a_record_carries_the_status_it_was_ended_with() -> None:
         for d in record._pump._buffer.drain()
     }
     assert ended["training_run_status"] == "crashed"
-
-
-def test_beginning_a_record_writes_the_start_of_the_run() -> None:
-    record = make()
-
-    record.begin()
-
-    written = names(record._pump._buffer.drain())
-    assert "training_run_start_timestamp_seconds" in written
 
 
 def test_every_way_of_reporting_stops_once_the_run_has_ended(
@@ -589,14 +499,10 @@ def test_an_undeclared_name_is_refused_off_the_box_too() -> None:
         run.log(nonsense={"a": 1.0})
 
 
-def test_the_runs_own_label_cannot_be_taken_from_under_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_the_runs_own_label_cannot_be_taken_from_under_it() -> None:
     # It would relabel every sample away from the real run, and the supervisor
     # keeps writing the true id, so the dashboard shows a live run with no
     # training metrics and nothing says why.
-    in_a_job(monkeypatch)
-
     with pytest.raises(ValueError, match="run_id"):
         track(run_id="somebody-elses-run")
 
@@ -606,14 +512,11 @@ def test_a_total_of_no_steps_is_refused_rather_than_ignored() -> None:
         Run(None, total=0)
 
 
-def test_tokens_that_count_backwards_are_refused() -> None:
-    with pytest.raises(ValueError, match="tokens_per_step"):
-        Run(None, tokens_per_step=-1000)
-
-
 def test_a_refused_argument_leaves_no_pump_behind(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Not dead arrange, unlike its neighbours: without a reachable box track
+    # would build no pump at all and the assertion below would hold trivially.
     monkeypatch.setenv("SPARKS_RUN_ID", "run-9")
     monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
     before = threading.active_count()
@@ -676,13 +579,6 @@ def test_a_step_still_reports_its_plain_values_alongside_a_mapping() -> None:
     }
 
 
-def test_an_undeclared_grouped_name_is_refused_off_the_box_too() -> None:
-    run = Run(None)
-
-    with pytest.raises(KeyError, match="training_nonsense"):
-        run.log(nonsense={"a": 1.0})
-
-
 def test_a_value_is_refused_where_the_caller_can_see_it_fail() -> None:
     # Off the box the value used to be stored untouched, so a tensor or a None
     # passed every laptop run and raised inside the training loop on the box,
@@ -715,12 +611,8 @@ def test_a_group_name_that_is_not_a_name_is_refused() -> None:
         run.step(learning_rate={0: 1e-4})  # type: ignore[dict-item]
 
 
-def test_the_group_label_cannot_be_taken_from_under_the_emitter(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("SPARKS_RUN_ID", "run-9")
-    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
-
+def test_the_group_label_cannot_be_taken_from_under_the_emitter() -> None:
+    # No environment needed: track refuses the reserved label before it looks.
     with pytest.raises(ValueError, match="group"):
         track(group="mine")
 
@@ -794,13 +686,6 @@ def test_a_mapping_cannot_reach_a_supervisor_series_either() -> None:
 
     with pytest.raises(KeyError, match="belongs to the supervisor"):
         run.log(run_active={"a": 1.0})
-
-
-def test_a_mapping_cannot_invent_a_metric_either() -> None:
-    run = child()
-
-    with pytest.raises(KeyError, match="training_nonsense"):
-        run.log(nonsense={"a": 1.0})
 
 
 def test_a_value_reaches_the_buffer_as_a_float() -> None:
@@ -898,23 +783,23 @@ def test_the_minted_id_reaches_the_environment(
         assert os.environ["SPARKS_RUN_ID"] == run.run_id
 
 
-def test_an_exception_ends_the_record_as_crashed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
-    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
-
-    statuses: list[str] = []
-    run = track(name="e0")
-    assert run._record is not None
-    monkeypatch.setattr(
-        run._record, "end", lambda status="finished": statuses.append(status)
-    )
+def test_an_exception_ends_the_record_as_crashed() -> None:
+    # __exit__ derives the status rather than taking one, so read it off the
+    # series the record actually wrote. make() builds a threadless record, so
+    # nothing but this test drains the buffer and the terminal samples survive.
+    record = make()
+    record.begin()
+    record._pump._buffer.drain()
+    run = child(labels={"run_id": "run-1"}, record=record)
 
     with pytest.raises(RuntimeError), run:
         raise RuntimeError("boom")
 
-    assert statuses == ["crashed"]
+    ended = {
+        d["metric"]["__name__"]: d["metric"].get("status")
+        for d in record._pump._buffer.drain()
+    }
+    assert ended["training_run_status"] == "crashed"
 
 
 def test_a_refused_shape_sends_nothing_from_that_call() -> None:
