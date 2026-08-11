@@ -25,12 +25,23 @@ no `sparks-runner`, no `sparks demo`.
 
 ## Install
 
-On a laptop, into any venv:
+On a laptop, as a tool rather than into a project venv: the client is run from your own
+training project and needs nothing from this checkout.
 
 ```sh
-uv pip install -e .          # from a checkout
+uv tool install git+https://github.com/vtemian/sparks@v0.1.0
+sparks setup                 # writes the box registry into Docker's daemon.json
 sparks --help                # confirms the client is on PATH
 ```
+
+Pin the tag. Without one you track `main`, and Docker's layer cache will keep serving whatever
+sparks an image was first built with, however far main has moved: that failed a run with
+`ImportError` on a name main had had for an hour. The `git+` form shells out to `git`; on a
+machine without it, `uv tool install
+https://github.com/vtemian/sparks/archive/refs/tags/v0.1.0.tar.gz` is the same package.
+
+From a checkout, `make install` does the tool install and `sparks setup` against the working
+tree you have.
 
 On the box, sparks ships inside the queue image; converge sparkup rather than installing
 by hand. To put a working tree on the box for development:
