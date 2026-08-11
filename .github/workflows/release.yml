@@ -1,0 +1,40 @@
+# A tag is the release. Nothing publishes from a laptop, so what reaches PyPI
+# is always something CI built from a tag it can name.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # Trusted publishing: PyPI mints a short-lived token from this, so the
+      # repository holds no API key to leak or rotate.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # The tag and the version have to agree, or `pip install sparks-dgx==1.2.3`
+      # installs something that never called itself that.
+      - name: Refuse a tag that disagrees with the version
+        run: |
+          set -euo pipefail
+          tagged="${GITHUB_REF_NAME#v}"
+          declared="$(uv version --short)"
+          test "$tagged" = "$declared" || {
+            echo "tag $GITHUB_REF_NAME says $tagged, pyproject says $declared"
+            exit 1
+          }
+
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1

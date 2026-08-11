@@ -1,5 +1,9 @@
 [project]
-name = "sparks"
+# The import name and the command are both `sparks`; the distribution cannot
+# be, because PyPI's `sparks` is held by an unrelated project abandoned in
+# 2019. A distribution name that differs from what you import is ordinary:
+# pillow gives you PIL.
+name = "sparks-dgx"
 version = "0.1.0"
 description = "Training runs on the DGX Spark: metrics, launcher, queue"
 readme = "README.md"

@@ -29,6 +29,10 @@ sparks setup you@your-box
 where no password is needed; elsewhere it prints the command. A box it cannot reach is not
 remembered.
 
+Once the package is on PyPI this becomes `uv tool install sparks-dgx`. The distribution is
+`sparks-dgx` because PyPI's `sparks` is held by a project abandoned in 2019; the command and
+the import stay `sparks`, so the odd name is seen once.
+
 Pin the tag. Without one you track `main`, and Docker's layer cache keeps serving whatever
 sparks an image was first built with, however far main has moved. The `git+` form shells out
 to `git`; on a machine without it,
