@@ -1,6 +1,6 @@
 ---
 name: authoring-a-sparks-job
-description: Use when writing or preparing training code to run on a sparks box - instrumenting a loop with sparks.emit, writing the job Dockerfile, and submitting with sparks submit. Covers the closed metric vocabulary, the read-only /data mount, where output survives, and the container traps that make a job fail on the box after submit already succeeded.
+description: Use when writing or preparing training code to run on a sparks box - instrumenting a loop with sparks.emit, writing the job Dockerfile, and submitting with sparks submit. Covers the closed metric vocabulary, the read-only /data mount, where output survives, how the image is tagged and when a submit overwrites one, and the container traps that make a job fail on the box after submit already succeeded.
 ---
 
 # Authoring a sparks job
@@ -25,7 +25,8 @@ with track(total=epochs * len(loader), tokens_per_step=batch_size * BLOCK, arm="
         run.step(loss=float(loss))
 ```
 
-Extra keyword arguments to `track` become labels on every sample.
+`total`, `tokens_per_step` and `window` are `track`'s own arguments; every other keyword is a
+label.
 
 `run.step` counts the step and derives `step`, `progress`, `eta_seconds`, `steps_per_sec` and
 `tokens_per_sec` from it. **A value you pass wins over the derived one**, so
@@ -38,9 +39,9 @@ What `track` was not given is not emitted, rather than guessed:
 - no `tokens_per_step`, no `tokens_per_sec`.
 - `epoch` is never derived. Pass it yourself: `run.step(loss=…, epoch=epoch + 1)`.
 
-Rates are measured over a sliding window of the most recent steps, so **the first step reports
-no rate at all**: a rate needs two of them. One missing point at the start of a run is not a
-broken emitter.
+Rates are measured over a sliding window of the most recent steps (20, or `window=`), so **the
+first step reports no rate at all**: a rate needs two of them. One missing point at the start
+of a run is not a broken emitter.
 
 Two steps landing in the same millisecond keep only the first: a series carries one value per
 millisecond and the buffer drops the rest. A loop running faster than 1kHz is downsampled
@@ -50,13 +51,20 @@ rather than refused, so `training_step` shows gaps. Report every N steps if that
 epoch is not a training step.
 
 Off the box, `track` yields a run that reports nothing, so the same script runs on a laptop
-**with no `is not None` guard around it**. It still counts steps and still checks your metric
-names, so a typo fails on the laptop rather than surviving to the first step on the box. Leaving the `with` block flushes and stops
-the pump; an exception inside it propagates rather than being swallowed.
+**with no `is not None` guard around it**. It still counts steps, and it still checks metric
+names, label names, group keys and values, so a typo fails on the laptop rather than surviving
+to the first step on the box. An exception inside the `with` block propagates rather than being
+swallowed.
 
-Extra keyword arguments are labels on every sample: keep them few and low-cardinality.
-`run_id` is not yours to set, and `track` refuses it rather than relabelling the run away from
-the one the supervisor is recording.
+Labels ride on every sample, so keep them few and low-cardinality. `run_id` and `group` are
+the emitter's own and are refused: one would relabel the run away from the one the supervisor
+is recording, the other is the label a grouped value already carries. A label name Prometheus
+would reject fails inside `track`, on your thread, rather than later inside the pump where
+nothing would report it.
+
+`total` and `tokens_per_step` count things and may not be below 1, and `window` needs at least
+two steps to measure an interval at all. All three are checked before the pump is built, so a
+rejected argument leaves no thread behind.
 
 ### The metric names are a closed set
 
@@ -91,6 +99,10 @@ run.step(loss=0.5, learning_rate={"adapter": 2e-4, "norms": 2e-5})
 Pass a mapping instead of a number and you get one series per group, labelled `group`. Nothing
 else a metric can be is a mapping, so this needs no method of its own. `run.log` takes them too.
 
+The keys are label values and must already be strings; a non-string one raises rather than
+being stringified. `0` and `"0"` are two entries in your dict and one series on the wire,
+sharing a timestamp, which is a duplicate sample and a 400 that rolls the whole batch back.
+
 **Any declared metric takes one**, deliberately: a multi-task run groups `loss` by task, a
 multi-head one groups `eval_loss` by head. Pick one shape per metric and keep it: reporting the
 same name both ways raises, because the two are separate series with one name and the panel
@@ -110,8 +122,14 @@ refuses `training_run_info`,
 writers on one series is a 400 from the remote-write receiver that rolls back the whole
 batch — losing your metrics too, not just the duplicated one.
 
-Leaving the `track` block, or calling `run.end()` yourself, flushes and stops the pump. The
-status is **not yours to set**: the supervisor decides it from how the process exited.
+Leaving the `track` block, or calling `run.end()` yourself, flushes the buffer, stops the pump
+and marks every series the run wrote stale, so the curves stop where the run stopped rather
+than holding their last value across Grafana's five-minute lookback. A process that dies on a
+signal never reaches that — Python's default SIGTERM handling skips `atexit` — so an aborted
+or OOM-killed run does flat-line. Handle SIGTERM and call `run.end()` if you care what the
+graph looks like afterwards; nothing else about the run's record depends on it.
+
+The status is **not yours to set**: the supervisor decides it from how the process exited.
 
 ### Bridging a framework
 
@@ -181,6 +199,10 @@ reported success.
 - **Match the box's CUDA.** The DGX Spark is GB10, compute capability sm_121, driver CUDA
   13.0. A cu128 torch build has no kernels for it and falls back to the CPU *silently* — the
   run looks healthy and simply never finishes.
+- **A slim base has no C compiler, and torch wants one at runtime.** Triton compiles kernels
+  on the first backward pass, so a GPU image needs `gcc` and `libc6-dev` even though nothing
+  in it builds at image time. Like the missing `HOME` above, this surfaces at the first
+  backward pass, so a crash there is a packaging problem rather than a training one.
 - **Put the cheap, often-edited layers below the expensive ones.** Multi-gigabyte torch
   layers above a frequently-edited one get pushed again on every submit. In practice that
   means the sparks install and `COPY` go last.
@@ -235,8 +257,21 @@ Submit prints the job id on stdout and nothing else — build and push progress 
 so `JOB=$(sparks submit --data ./corpus --name e0 -- python /app/train.py)` means what it
 looks like.
 
-If it dies at push, Docker on this machine is not allowed to talk to the box's plain-HTTP
-registry. `sparks setup` fixes that; it needs a Docker restart afterwards.
+`--data` goes up with rsync, mirroring the folder (`--archive --delete`) and always skipping
+`.git/`, `__pycache__/`, `*.pyc` and `.venv/`. A `.dockerignore` **inside that folder** is read
+as a further exclude list. Submitting needs `rsync` and `ssh` on this machine.
+
+The image is tagged `<registry>/<user>/<name>:<sha>`, where the user is the account ssh
+authenticates as and the sha is `--context`'s HEAD, or `latest` outside a git checkout. **Two
+submits from one commit under one `--name` push the same tag**, so the second overwrites the
+first, and a job still queued against that tag pulls the new image when it starts. Give each
+experiment its own `--name`, or commit before submitting.
+
+The client talks to the box named by `--host`, else `$SPARKS_HOST`, else whatever
+`sparks setup you@your-box` remembered in `~/.config/sparks/config.toml`. Run setup once per
+machine: it also adds the box's plain-HTTP registry to Docker's `insecure-registries`, which
+is what a push dying at the registry means it has not done. It restarts Docker itself on
+macOS, and prints the `systemctl` line on Linux rather than asking you for root.
 
 ## Prove the path before you spend an hour on it
 

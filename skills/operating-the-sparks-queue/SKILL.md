@@ -1,13 +1,15 @@
 ---
 name: operating-the-sparks-queue
-description: Use when watching, diagnosing, stopping or resubmitting training jobs already on a sparks box - reading sparks queue, logs and status, working out why a run failed, and cancel/abort/retry/remove. Covers the machine-readable --json forms, the states, and what each failure detail actually means.
+description: Use when watching, diagnosing, stopping or resubmitting training jobs already on a sparks box - reading sparks queue, logs and status, working out why a run failed, and cancel/abort/retry/remove. Covers the machine-readable --json forms, the states, what each failure detail actually means, which Grafana board answers which question, and how to tell a stuck runner from a busy one.
 ---
 
 # Operating the sparks queue
 
-Every verb here runs on a laptop and travels over SSH to the box named by `$SPARKS_HOST` or
-`--host`. There is no local mode: a command that tells you to set `SPARKS_HOST` never
-reached the box at all.
+Every verb here runs on a laptop and travels over SSH to the box. Which box, in order:
+`--host`, then `$SPARKS_HOST`, then whatever `sparks setup you@your-box` wrote to
+`~/.config/sparks/config.toml`. What setup remembered is the fallback and never an override,
+so a one-off `SPARKS_HOST` reaches another box without editing a file. There is no local
+mode: a command that says there is no box yet never reached one at all.
 
 ## Read the queue
 
@@ -29,6 +31,10 @@ will refuse to start that job rather than risk running it twice.
 A job that finished more than six hours ago is gone from plain `queue`, but it is still on
 disk: `queue --all` lists it, and `logs` and `status` resolve it by name or id as usual. An
 empty `queue` is not evidence that a job never existed.
+
+The runner takes **one job at a time**, waiting for it to finish before starting the next, and
+gives that job every GPU on the box. A job sitting at `queued` is not stuck; it is behind the
+one that is running.
 
 ## Naming a job
 
@@ -131,26 +137,67 @@ resubmitting whenever the code has not changed.
 
 ## The curves
 
-Grafana's `training-runs` dashboard takes a `$run_id` variable; `sparks status <job> --json`
-gives you that id under `state.run_id`. The dropdown is scoped to the dashboard's time
-range, so with the default `now-3h` it lists recent runs only — widening the range is what
-surfaces older ones.
+The supervisor hands you the link: where the box's contract names a Grafana, the second line
+of `launch.log` in the job directory is a deep link into `training-runs`, already scoped to
+this run and to the minute before it started. It prints nothing there rather than guessing a
+hostname, so on a box without one, `sparks status <job> --json` gives the id under
+`state.run_id` and the dashboard's `$run_id` dropdown takes it. That dropdown is scoped to
+the dashboard's time range, so with the default `now-3h` it lists recent runs only — widening
+the range is what surfaces older ones.
 
-A finished run's curves flat-line for about five minutes rather than stopping dead. Pushed
-series are not marked stale automatically, so a killed run's non-lifecycle metrics hold
-their last value for the lookback window. Expected, not a bug.
+Three boards, and each answers a different question:
+
+- **`training-runs`** — one run: loss, held-out loss, gradient norm, learning rate and
+  throughput, above the GPU power, utilisation and memory from the same minutes.
+- **`sparks-queue`** — the queue right now: depth by state, longest wait, last runner pass,
+  and the jobs table.
+- **`sparks-overview`** — thirty days of runs and failures, total energy, and cost from a
+  `tariff` textbox you set to your own price per kWh.
+
+**A run that ends normally stops dead rather than flat-lining.** The emitter marks every
+series it wrote stale on the way out, so `training_loss` vanishes from a bare query the moment
+the run ends and only `last_over_time(...)` still finds it. Two deliberate exceptions:
+`training_run_info` is never staled, which is what keeps a finished run selectable in the
+dropdown, and `training_run_active` always is, so anything built on it draws the run's real
+span.
+
+What does flat-line is a run that was **killed**. A signal skips the final flush, so an
+aborted or OOM-killed job's last values sit on the graph for the five-minute lookback while
+`training_run_status` already says how it ended. Read the status, not the tail of the curve.
 
 A run that shows on the dashboard with no end and no status is one whose record was never
 written. Check the job directory is writable by the submitting account; a full disk or a
 wrong owner is the usual cause.
+
+## When the box itself is the problem
+
+`Last pass` on the queue dashboard is `sparks_queue_runner_heartbeat_timestamp_seconds`,
+written on every pass the runner takes, including the ones that find nothing to do. If it is
+minutes old, the container is up and `docker ps` is green and yet nothing will ever start —
+that is the one failure the queue cannot report about itself, and the reason the heartbeat
+exists at all.
+
+Prometheus evaluates `monitoring/alerts/sparks.yml` on the box, but nothing routes it: there
+is no Alertmanager, so "firing" means a series says so and somebody has to look. They are in
+Prometheus's `/rules`, and queryable as `ALERTS{alertname="..."}`.
+
+- `SparksQueueRunnerStuck` — the heartbeat above stopped advancing.
+- `SparksRunIndexEmpty` — `sparks_run_info` is absent: the run index is empty or unreadable,
+  which every other health signal reports as green. Also fires on a box that has simply never
+  completed a run.
+- `SparksTextfileError` and `SparksDuplicateSeries` — node_exporter could not read, or
+  silently dropped, one of the `.prom` files. Neither shows up as a failed scrape.
+- `SparksQueueBacklog` — more than five jobs queued for six hours. Not an error; work piling
+  up behind something that is never going to finish looks exactly like this.
 
 ## Where the files actually are
 
 `summary.json`, `output.log` and `error.txt` live in the box's shared directory under
 `runs/<run_id>/`, and they are the source of truth — Prometheus is the live view. `logs` and
 `status` read them for you, and are the supported way in; reach for `ssh` and a path only
-when you need something they do not expose, such as `pull.log` or `launch.log` in the job
-directory.
+when you need something they do not expose. In the job directory that is `pull.log`, and
+`launch.log`, which is the supervisor's own stdout: the run id, the Grafana deep link, and
+the status it recorded.
 
 `sparks_runs.prom` in node_exporter's textfile directory is rebuilt from the summaries after
 every run, so the run index survives losing the TSDB. The live queue is `sparks_queue.prom`
