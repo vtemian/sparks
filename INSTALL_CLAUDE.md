@@ -189,6 +189,15 @@ labelled `group`. There is no separate method: nothing else a metric can be is a
 second one would have been a second naming convention, since it wanted the full metric name
 while `step` and `log` want the short key.
 
+**Which metrics may be grouped is deliberately open**, and that decision was made rather than
+defaulted into. Restricting it to the obvious three was considered and rejected: a multi-task
+run wants `loss` per task and a multi-head one wants `eval_loss` per head, and a closed list
+would have to guess those in advance. The cost is real and accepted: `progress={...}` and
+`step={...}` are legal, and both feed stat panels that expect one series, so a mapping there
+gives a panel several values and no explanation. `metrics.py` states the openness on the
+declaration itself, because the per-metric descriptions rotted once already by claiming labels
+no code produced.
+
 `track` is the only way training code gets an emitter, and `RunMetrics` is the supervisor's,
 not yours: it defaults to owning the run's lifecycle, so a training script that builds one
 directly writes the same series the supervisor does and both batches die on a 400. A framework

@@ -1,4 +1,4 @@
-METRICS: dict[str, str] = {
+METRICS: dict[str, str] = {  # any of these takes a mapping: one series per group
     "training_run_info": "1, carrying the run's immutable metadata as labels",
     "training_run_start_timestamp_seconds": "unix seconds, written once at start",
     "training_run_heartbeat_timestamp_seconds": "unix seconds, refreshed every flush",
@@ -12,11 +12,11 @@ METRICS: dict[str, str] = {
     "training_epoch": "fractional epoch",
     "training_step": "optimizer steps since this run began",
     "training_loss": "training loss for the last batch",
-    "training_grad_norm": "gradient L2 norm; a mapping gives one series per group",
-    "training_learning_rate": "learning rate; a mapping gives one series per group",
+    "training_grad_norm": "gradient L2 norm",
+    "training_learning_rate": "learning rate",
     "training_steps_per_sec": "optimizer steps per second over the last window",
     "training_tokens_per_sec": "tokens per second over the last window",
-    "training_eval_loss": "held-out loss; a mapping gives one series per group",
+    "training_eval_loss": "held-out loss",
     "sparks_run_info": "1, identity + energy_sources of a completed run, as labels",
     "sparks_run_start_timestamp_seconds": "unix seconds the run started",
     "sparks_run_duration_seconds": "wall-clock duration",

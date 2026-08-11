@@ -90,6 +90,11 @@ run.step(loss=0.5, learning_rate={"adapter": 2e-4, "norms": 2e-5})
 
 Pass a mapping instead of a number and you get one series per group, labelled `group`. Nothing
 else a metric can be is a mapping, so this needs no method of its own. `run.log` takes them too.
+
+**Any declared metric takes one**, deliberately: a multi-task run groups `loss` by task, a
+multi-head one groups `eval_loss` by head. Grouping a metric that describes the run rather than
+a value is legal and probably not what you want, though: `progress` and `step` feed stat panels
+that expect a single series, and a mapping quietly gives them several.
 Use it wherever one averaged series would describe neither half — a LoRA adapter and the
 layer norms beneath it train at learning rates an order of magnitude apart, and a single
 `training_learning_rate` series describes neither.
