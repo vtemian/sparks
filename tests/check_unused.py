@@ -20,13 +20,13 @@ IGNORE_NAMES = frozenset(
 )
 
 
-def findings() -> list[str]:
+def findings(paths: list[Path] | None = None) -> list[str]:
+    scanned = [SRC, TESTS] if paths is None else paths
     cmd = [
         sys.executable,
         "-m",
         "vulture",
-        str(SRC),
-        str(TESTS),
+        *[str(path) for path in scanned],
         f"--min-confidence={MIN_CONFIDENCE}",
     ]
     if IGNORE_NAMES:
@@ -36,7 +36,10 @@ def findings() -> list[str]:
         # 0 = clean, 3 = dead code found. Anything else is a tool failure.
         detail = (result.stderr or result.stdout).strip() or f"exit {result.returncode}"
         raise RuntimeError(f"vulture failed: {detail}")
-    prefix = str(SRC)
+
+    # Only the first path is held to account. The rest are scanned so their
+    # references keep a name alive, not so their own dead code is reported.
+    prefix = str(scanned[0])
     return [line for line in result.stdout.splitlines() if line.startswith(prefix)]
 
 
