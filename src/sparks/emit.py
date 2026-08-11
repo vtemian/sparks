@@ -17,7 +17,7 @@ from sparks.series import Series
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-__all__ = ["Run", "RunMetrics", "track"]
+__all__ = ["Pump", "Run", "RunRecord", "track"]
 
 LOG = logging.getLogger("sparks")
 
@@ -65,25 +65,20 @@ def check_run_shape(
         raise ValueError(f"window needs {MARKS_FOR_A_RATE} steps, not {window}")
 
 
-class RunMetrics:
+RECORD_ONLY = LIFECYCLE | {"training_run_active"}
+
+
+class Pump:
     def __init__(
         self,
-        run_id: str,
         url: str,
-        info: dict[str, str] | None = None,
-        labels: dict[str, str] | None = None,
         autostart: bool = True,
-        lifecycle: bool = True,
+        on_tick: "Callable[[float], None] | None" = None,
+        never_stale: frozenset[str] = frozenset(),
     ) -> None:
-        self._lifecycle = lifecycle
-        self.run_id = run_id
         self.url = url.rstrip("/")
-        self._info = {"run_id": run_id, **(info or {})}
-        self._labels = {"run_id": run_id, **(labels or {})}
-        # Built and discarded: a bad label must fail here, on the caller's
-        # thread, rather than inside the pump where nothing would report it.
-        Series("training_run_info", self._info)
-        Series("training_run_heartbeat_timestamp_seconds", self._labels)
+        self._on_tick = on_tick
+        self._never_stale = never_stale
         self._buffer = Buffer()
         self._writer: Any = None
         self._thread: Any = None
@@ -91,124 +86,10 @@ class RunMetrics:
         if autostart:
             self._start()
 
-    def begin(self) -> None:
-        if not self._lifecycle:
-            return
-
-        now = time.time()
-        self._sample(Series("training_run_info", self._info), 1.0, now)
-        self._sample(
-            Series("training_run_start_timestamp_seconds", self._labels), now, now
-        )
-        self._beat(now)
-
-    def log(self, **values: float) -> None:
-        now = time.time()
-        for key, value in values.items():
-            name = training_metric(key)
-            self._refuse_if_not_ours(name)
-            self._sample(Series(name, self._labels), float(value), now)
-
-    def log_group(self, name: str, by_group: dict[str, float]) -> None:
-        if name not in METRICS:
-            raise KeyError(f"{name} is not declared in sparks.metrics.METRICS")
-        self._refuse_if_not_ours(name)
-        now = time.time()
-        for group, value in by_group.items():
-            self._sample(
-                Series(name, {**self._labels, "group": group}), float(value), now
-            )
-
-    def end(self, status: str = "finished") -> None:
-        if not self._lifecycle:
-            self._shutdown()
-            return
-
-        now = time.time()
-        self._sample(
-            Series("training_run_end_timestamp_seconds", self._labels), now, now
-        )
-        self._sample(
-            Series("training_run_status", {**self._labels, "status": status}), 1.0, now
-        )
-        self._shutdown()
-
-    def __enter__(self) -> Self:
-        self.begin()
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        self.end("crashed" if exc_type else "finished")
-
-    def _sample(self, series: Series, value: float, when: float) -> None:
+    def sample(self, series: Series, value: float, when: float) -> None:
         self._buffer.add(series, value, int(when * 1000))
 
-    def _refuse_if_not_ours(self, name: str) -> None:
-        # Asymmetric on purpose: a standalone RunMetrics has no child and owns
-        # both halves, so only the child side is constrained.
-        if self._lifecycle:
-            return
-
-        if name in LIFECYCLE or name == "training_run_active":
-            raise KeyError(
-                f"{name} belongs to the supervisor; a child emitter writing it "
-                "would collide on the same series"
-            )
-
-    def _beat(self, now: float) -> None:
-        if not self._lifecycle:
-            return
-
-        self._sample(
-            Series("training_run_heartbeat_timestamp_seconds", self._labels), now, now
-        )
-        self._sample(Series("training_run_info", self._info), 1.0, now)
-        # Stale-marked at end(), unlike the info metric, so an annotation on it
-        # draws the run's real span.
-        self._sample(Series("training_run_active", self._labels), 1.0, now)
-
-    def _start(self) -> None:
-        self._writer = RemoteWriter(
-            url=f"{self.url}/api/v1/write",
-            timeout=5.0,
-            retries=3,
-            backoff_factor=0.5,
-            sort_labels=True,
-            strict_timestamps=True,
-            auto_convert_seconds_to_ms=False,
-        )
-        self._stop = threading.Event()
-        self._thread = threading.Thread(
-            target=self._pump, name="sparks-pump", daemon=True
-        )
-        self._thread.start()
-        # Backstop: a run killed without reaching end() still flushes what it had.
-        atexit.register(self._shutdown)
-
-    def _pump(self) -> None:
-        while not self._stop.wait(FLUSH_SECONDS):
-            try:
-                self._beat(time.time())
-                self._flush()
-            except Exception as exc:  # deliberately broad: the pump must not die
-                LOG.warning("sparks: pump cycle failed: %s", exc, exc_info=True)
-
-    def _flush(self) -> None:
-        batch = self._buffer.drain()
-        if not batch:
-            return
-
-        try:
-            self._writer.send(batch)
-        except Exception as exc:  # noqa: BLE001 -- telemetry never kills a run
-            LOG.warning("sparks: dropped %d series: %s", len(batch), exc)
-
-    def _shutdown(self) -> None:
+    def close(self) -> None:
         if self._stop is None or self._stop.is_set():
             return
 
@@ -227,6 +108,44 @@ class RunMetrics:
 
         self._flush()
         self._mark_stale()
+
+    def _start(self) -> None:
+        self._writer = RemoteWriter(
+            url=f"{self.url}/api/v1/write",
+            timeout=5.0,
+            retries=3,
+            backoff_factor=0.5,
+            sort_labels=True,
+            strict_timestamps=True,
+            auto_convert_seconds_to_ms=False,
+        )
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name="sparks-pump", daemon=True
+        )
+        self._thread.start()
+        # Backstop: a run killed without reaching close() still flushes.
+        atexit.register(self.close)
+
+    def _run(self) -> None:
+        while not self._stop.wait(FLUSH_SECONDS):
+            try:
+                if self._on_tick is not None:
+                    self._on_tick(time.time())
+
+                self._flush()
+            except Exception as exc:  # deliberately broad: the pump must not die
+                LOG.warning("sparks: pump cycle failed: %s", exc, exc_info=True)
+
+    def _flush(self) -> None:
+        batch = self._buffer.drain()
+        if not batch:
+            return
+
+        try:
+            self._writer.send(batch)
+        except Exception as exc:  # noqa: BLE001 -- telemetry never kills a run
+            LOG.warning("sparks: dropped %d series: %s", len(batch), exc)
 
     def _mark_stale(self) -> None:
         batch = self._stale_batch()
@@ -249,21 +168,79 @@ class RunMetrics:
                 "timestamps": [max(ended, last + 1)],
             }
             for series, last in self._buffer.seen().items()
-            if series.name not in LIFECYCLE
+            if series.name not in self._never_stale
         ]
+
+
+class RunRecord:
+    def __init__(
+        self,
+        run_id: str,
+        url: str,
+        info: dict[str, str] | None = None,
+        autostart: bool = True,
+    ) -> None:
+        self.run_id = run_id
+        self._ended = False
+        self._info = {"run_id": run_id, **(info or {})}
+        self._labels = {"run_id": run_id}
+        # Built and discarded: a bad label must fail here, on the caller's
+        # thread, rather than inside the pump where nothing would report it.
+        Series("training_run_info", self._info)
+        # LIFECYCLE is never staled: end() writes the status, and a marker a
+        # millisecond later would erase it before anything could read it.
+        self._pump = Pump(
+            url, autostart=autostart, on_tick=self.beat, never_stale=LIFECYCLE
+        )
+
+    def begin(self) -> None:
+        now = time.time()
+        self._pump.sample(Series("training_run_info", self._info), 1.0, now)
+        self._pump.sample(
+            Series("training_run_start_timestamp_seconds", self._labels), now, now
+        )
+        self.beat(now)
+
+    def beat(self, now: float) -> None:
+        self._pump.sample(
+            Series("training_run_heartbeat_timestamp_seconds", self._labels), now, now
+        )
+        self._pump.sample(Series("training_run_info", self._info), 1.0, now)
+        # Stale-marked at end(), unlike the info metric, so an annotation on it
+        # draws the run's real span.
+        self._pump.sample(Series("training_run_active", self._labels), 1.0, now)
+
+    def end(self, status: str = "finished") -> None:
+        # The pump's close is idempotent, but these two samples are written
+        # before it, so a second end would record a second, contradictory one.
+        if self._ended:
+            return
+
+        self._ended = True
+        now = time.time()
+        self._pump.sample(
+            Series("training_run_end_timestamp_seconds", self._labels), now, now
+        )
+        self._pump.sample(
+            Series("training_run_status", {**self._labels, "status": status}), 1.0, now
+        )
+        self._pump.close()
 
 
 class Run:
     def __init__(
         self,
-        metrics: RunMetrics | None,
+        pump: Pump | None,
+        labels: dict[str, str] | None = None,
         total: int | None = None,
         tokens_per_step: int | None = None,
         window: int = RATE_WINDOW_STEPS,
         clock: "Callable[[], float]" = time.monotonic,
     ) -> None:
         check_run_shape(total, tokens_per_step, window)
-        self._metrics = metrics
+        self._pump = pump
+        self._labels = labels or {}
+        Series("training_loss", self._labels)
         self.total = total
         self.tokens_per_step = tokens_per_step
         self.clock = clock
@@ -274,9 +251,6 @@ class Run:
         self._marks: deque[float] = deque(maxlen=window)
 
     def __enter__(self) -> Self:
-        if self._metrics is not None:
-            self._metrics.begin()
-
         return self
 
     def __exit__(
@@ -285,37 +259,17 @@ class Run:
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        self._close("crashed" if exc_type else "finished")
+        self.end()
 
     def end(self) -> None:
-        self._close("finished")
-
-    def _close(self, status: str) -> None:
         if self._ended:
             return
 
-        if self._metrics is not None:
-            self._metrics.end(status)
+        if self._pump is not None:
+            self._pump.close()
 
         # Last, so a failed end leaves the run reporting rather than silent.
         self._ended = True
-
-    def _keep_shape(self, key: str, grouped: bool) -> None:
-        # A metric reported both ways is two series with one name. The receiver
-        # takes both without complaint, and the panel draws two lines carrying
-        # the same legend, which is a worse answer than an error.
-        if self._shapes.setdefault(key, grouped) is grouped:
-            return
-
-        shape = "a mapping" if grouped else "a number"
-        raise ValueError(f"{key} was already reported the other way; {shape} now")
-
-    def _warn_once(self) -> None:
-        if self._warned:
-            return
-
-        self._warned = True
-        LOG.warning("sparks: this run already ended; later samples are dropped")
 
     def step(self, **values: float | dict[str, float]) -> None:
         if self._ended:
@@ -334,29 +288,17 @@ class Run:
             return
 
         # Everything is checked before anything is sent, so a bad third keyword
-        # does not leave the first two already recorded. Checked here rather
-        # than where they are sent, too: checking only when an emitter exists
-        # is how a bad one survives every laptop run and then raises on the
-        # box, inside the training loop, after submit reported success.
+        # does not leave the first two already recorded. Checked whether or not
+        # there is a pump, too: checking only when there is one is how a bad
+        # name survives every laptop run and then raises on the box, inside the
+        # training loop, after submit reported success.
         for key, value in values.items():
-            training_metric(key)
+            self._refuse_the_records(training_metric(key))
             self._keep_shape(key, isinstance(value, dict))
 
-        plain: dict[str, float] = {}
+        now = time.time()
         for key, value in values.items():
-            name = training_metric(key)
-            if not isinstance(value, dict):
-                plain[key] = float(value)
-                continue
-
-            # A mapping is one series per group. Nothing else a metric can be
-            # is a mapping, so this needs no keyword of its own.
-            grouped = {group_name(group): float(each) for group, each in value.items()}
-            if self._metrics is not None:
-                self._metrics.log_group(name, grouped)
-
-        if plain and self._metrics is not None:
-            self._metrics.log(**plain)
+            self._write(training_metric(key), value, now)
 
     def derived(self) -> dict[str, float]:
         values = {"step": float(self.count)}
@@ -390,6 +332,47 @@ class Run:
 
         return (len(self._marks) - 1) / span
 
+    def _write(self, name: str, value: float | dict[str, float], now: float) -> None:
+        if not isinstance(value, dict):
+            self._sample(Series(name, self._labels), float(value), now)
+            return
+
+        # A mapping is one series per group. Nothing else a metric can be is a
+        # mapping, so this needs no keyword of its own.
+        for group, each in value.items():
+            labels = {**self._labels, "group": group_name(group)}
+            self._sample(Series(name, labels), float(each), now)
+
+    def _sample(self, series: Series, value: float, when: float) -> None:
+        if self._pump is not None:
+            self._pump.sample(series, value, when)
+
+    def _refuse_the_records(self, name: str) -> None:
+        if name not in RECORD_ONLY:
+            return
+
+        raise KeyError(
+            f"{name} belongs to the supervisor; a second writer on one series "
+            "is a 400 that rolls back the whole batch"
+        )
+
+    def _keep_shape(self, key: str, grouped: bool) -> None:
+        # A metric reported both ways is two series with one name. The receiver
+        # takes both without complaint, and the panel draws two lines carrying
+        # the same legend, which is a worse answer than an error.
+        if self._shapes.setdefault(key, grouped) is grouped:
+            return
+
+        shape = "a mapping" if grouped else "a number"
+        raise ValueError(f"{key} was already reported the other way; {shape} now")
+
+    def _warn_once(self) -> None:
+        if self._warned:
+            return
+
+        self._warned = True
+        LOG.warning("sparks: this run already ended; later samples are dropped")
+
 
 def track(
     total: int | None = None,
@@ -401,15 +384,13 @@ def track(
         if reserved in labels:
             raise ValueError(f"{reserved} is the emitter's own and cannot be a label")
 
-    # Before the emitter, so a rejected argument leaves no pump thread behind.
+    # Before the pump, so a rejected argument leaves no thread behind.
     check_run_shape(total, tokens_per_step, window)
     run_id = os.environ.get("SPARKS_RUN_ID")
     url = (os.environ.get("SPARKS_PROMETHEUS_URL") or "").strip()
-    metrics = None
+    pump = None
     if run_id and url:
-        # lifecycle=False: the supervisor owns the run record, and two writers
-        # on one series is a 400 that rolls back the whole batch.
-        metrics = RunMetrics(run_id, url, labels=labels, lifecycle=False)
+        pump = Pump(url)
     elif run_id:
         LOG.warning(
             "sparks: SPARKS_RUN_ID is set but SPARKS_PROMETHEUS_URL is not, "
@@ -418,4 +399,10 @@ def track(
     else:
         LOG.debug("not inside a job: this run reports nothing")
 
-    return Run(metrics, total=total, tokens_per_step=tokens_per_step, window=window)
+    return Run(
+        pump,
+        labels={"run_id": run_id or "", **labels},
+        total=total,
+        tokens_per_step=tokens_per_step,
+        window=window,
+    )

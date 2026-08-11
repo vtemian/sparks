@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from sparks.emit import Run, RunMetrics, track
+from sparks.emit import Pump, Run, RunRecord, track
 from sparks.metrics import LIFECYCLE
 from sparks.series import InvalidLabelError
 
@@ -15,23 +15,36 @@ def names(drained: list[dict[str, Any]]) -> set[str]:
     return {d["metric"]["__name__"] for d in drained}
 
 
-def child(**kw: Any) -> RunMetrics:
-    # What track builds inside a job, minus the pump thread.
-    return RunMetrics(
-        run_id="run-9", url="http://unused", autostart=False, lifecycle=False, **kw
-    )
+def sent(run: Run) -> list[dict[str, Any]]:
+    assert run._pump is not None
+    return run._pump._buffer.drain()
 
 
-def make(**kw: Any) -> RunMetrics:
+def pump_of(run: Run) -> Pump:
+    assert run._pump is not None
+    return run._pump
+
+
+def pump() -> Pump:
     # autostart=False keeps the pump thread out of the unit tests; the live
     # test in tests/test_live.py is what exercises the thread and the network.
-    return RunMetrics(run_id="run-1", url="http://unused", autostart=False, **kw)
+    return Pump("http://unused", autostart=False)
+
+
+def child(**kw: Any) -> Run:
+    # What track builds inside a job, minus the thread.
+    kw.setdefault("labels", {"run_id": "run-9"})
+    return Run(pump(), **kw)
+
+
+def make(**kw: Any) -> RunRecord:
+    return RunRecord(run_id="run-1", url="http://unused", autostart=False, **kw)
 
 
 def test_begin_emits_identity_and_start_time() -> None:
     m = make(info={"model": "helium"})
     m.begin()
-    out = m._buffer.drain()
+    out = m._pump._buffer.drain()
     assert names(out) == {
         "training_run_info",
         "training_run_start_timestamp_seconds",
@@ -44,7 +57,9 @@ def test_info_carries_run_id_and_the_supplied_metadata() -> None:
     m = make(info={"model": "helium"})
     m.begin()
     info = next(
-        d for d in m._buffer.drain() if d["metric"]["__name__"] == "training_run_info"
+        d
+        for d in m._pump._buffer.drain()
+        if d["metric"]["__name__"] == "training_run_info"
     )
     assert info["metric"]["run_id"] == "run-1"
     assert info["metric"]["model"] == "helium"
@@ -52,23 +67,21 @@ def test_info_carries_run_id_and_the_supplied_metadata() -> None:
 
 
 def test_log_emits_one_series_per_named_value() -> None:
-    m = make()
+    m = child()
     m.log(step=3, loss=0.5)
-    assert names(m._buffer.drain()) == {"training_step", "training_loss"}
+    assert names(pump_of(m)._buffer.drain()) == {"training_step", "training_loss"}
 
 
 def test_log_refuses_an_undeclared_metric() -> None:
-    import pytest
-
-    m = make()
+    run = child()
     with pytest.raises(KeyError):
-        m.log(not_a_real_metric=1.0)
+        run.log(not_a_real_metric=1.0)
 
 
 def test_series_labels_land_on_every_sample() -> None:
-    m = make(labels={"arm": "real", "seed": "0"})
-    m.log(loss=0.5)
-    loss = m._buffer.drain()[0]
+    run = child(labels={"run_id": "run-1", "arm": "real", "seed": "0"})
+    run.log(loss=0.5)
+    loss = sent(run)[0]
     assert loss["metric"]["arm"] == "real"
     assert loss["metric"]["seed"] == "0"
     assert loss["metric"]["run_id"] == "run-1"
@@ -77,9 +90,9 @@ def test_series_labels_land_on_every_sample() -> None:
 def test_end_emits_terminal_state_and_never_mutates_info() -> None:
     m = make()
     m.begin()
-    m._buffer.drain()
+    m._pump._buffer.drain()
     m.end("finished")
-    out = m._buffer.drain()
+    out = m._pump._buffer.drain()
     assert "training_run_end_timestamp_seconds" in names(out)
     status = next(d for d in out if d["metric"]["__name__"] == "training_run_status")
     assert status["metric"]["status"] == "finished"
@@ -90,52 +103,52 @@ def test_end_emits_terminal_state_and_never_mutates_info() -> None:
 
 
 def test_a_metric_labelled_by_group_keeps_the_group_label() -> None:
-    m = make()
-    m.log_group("training_learning_rate", {"lora": 2e-4, "tables": 2e-5})
-    out = m._buffer.drain()
+    m = child()
+    m.log(learning_rate={"lora": 2e-4, "tables": 2e-5})
+    out = pump_of(m)._buffer.drain()
     assert {d["metric"]["group"] for d in out} == {"lora", "tables"}
 
 
 def test_shutdown_is_idempotent() -> None:
     # Must run with the pump started. With autostart=False `_stop` is None and
-    # _shutdown returns on its first line, so the guard this test exists for is
-    # never reached and the test passes having exercised nothing. The second
-    # call is not hypothetical: _start registers _shutdown with atexit, so every
-    # real run calls it twice.
-    m = RunMetrics(run_id="run-1", url="http://127.0.0.1:1", autostart=True)
-    m.begin()
-    assert m._thread is not None and m._thread.is_alive()
-    m.end("finished")
-    assert not m._thread.is_alive(), "the pump thread should have stopped"
-    m.end("finished")  # must not raise, and must not restart anything
-    assert not m._thread.is_alive()
+    # close() returns on its first line, so the guard this test exists for is
+    # never reached. The second call is not hypothetical: _start registers
+    # close with atexit, so every real run calls it twice.
+    record = RunRecord(run_id="run-1", url="http://127.0.0.1:1", autostart=True)
+    record.begin()
+    assert record._pump._thread.is_alive()
+    record.end("finished")
+    assert not record._pump._thread.is_alive(), "the pump thread should have stopped"
+    record.end("finished")  # must not raise, and must not restart anything
+    assert not record._pump._thread.is_alive()
 
 
-def test_a_push_failure_does_not_propagate() -> None:
+def test_a_push_failure_does_not_propagate(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     # A metrics outage must never kill a training run. The URL is unroutable.
-    m = RunMetrics(run_id="run-1", url="http://127.0.0.1:1", autostart=True)
-    m.begin()
-    m.log(loss=0.5)
-    m.end("finished")  # must not raise
+    run = Run(Pump("http://127.0.0.1:1"), labels={"run_id": "run-1"})
+    run.log(loss=0.5)
+
+    run.end()  # must not raise
+
+    assert "dropped 1 series" in caplog.text
 
 
 def test_the_run_record_is_never_marked_stale() -> None:
-    # end() writes the status and end-time samples, and _mark_stale runs a
-    # millisecond later over everything the buffer has seen. Without the
-    # lifecycle exemption it erases them immediately and training_run_status
-    # never resolves. The live test caught this; this pins it.
-    m = make()
-    m.begin()
-    m.log(loss=0.5)
-    m._buffer.drain()  # what the pump would have sent, so seen() is populated
-    m.end("finished")
-    m._buffer.drain()
+    # end() writes the status, and _mark_stale runs a millisecond later over
+    # everything the buffer has seen. Without the exemption it erases the
+    # status immediately and the run never resolves. The live test caught this.
+    record = make()
+    record.begin()
+    record._pump._buffer.drain()  # what the pump would have sent, so seen() fills
+    record.end("finished")
+    record._pump._buffer.drain()
 
     # Assert on the batch _mark_stale actually builds. Re-deriving the filter
-    # in the test would only check the test's own arithmetic, and would still
-    # pass with the exemption deleted from the implementation.
-    staled = {d["metric"]["__name__"] for d in m._stale_batch()}
-    assert "training_loss" in staled
+    # here would only check the test's own arithmetic.
+    staled = {d["metric"]["__name__"] for d in record._pump._stale_batch()}
+    assert "training_run_active" in staled, "the run's span never ends"
     assert not staled & LIFECYCLE, f"the run's own record was staled: {staled}"
 
 
@@ -143,13 +156,19 @@ def test_a_stale_marker_lands_after_the_sample_it_ends() -> None:
     # Sharing a millisecond with the last real sample is a duplicate-timestamp
     # 400, and remote-write rolls back the whole request, so one collision
     # means no series gets a marker at all.
-    m = make()
+    m = child()
     m.log(loss=0.5)
-    m._buffer.drain()
-    last = {s: ts for s, ts in m._buffer.seen().items() if s.name == "training_loss"}
+    pump_of(m)._buffer.drain()
+    last = {
+        s: ts
+        for s, ts in pump_of(m)._buffer.seen().items()
+        if s.name == "training_loss"
+    }
     ((series, sent_at),) = last.items()
     marker = next(
-        d for d in m._stale_batch() if d["metric"]["__name__"] == "training_loss"
+        d
+        for d in pump_of(m)._stale_batch()
+        if d["metric"]["__name__"] == "training_loss"
     )
     assert marker["timestamps"][0] > sent_at
     assert series.name == "training_loss"
@@ -159,11 +178,10 @@ def test_an_invalid_label_is_refused_on_the_caller_thread() -> None:
     # Not five seconds later on the pump, where it would kill telemetry for the
     # rest of the run behind a bare threading traceback.
     with pytest.raises(InvalidLabelError):
-        RunMetrics(run_id="r", url="http://unused", autostart=False, info={"g-s": "a"})
+        RunRecord(run_id="r", url="http://unused", autostart=False, info={"g-s": "a"})
+
     with pytest.raises(InvalidLabelError):
-        RunMetrics(
-            run_id="r", url="http://unused", autostart=False, labels={"a b": "c"}
-        )
+        Run(pump(), labels={"a b": "c"})
 
 
 def test_run_active_is_emitted_and_gets_a_stale_marker() -> None:
@@ -171,24 +189,26 @@ def test_run_active_is_emitted_and_gets_a_stale_marker() -> None:
     # overshoots by the whole lookback window.
     m = make()
     m.begin()
-    m._buffer.drain()
-    assert "training_run_active" in {d["metric"]["__name__"] for d in m._stale_batch()}
+    m._pump._buffer.drain()
+    assert "training_run_active" in {
+        d["metric"]["__name__"] for d in m._pump._stale_batch()
+    }
 
 
 def test_a_child_emitter_writes_no_lifecycle_series() -> None:
-    # The supervisor and the training child both hold a RunMetrics for one
-    # run_id. Two writers on the SAME series interleave timestamps, which is an
-    # out-of-order 400, and remote-write 1.0 rolls back the whole request,
-    # destroying the batch that carried training_loss.
-    child = RunMetrics(
-        run_id="run-1", url="http://unused", autostart=False, lifecycle=False
-    )
-    child.begin()
-    child.log(loss=0.5)
-    child.end("finished")
-    written = names(child._buffer.drain())
-    assert written == {"training_loss"}
-    assert not written & LIFECYCLE
+    # The record and the training child both report for one run_id. Two writers
+    # on the SAME series interleave timestamps, which is an out-of-order 400,
+    # and remote-write rolls back the whole request, destroying the batch that
+    # carried training_loss. A Run has no method for those series at all, and
+    # refuses them by name as well.
+    run = child()
+    run.log(loss=0.5)
+
+    assert names(sent(run)) == {"training_loss"}
+    assert not hasattr(run, "begin")
+    for name in sorted(LIFECYCLE):
+        with pytest.raises(KeyError, match="belongs to the supervisor"):
+            run.log(**{name.removeprefix("training_"): 1.0})
 
 
 def test_track_outside_a_job_reaches_for_no_emitter_at_all(monkeypatch: Any) -> None:
@@ -196,7 +216,7 @@ def test_track_outside_a_job_reaches_for_no_emitter_at_all(monkeypatch: Any) -> 
     monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
     monkeypatch.delenv("SPARKS_PROMETHEUS_URL", raising=False)
 
-    assert track()._metrics is None
+    assert track()._pump is None
 
 
 def test_track_inside_a_job_builds_a_child_carrying_its_labels(
@@ -206,39 +226,37 @@ def test_track_inside_a_job_builds_a_child_carrying_its_labels(
     monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
     run = track(arm="real")
 
-    assert run._metrics is not None
-    assert run._metrics.run_id == "run-7"
-
     run.step(loss=1.0)
-    sample = run._metrics._buffer.drain()[0]
-    assert sample["metric"]["arm"] == "real"
 
-    # Still a child: entering the block writes no lifecycle series.
-    with run:
-        assert run._metrics._buffer.drain() == []
+    sample = sent(run)[0]
+    assert sample["metric"]["run_id"] == "run-7"
+    assert sample["metric"]["arm"] == "real"
+    run.end()
 
 
 def test_a_child_cannot_write_a_supervisor_series() -> None:
     # Byte-identical series from two processes is the out-of-order rollback the
     # whole split exists to prevent, and it is silent: the batch carrying the
     # loss simply never lands. Enforced in code, not by convention.
-    child = RunMetrics(
-        run_id="run-1", url="http://unused", autostart=False, lifecycle=False
-    )
+    child = Run(pump(), labels={"run_id": "run-9"})
     with pytest.raises(KeyError):
         child.log(run_active=1.0)
     with pytest.raises(KeyError):
         child.log(run_start_timestamp_seconds=1000.0)
 
 
-def test_a_standalone_run_may_still_write_both_halves() -> None:
-    # A bare `RunMetrics` has no child and owns everything. The guard is
-    # asymmetric for exactly this reason; making it symmetric breaks that.
-    m = make()
-    m.begin()
-    m.log(loss=0.5)
-    m.log_group("training_grad_norm", {"lora": 1.0})
-    assert "training_loss" in names(m._buffer.drain())
+def test_the_record_writes_its_own_series_and_has_no_way_to_write_yours() -> None:
+    # The old asymmetric guard let one class do both jobs depending on a flag.
+    # Now the record simply has no log(), so the split is structural.
+    record = make()
+
+    record.begin()
+
+    assert names(record._pump._buffer.drain()) >= {
+        "training_run_info",
+        "training_run_start_timestamp_seconds",
+    }
+    assert not hasattr(record, "log")
 
 
 def test_a_stale_marker_actually_carries_the_stale_nan() -> None:
@@ -247,11 +265,13 @@ def test_a_stale_marker_actually_carries_the_stale_nan() -> None:
     # flat-lines for the whole lookback window instead of stopping dead.
     # It must be THE stale NaN, 0x7FF0000000000002, not any NaN: an ordinary
     # NaN is a value, and only this bit pattern ends the series.
-    m = make()
+    m = child()
     m.log(loss=0.5)
-    m._buffer.drain()
+    pump_of(m)._buffer.drain()
     marker = next(
-        d for d in m._stale_batch() if d["metric"]["__name__"] == "training_loss"
+        d
+        for d in pump_of(m)._stale_batch()
+        if d["metric"]["__name__"] == "training_loss"
     )
     (value,) = marker["values"]
     assert struct.pack("<d", value) == struct.pack("<Q", 0x7FF0000000000002)
@@ -279,17 +299,16 @@ def test_track_outside_a_job_yields_a_run_that_does_nothing(
         run.log(eval_loss=0.5)
         run.log(learning_rate={"adapter": 2e-4})
 
-    assert run._metrics is None
+    assert run._pump is None
     assert run.count == 1
 
 
 def test_track_inside_a_job_logs_through_a_child_emitter() -> None:
-    emitter = child(labels={"arm": "lora"})
-    run = Run(emitter)
+    run = child(labels={"arm": "lora"})
 
     run.step(loss=0.25)
 
-    drained = emitter._buffer.drain()
+    drained = sent(run)
     assert "training_loss" in names(drained)
     assert drained[0]["metric"]["arm"] == "lora"
 
@@ -300,12 +319,11 @@ def ticking(*times: float) -> Callable[[], float]:
 
 
 def test_a_tracked_step_derives_progress_from_the_total() -> None:
-    emitter = child()
-    run = Run(emitter, total=4)
+    run = child(total=4)
 
     run.step(loss=1.0)
 
-    drained = emitter._buffer.drain()
+    drained = sent(run)
     progress = next(
         d for d in drained if d["metric"]["__name__"] == "training_progress"
     )
@@ -315,23 +333,21 @@ def test_a_tracked_step_derives_progress_from_the_total() -> None:
 def test_without_a_total_progress_is_absent_rather_than_wrong() -> None:
     # A guessed denominator renders a progress bar that lies. Emitting nothing
     # is the honest failure.
-    emitter = child()
-    run = Run(emitter)
+    run = child()
 
     run.step(loss=1.0)
 
-    drained = emitter._buffer.drain()
+    drained = sent(run)
     assert "training_progress" not in names(drained)
     assert "training_eta_seconds" not in names(drained)
 
 
 def test_a_value_you_pass_wins_over_the_one_track_derived() -> None:
-    emitter = child()
-    run = Run(emitter, total=4)
+    run = child(total=4)
 
     run.step(step=99.0)
 
-    drained = emitter._buffer.drain()
+    drained = sent(run)
     step = next(d for d in drained if d["metric"]["__name__"] == "training_step")
     assert step["values"] == [99.0]
 
@@ -390,9 +406,9 @@ def test_leaving_the_block_stops_the_pump(monkeypatch: pytest.MonkeyPatch) -> No
     with run:
         run.step(loss=1.0)
 
-    assert run._metrics is not None
-    assert run._metrics._thread is not None
-    assert not run._metrics._thread.is_alive()
+    assert run._pump is not None
+    assert run._pump._thread is not None
+    assert not run._pump._thread.is_alive()
 
 
 def test_an_exception_leaves_the_block_without_being_swallowed(
@@ -452,10 +468,10 @@ def test_no_keyword_is_reserved_out_from_under_a_label(
     monkeypatch.setenv("SPARKS_RUN_ID", "run-9")
     monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
     with track(autostart="no") as run:
-        assert run._metrics is not None
+        assert run._pump is not None
         run.step(loss=1.0)
 
-        assert run._metrics._buffer.drain()[0]["metric"]["autostart"] == "no"
+        assert sent(run)[0]["metric"]["autostart"] == "no"
 
 
 def test_reporting_after_the_run_ended_says_so_rather_than_vanishing(
@@ -465,38 +481,36 @@ def test_reporting_after_the_run_ended_says_so_rather_than_vanishing(
     # Nothing drains the buffer once the pump is stopped, and the whole point
     # of track is that the call site carries no guard, so a stray log after the
     # block is an easy mistake to make and an invisible one to debug.
-    emitter = child()
-    run = Run(emitter)
+    run = child()
     run.end()
 
     run.step(loss=1.0)
 
     assert "already ended" in caplog.text
-    assert emitter._buffer.drain() == []
+    assert sent(run) == []
 
 
-def test_a_run_that_owns_its_lifecycle_records_a_start_and_a_crash() -> None:
-    # track only ever builds children, where begin() and the status are both
-    # ignored, so nothing else here would notice these two being deleted.
-    emitter = make()
-    run = Run(emitter)
+def test_a_record_carries_the_status_it_was_ended_with() -> None:
+    record = make()
+    record.begin()
+    record._pump._buffer.drain()
 
-    with pytest.raises(ValueError, match="boom"), run:
-        emitter._buffer.drain()
-        raise ValueError("boom")
+    record.end("crashed")
 
     ended = {
         d["metric"]["__name__"]: d["metric"].get("status")
-        for d in emitter._buffer.drain()
+        for d in record._pump._buffer.drain()
     }
     assert ended["training_run_status"] == "crashed"
 
 
-def test_entering_the_block_writes_the_start_of_a_run_it_owns() -> None:
-    emitter = make()
+def test_beginning_a_record_writes_the_start_of_the_run() -> None:
+    record = make()
 
-    with Run(emitter):
-        assert "training_run_start_timestamp_seconds" in names(emitter._buffer.drain())
+    record.begin()
+
+    written = names(record._pump._buffer.drain())
+    assert "training_run_start_timestamp_seconds" in written
 
 
 def test_every_way_of_reporting_stops_once_the_run_has_ended(
@@ -504,34 +518,33 @@ def test_every_way_of_reporting_stops_once_the_run_has_ended(
 ) -> None:
     # step returns before it reaches log, so a guard on log or log_group alone
     # would go unnoticed by a test that only calls step.
-    emitter = child()
-    run = Run(emitter)
+    run = child()
     run.end()
-    emitter._buffer.drain()
+    sent(run)
 
     run.step(loss=1.0)
     run.log(eval_loss=1.0)
     run.log(learning_rate={"adapter": 1.0})
 
-    assert emitter._buffer.drain() == []
+    assert sent(run) == []
     assert len([r for r in caplog.records if "already ended" in r.message]) == 1
 
 
-def test_ending_a_run_twice_records_one_ending() -> None:
+def test_ending_a_record_twice_records_one_ending() -> None:
     # The sleep is the test: without it both endings share a millisecond and
     # the buffer drops the second, so a missing guard would look guarded.
-    emitter = make()
-    run = Run(emitter)
-    run.end()
+    record = make()
+    record.begin()
+    record.end("finished")
     time.sleep(0.002)
 
-    run.end()
+    record.end("finished")
 
     # One dict per series carrying every sample, so count the values: counting
     # the dicts would read the same whether it ended once or twice.
     status = next(
         d
-        for d in emitter._buffer.drain()
+        for d in record._pump._buffer.drain()
         if d["metric"]["__name__"] == "training_run_status"
     )
     assert len(status["values"]) == 1
@@ -595,13 +608,12 @@ def test_a_job_with_no_prometheus_url_says_so_out_loud(
 
     run = track()
 
-    assert run._metrics is None
+    assert run._pump is None
     assert "SPARKS_PROMETHEUS_URL" in caplog.text
 
 
 def test_a_step_reports_a_mapping_as_one_series_per_group() -> None:
-    emitter = child()
-    run = Run(emitter)
+    run = child()
 
     run.step(
         loss=0.5,
@@ -610,7 +622,7 @@ def test_a_step_reports_a_mapping_as_one_series_per_group() -> None:
 
     by_group = {
         d["metric"]["group"]: d["values"][0]
-        for d in emitter._buffer.drain()
+        for d in sent(run)
         if d["metric"]["__name__"] == "training_learning_rate"
     }
     assert by_group == {"adapter": 2e-4, "norms": 2e-5}
@@ -619,21 +631,22 @@ def test_a_step_reports_a_mapping_as_one_series_per_group() -> None:
 def test_a_grouped_value_takes_the_short_key_like_every_other() -> None:
     # log_group used to want "training_learning_rate" while step and log took
     # the key without its prefix. One convention, not two.
-    emitter = child()
-    run = Run(emitter)
+    run = child()
 
     run.log(learning_rate={"adapter": 1.0})
 
-    assert names(emitter._buffer.drain()) == {"training_learning_rate"}
+    assert names(sent(run)) == {"training_learning_rate"}
 
 
 def test_a_step_still_reports_its_plain_values_alongside_a_mapping() -> None:
-    emitter = child()
-    run = Run(emitter)
+    run = child()
 
     run.step(loss=0.5, learning_rate={"adapter": 1.0})
 
-    assert names(emitter._buffer.drain()) >= {"training_loss", "training_learning_rate"}
+    assert names(sent(run)) >= {
+        "training_loss",
+        "training_learning_rate",
+    }
 
 
 def test_an_undeclared_grouped_name_is_refused_off_the_box_too() -> None:
@@ -713,22 +726,18 @@ def test_a_step_reports_the_pace_it_measured() -> None:
 
 
 def test_the_first_step_reports_itself_as_step_one() -> None:
-    emitter = child()
-    run = Run(emitter)
+    run = child()
 
     run.step(loss=1.0)
 
-    step = next(
-        d for d in emitter._buffer.drain() if d["metric"]["__name__"] == "training_step"
-    )
+    step = next(d for d in sent(run) if d["metric"]["__name__"] == "training_step")
     assert step["values"] == [1.0]
 
 
 def test_a_step_after_the_end_does_not_advance_the_counter() -> None:
     # log's guard masks step's, so the buffer stays empty either way while the
     # counter drifts and a clock mark is consumed.
-    emitter = child()
-    run = Run(emitter)
+    run = child()
     run.end()
 
     run.step(loss=1.0)
@@ -751,35 +760,32 @@ def test_track_hands_the_run_what_it_was_given(
     assert run._marks.maxlen == 3
 
 
-def test_the_grouped_engine_refuses_a_supervisor_series() -> None:
+def test_a_mapping_cannot_reach_a_supervisor_series_either() -> None:
     # The plain path was pinned; the grouped one became reachable only when a
     # mapping value did.
-    emitter = child()
+    run = child()
 
     with pytest.raises(KeyError, match="belongs to the supervisor"):
-        emitter.log_group("training_run_active", {"a": 1.0})
-
-    with pytest.raises(KeyError, match="belongs to the supervisor"):
-        Run(emitter).log(run_active={"a": 1.0})
+        run.log(run_active={"a": 1.0})
 
 
-def test_the_grouped_engine_refuses_an_undeclared_metric() -> None:
-    emitter = make()
+def test_a_mapping_cannot_invent_a_metric_either() -> None:
+    run = child()
 
     with pytest.raises(KeyError, match="training_nonsense"):
-        emitter.log_group("training_nonsense", {"a": 1.0})
+        run.log(nonsense={"a": 1.0})
 
 
 def test_a_value_reaches_the_buffer_as_a_float() -> None:
     # Without the coercion an int or a tensor reaches Buffer and raises on the
     # pump thread, where _flush's broad except drops the whole batch behind a
     # warning nobody reads.
-    emitter = make()
+    run = child()
 
-    emitter.log(step=3)
-    emitter.log_group("training_learning_rate", {"lora": 2})
+    run.log(step=3)
+    run.log(learning_rate={"lora": 2})
 
-    assert [type(v) for d in emitter._buffer.drain() for v in d["values"]] == [
+    assert [type(v) for d in sent(run) for v in d["values"]] == [
         float,
         float,
     ]
@@ -816,12 +822,11 @@ def test_a_refused_shape_sends_nothing_from_that_call() -> None:
     # grad_norm is new and fine; loss is the conflict, and it comes second. The
     # grouped grad_norm must not have gone out already, or a caller who catches
     # the error has half a step recorded.
-    emitter = child()
-    run = Run(emitter)
+    run = child()
     run.log(loss=0.5)
-    emitter._buffer.drain()
+    sent(run)
 
     with pytest.raises(ValueError, match="loss"):
         run.log(grad_norm={"a": 1.0}, loss={"b": 0.5})
 
-    assert emitter._buffer.drain() == []
+    assert sent(run) == []

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sparks import box, energy, index, shared, summary
-from sparks.emit import RunMetrics
+from sparks.emit import RunRecord
 from sparks.energy import (
     SOURCES_DISAGREE,
     SOURCES_UNMEASURED,
@@ -61,14 +61,15 @@ def launch(
     except _AbortError as abort:
         return cancelled(run, baseline_seconds, abort)
 
-    # The supervisor's emitter owns metrics.LIFECYCLE and nothing else; the child
-    # gets the rest from SPARKS_PROMETHEUS_URL. Two writers on one series is a 400
-    # that rolls back the whole request, so no url must leave `metrics` None.
+    # The record owns metrics.LIFECYCLE and has no method for anything else;
+    # the child gets the rest from SPARKS_PROMETHEUS_URL. Two writers on one
+    # series is a 400 that rolls back the whole request, so no url must leave
+    # `metrics` None.
     env = {"SPARKS_RUN_ID": run.id, "PYTHONUNBUFFERED": "1"}
-    metrics: RunMetrics | None = None
+    metrics: RunRecord | None = None
     if url:
         env["SPARKS_PROMETHEUS_URL"] = url
-        metrics = RunMetrics(
+        metrics = RunRecord(
             run_id=run.id, url=url, info={"run_name": run.name, "git_sha": run.sha}
         )
         metrics.begin()
@@ -146,7 +147,7 @@ def recorded(
     completed: Completed,
     window: _Window,
     sampler: Sampler,
-    metrics: RunMetrics | None,
+    metrics: RunRecord | None,
     baseline_seconds: float,
 ) -> Launched:
     status = completed.outcome.status
@@ -220,7 +221,7 @@ def close_window(
 
 
 def crashed(
-    run: _Run, metrics: RunMetrics | None, command: list[str], error: Exception
+    run: _Run, metrics: RunRecord | None, command: list[str], error: Exception
 ) -> Launched:
     LOG.exception("sparks: could not run %s: %s", command, error)
     try:

@@ -204,9 +204,11 @@ receiver takes them without complaint and the panel draws two identically-labell
 which is a worse answer than an error. The whole call is checked before any of it is sent, so a
 bad third keyword does not leave the first two recorded.
 
-`track` is the only way training code gets an emitter, and `RunMetrics` is the supervisor's,
-not yours: it defaults to owning the run's lifecycle, so a training script that builds one
-directly writes the same series the supervisor does and both batches die on a 400. A framework
+`track` is the only way training code gets an emitter. There is no class a training script can
+build that would write the supervisor's series: `Run` has no method for them and refuses their
+names, `RunRecord` has no `log`, and `Pump` underneath both has no opinion about metric names at
+all. That used to be one class with a `lifecycle` flag, which meant the mode that destroys the
+supervisor's batch was the one you got by saying nothing. A framework
 callback owns no loop, but the run `track` returns works without a `with` block, so hold it and
 call `run.end()` when the framework says training is over. Build it once: two `track` calls in
 one process are two writers on one series.

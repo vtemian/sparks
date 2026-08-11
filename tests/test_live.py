@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 import requests
 
-from sparks.emit import FLUSH_SECONDS, RunMetrics
+from sparks.emit import FLUSH_SECONDS, Pump, Run, RunRecord
 from sparks.fire import launch as launcher
 from sparks.run import new_run_id
 
@@ -34,15 +34,17 @@ def wait_for(expr: str, seconds: float = 20.0) -> list[dict[str, Any]]:
 
 def test_a_run_is_visible_end_to_end() -> None:
     run_id = new_run_id("live", "test")
-    m = RunMetrics(
+    # A record and a run, the way the box has them: the supervisor owns the
+    # lifecycle series and the training child owns everything else.
+    m = RunRecord(
         run_id=run_id,
         url=URL,
         info={"run_name": "live", "git_sha": "abc1234", "model": "test"},
-        labels={"arm": "real", "seed": "0"},
     )
     m.begin()
+    child = Run(Pump(URL), labels={"run_id": run_id, "arm": "real", "seed": "0"})
     for step in range(5):
-        m.log(step=step, loss=1.0 / (step + 1))
+        child.log(step=step, loss=1.0 / (step + 1))
         time.sleep(0.2)
 
     info = wait_for(f'training_run_info{{run_id="{run_id}"}}')
@@ -76,10 +78,12 @@ def test_a_finished_run_stops_dead_rather_than_flatlining() -> None:
     # the full 5 minute lookback window, so the graph lies about what is
     # currently happening.
     run_id = new_run_id("live-stale", "test")
-    m = RunMetrics(run_id=run_id, url=URL, info={"run_name": "live-stale"})
+    m = RunRecord(run_id=run_id, url=URL, info={"run_name": "live-stale"})
     m.begin()
-    m.log(loss=0.5)
+    child = Run(Pump(URL), labels={"run_id": run_id})
+    child.log(loss=0.5)
     wait_for(f'training_loss{{run_id="{run_id}"}}')
+    child.end()
     m.end("finished")
 
     deadline = time.monotonic() + 20
@@ -96,7 +100,7 @@ def test_a_finished_run_stops_dead_rather_than_flatlining() -> None:
 
 def test_the_dashboard_variable_query_returns_the_run() -> None:
     run_id = new_run_id("live-var", "test")
-    m = RunMetrics(run_id=run_id, url=URL, info={"run_name": "live-var"})
+    m = RunRecord(run_id=run_id, url=URL, info={"run_name": "live-var"})
     m.begin()
     wait_for(f'training_run_info{{run_id="{run_id}"}}')
     r = requests.get(
@@ -158,7 +162,7 @@ def test_the_heartbeat_advances_while_the_run_lives() -> None:
     # live one and mutation E7 (never calling _beat) survives them all. Waiting
     # past two flush cycles and asserting the timestamp moved is what notices.
     run_id = new_run_id("live-beat", "test")
-    m = RunMetrics(run_id=run_id, url=URL, info={"run_name": "live-beat"})
+    m = RunRecord(run_id=run_id, url=URL, info={"run_name": "live-beat"})
     m.begin()
     metric = f'training_run_heartbeat_timestamp_seconds{{run_id="{run_id}"}}'
     first = float(wait_for(metric)[0]["value"][1])
