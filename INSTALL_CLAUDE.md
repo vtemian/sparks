@@ -21,10 +21,13 @@ training project and needs nothing from a sparks checkout.
 
 ```sh
 uv tool install git+https://github.com/vtemian/sparks@v0.1.0
-export SPARKS_HOST=you@your-box
-sparks setup                 # writes the box registry into Docker's daemon.json
-sparks --help                # confirms the client is on PATH
+sparks setup you@your-box
 ```
+
+`setup` reads the box's contract, remembers the box, writes its registry into Docker's
+`daemon.json`, restarts Docker and verifies the registry took. It restarts only on macOS,
+where no password is needed; elsewhere it prints the command. A box it cannot reach is not
+remembered.
 
 Pin the tag. Without one you track `main`, and Docker's layer cache keeps serving whatever
 sparks an image was first built with, however far main has moved. The `git+` form shells out
@@ -50,7 +53,10 @@ a correct-looking image fail on the box after submit already reported success.
 
 ## Configure
 
-**`SPARKS_HOST`** is how the client finds the box. Export it, or pass `--host`.
+**Which box** the client talks to: `--host` wins, then `SPARKS_HOST`, then whatever `setup`
+remembered in `~/.config/sparks/config.toml` (`$XDG_CONFIG_HOME` if set). The stored host is
+only ever a fallback, so `SPARKS_HOST=other-box sparks queue` reaches another box without
+editing anything.
 
 **`/etc/sparks/box.toml`** is written by sparkup and read on the box. It carries the shared
 directory, the textfile directory, the Prometheus URL, the Grafana URL and `registry_url`.

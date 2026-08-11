@@ -24,12 +24,11 @@ an image registry and the queue runner. On your own machine you need Docker and 
 
 ```sh
 uv tool install git+https://github.com/vtemian/sparks@v0.1.0
-export SPARKS_HOST=you@your-box
-sparks setup
+sparks setup you@your-box
 ```
 
-`sparks setup` lets your Docker push to the box registry, which is plain HTTP on the LAN. It prints
-a restart command; run it, knowing a Docker restart stops whatever containers you have.
+`setup` remembers the box, lets your Docker push to its registry, restarts Docker, and says when it
+is ready. The restart stops whatever containers you have running.
 
 ## Submit a job
 
