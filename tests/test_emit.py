@@ -1,3 +1,4 @@
+import os
 import struct
 import threading
 import time
@@ -816,6 +817,78 @@ def test_the_same_shape_twice_is_fine() -> None:
     run.log(loss=0.4)
     run.log(learning_rate={"adapter": 1.0})
     run.log(learning_rate={"adapter": 0.5})
+
+
+def test_a_url_without_a_run_id_mints_one_and_owns_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # On the box, launched by hand. Nobody else writes this run's identity, so
+    # the dashboard's run picker would never list it.
+    monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
+
+    with track(name="e0", info={"model": "helium-2b"}) as run:
+        assert run.run_id.startswith("run-")
+        assert "e0" in run.run_id
+        assert run._record is not None
+        run.step(loss=1.0)
+
+    assert run._record._ended
+
+
+def test_a_supervised_run_never_writes_the_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The supervisor already began one. A second writer on those series is a
+    # 400 that rolls back the whole batch, losing the training metrics too.
+    monkeypatch.setenv("SPARKS_RUN_ID", "run-from-supervisor")
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
+
+    with track(name="ignored", info={"model": "x"}) as run:
+        assert run._record is None
+        assert run.run_id == "run-from-supervisor"
+
+
+def test_no_url_mints_nothing_however_it_is_called(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nowhere_near_a_job(monkeypatch)
+
+    with track(name="e0") as run:
+        assert run._record is None
+        assert run._pump is None
+        assert run.run_id == ""
+
+
+def test_the_minted_id_reaches_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # So a second track in the same process becomes a child rather than
+    # minting a second run, and so a subprocess inherits the right id.
+    monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
+
+    with track(name="e0") as run:
+        assert os.environ["SPARKS_RUN_ID"] == run.run_id
+
+
+def test_an_exception_ends_the_record_as_crashed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
+
+    statuses: list[str] = []
+    run = track(name="e0")
+    assert run._record is not None
+    monkeypatch.setattr(
+        run._record, "end", lambda status="finished": statuses.append(status)
+    )
+
+    with pytest.raises(RuntimeError), run:
+        raise RuntimeError("boom")
+
+    assert statuses == ["crashed"]
 
 
 def test_a_refused_shape_sends_nothing_from_that_call() -> None:
