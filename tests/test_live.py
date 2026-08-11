@@ -1,3 +1,4 @@
+import math
 import sys
 import time
 from pathlib import Path
@@ -6,7 +7,7 @@ from typing import Any
 import pytest
 import requests
 
-from sparks.emit import FLUSH_SECONDS, Pump, Run, RunRecord
+from sparks.emit import FLUSH_SECONDS, SCRAPE_SECONDS, Pump, Run, RunRecord
 from sparks.fire import launch as launcher
 from sparks.run import new_run_id
 
@@ -15,8 +16,12 @@ URL = "http://127.0.0.1:19091"
 pytestmark = pytest.mark.live
 
 
-def query(expr: str) -> list[dict[str, Any]]:
-    r = requests.get(f"{URL}/api/v1/query", params={"query": expr}, timeout=5)
+def query(expr: str, when: float | None = None) -> list[dict[str, Any]]:
+    params = {"query": expr}
+    if when is not None:
+        params["time"] = str(when)
+
+    r = requests.get(f"{URL}/api/v1/query", params=params, timeout=5)
     r.raise_for_status()
     result: list[dict[str, Any]] = r.json()["data"]["result"]
     return result
@@ -30,6 +35,28 @@ def wait_for(expr: str, seconds: float = 20.0) -> list[dict[str, Any]]:
             return got
         time.sleep(0.5)
     raise AssertionError(f"nothing matched {expr!r} within {seconds}s")
+
+
+def wait_at_step(expr: str, when: float, seconds: float = 20.0) -> list[dict[str, Any]]:
+    # One evaluation step of a range query, which is the thing an instant query
+    # cannot stand in for: query_range steps at fixed instants and reports
+    # whatever the series is at each, so a sample no step lands on is invisible
+    # however many times /api/v1/query is asked about it.
+    params = {
+        "query": expr,
+        "start": str(when),
+        "end": str(when),
+        "step": str(SCRAPE_SECONDS),
+    }
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        r = requests.get(f"{URL}/api/v1/query_range", params=params, timeout=5)
+        r.raise_for_status()
+        got: list[dict[str, Any]] = r.json()["data"]["result"]
+        if got:
+            return got
+        time.sleep(0.5)
+    raise AssertionError(f"nothing matched {expr!r} at step {when}")
 
 
 def test_a_run_is_visible_end_to_end() -> None:
@@ -86,9 +113,14 @@ def test_a_finished_run_stops_dead_rather_than_flatlining() -> None:
     child.end()
     m.end("finished")
 
+    # A minute out, asked for rather than waited out: Prometheus evaluates any
+    # instant it is given, and the marker's grace is deliberately in the
+    # future. A minute is the ceiling on that grace -- the unit test pins the
+    # floor -- and it is nowhere near the 5m this test exists to disprove.
+    gone_by = time.time() + 60
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
-        if not query(f'training_loss{{run_id="{run_id}"}}'):
+        if not query(f'training_loss{{run_id="{run_id}"}}', when=gone_by):
             break
         time.sleep(0.5)
     else:
@@ -96,6 +128,30 @@ def test_a_finished_run_stops_dead_rather_than_flatlining() -> None:
 
     # The run is still in the historical record, it just is not current.
     assert query(f'last_over_time(training_loss{{run_id="{run_id}"}}[1h])')
+
+
+def test_a_run_that_logged_once_is_still_visible_to_a_stepped_query() -> None:
+    # Reproduced on the box: one log() then close() left the marker a
+    # millisecond after the only sample, and every evaluation step fell outside
+    # a window that narrow. /api/v1/series listed training_loss and
+    # /api/v1/query_range returned no series at all. The data had arrived and
+    # could not be read, which is how every run lost its final epoch.
+    run_id = new_run_id("live-once", "test")
+    m = RunRecord(run_id=run_id, url=URL, info={"run_name": "live-once"})
+    m.begin()
+    child = Run(Pump(URL), labels={"run_id": run_id})
+    child.log(loss=0.5)
+    logged = time.time()
+    child.end()
+    m.end("finished")
+
+    # The first instant Grafana would evaluate after that sample: it aligns the
+    # range on the step and floors the step at the scrape interval, so this is
+    # the nearest any panel ever gets to a sample.
+    step = math.floor(logged / SCRAPE_SECONDS + 1) * SCRAPE_SECONDS
+    got = wait_at_step(f'training_loss{{run_id="{run_id}"}}', step)
+
+    assert float(got[0]["values"][0][1]) == 0.5
 
 
 def test_the_dashboard_variable_query_returns_the_run() -> None:
@@ -195,9 +251,9 @@ def test_a_child_that_emits_lands_alongside_the_supervisor_lifecycle(
     assert result.status == "finished"
 
     # The child's own series landed, carrying the label it set. last_over_time,
-    # because the child marked its series stale on the way out: by the time
-    # launch() returns, a bare training_loss correctly resolves to nothing, and
-    # that is the behaviour the stale-marker test above exists to guarantee.
+    # because the child marked its series stale on the way out: a bare
+    # training_loss stops resolving once the marker's grace runs out, and this
+    # test must not race it. The stale-marker test above owns that behaviour.
     loss = wait_for(f'last_over_time(training_loss{{run_id="{result.run_id}"}}[1h])')
     assert loss[0]["metric"]["arm"] == "real"
     assert float(loss[0]["value"][1]) == pytest.approx(0.25)

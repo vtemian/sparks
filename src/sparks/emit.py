@@ -32,6 +32,10 @@ MARKS_FOR_A_RATE = 2  # a rate is an interval, and an interval needs two ends
 
 STALE_NAN = struct.unpack("<d", struct.pack("<Q", 0x7FF0000000000002))[0]
 
+SCRAPE_SECONDS = 15.0  # the box's Prometheus, and the floor on any query step
+
+STALE_GRACE_MS = int(2 * SCRAPE_SECONDS * 1000)
+
 
 def training_metric(key: str) -> str:
     name = f"training_{key}"
@@ -166,9 +170,15 @@ class Pump:
             {
                 "metric": series.as_metric(),
                 "values": [STALE_NAN],
-                # Strictly after the last real sample: sharing its millisecond
-                # loses every marker in the batch.
-                "timestamps": [max(ended, last + 1)],
+                # Prometheus and Grafana evaluate at steps no finer than the
+                # scrape interval, so a marker sooner than one step falls
+                # between two of them and the sample it ends is queryable by
+                # nothing. Two intervals put a step inside the live window
+                # whatever its alignment, and the series still stops dead long
+                # before the 5m lookback would have let it flat-line. Off the
+                # later of the two, so a clock that stepped back still clears
+                # the sample rather than colliding with it.
+                "timestamps": [max(ended, last) + STALE_GRACE_MS],
             }
             for series, last in self._buffer.seen().items()
             if series.name not in self._never_stale

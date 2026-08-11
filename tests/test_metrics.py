@@ -52,7 +52,8 @@ def test_run_active_is_declared_but_deliberately_not_lifecycle() -> None:
     # marking, so it persists for the full 5m lookback. A 48s run's info series
     # ended 293s past the end, while stale-marked training_loss ended 12s
     # before it. An annotation built on info draws a region 7x the run.
-    # training_run_active exists to be stale-marked, so the region is exact.
+    # training_run_active exists to be stale-marked, so the region tracks the
+    # run rather than the lookback.
     assert "training_run_active" in METRICS
     assert "training_run_active" not in LIFECYCLE
 

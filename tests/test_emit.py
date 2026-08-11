@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from sparks.emit import Pump, Run, RunRecord, track
+from sparks.emit import SCRAPE_SECONDS, Pump, Run, RunRecord, track
 from sparks.metrics import LIFECYCLE
 from sparks.series import InvalidLabelError
 
@@ -173,6 +173,32 @@ def test_a_stale_marker_lands_after_the_sample_it_ends() -> None:
     )
     assert marker["timestamps"][0] > sent_at
     assert series.name == "training_loss"
+
+
+def test_a_stale_marker_leaves_the_sample_it_ends_long_enough_to_be_queried() -> None:
+    # A marker a millisecond later is ordered correctly and still unreachable:
+    # Prometheus evaluates at discrete steps and Grafana floors the step at the
+    # scrape interval, so every step falls outside a window that narrow. The
+    # sample is accepted, /api/v1/series lists it, and no query returns it --
+    # every run loses its final epoch and a run that logs once loses all of it.
+    run = child()
+    run.log(loss=0.5)
+    pump_of(run)._buffer.drain()
+    sent_at = next(
+        ts
+        for series, ts in pump_of(run)._buffer.seen().items()
+        if series.name == "training_loss"
+    )
+
+    marker = next(
+        d
+        for d in pump_of(run)._stale_batch()
+        if d["metric"]["__name__"] == "training_loss"
+    )
+
+    # One step is the least that can land inside the window. Asserting the gap
+    # rather than the constant: what matters is that a query can see it.
+    assert marker["timestamps"][0] - sent_at >= SCRAPE_SECONDS * 1000
 
 
 def test_an_invalid_label_is_refused_on_the_caller_thread() -> None:
