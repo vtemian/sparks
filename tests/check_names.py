@@ -103,6 +103,31 @@ def _from_comprehension(
     return [(gen.target, gen.target.lineno) for gen in node.generators]
 
 
+@binding_targets.register
+def _(node: ast.FunctionDef) -> list[tuple[ast.AST, int]]:
+    return _from_arguments(node.args)
+
+
+@binding_targets.register
+def _(node: ast.AsyncFunctionDef) -> list[tuple[ast.AST, int]]:
+    return _from_arguments(node.args)
+
+
+@binding_targets.register
+def _(node: ast.Lambda) -> list[tuple[ast.AST, int]]:
+    return _from_arguments(node.args)
+
+
+def _from_arguments(args: ast.arguments) -> list[tuple[ast.AST, int]]:
+    every = [*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg]
+    # arg.lineno rather than the def's: a wrapped signature spans lines.
+    return [
+        (ast.Name(id=arg.arg, ctx=ast.Store()), arg.lineno)
+        for arg in every
+        if arg is not None
+    ]
+
+
 def bindings(tree: ast.AST) -> list[tuple[str, int]]:
     found: list[tuple[str, int]] = []
     for node in ast.walk(tree):
