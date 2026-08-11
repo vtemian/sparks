@@ -26,6 +26,10 @@ LOG = logging.getLogger("sparks")
 
 FLUSH_SECONDS = 5.0
 
+PUSH_RETRIES = 3  # resolved at send time, so a test can turn the backoff off
+
+PUSH_BACKOFF = 0.5
+
 RATE_WINDOW_STEPS = 20  # what "over the last window" means for the rates
 
 MARKS_FOR_A_RATE = 2  # a rate is an interval, and an interval needs two ends
@@ -82,10 +86,14 @@ class Pump:
         autostart: bool = True,
         on_tick: "Callable[[float], None] | None" = None,
         never_stale: frozenset[str] = frozenset(),
+        retries: int | None = None,
     ) -> None:
         self.url = url.rstrip("/")
         self._on_tick = on_tick
         self._never_stale = never_stale
+        # None, not PUSH_RETRIES: a default argument binds at import, which
+        # would put the value beyond the reach of a test.
+        self._retries = retries
         self._buffer = Buffer()
         self._writer: Any = None
         self._thread: Any = None
@@ -120,8 +128,8 @@ class Pump:
         self._writer = RemoteWriter(
             url=f"{self.url}/api/v1/write",
             timeout=5.0,
-            retries=3,
-            backoff_factor=0.5,
+            retries=PUSH_RETRIES if self._retries is None else self._retries,
+            backoff_factor=PUSH_BACKOFF,
             sort_labels=True,
             strict_timestamps=True,
             auto_convert_seconds_to_ms=False,
@@ -192,6 +200,7 @@ class RunRecord:
         url: str,
         info: dict[str, str] | None = None,
         autostart: bool = True,
+        retries: int | None = None,
     ) -> None:
         self.run_id = run_id
         self._ended = False
@@ -203,7 +212,11 @@ class RunRecord:
         # LIFECYCLE is never staled: end() writes the status, and a marker a
         # millisecond later would erase it before anything could read it.
         self._pump = Pump(
-            url, autostart=autostart, on_tick=self.beat, never_stale=LIFECYCLE
+            url,
+            autostart=autostart,
+            on_tick=self.beat,
+            never_stale=LIFECYCLE,
+            retries=retries,
         )
 
     def begin(self) -> None:

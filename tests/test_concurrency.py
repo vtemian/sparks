@@ -41,7 +41,16 @@ def test_shutdown_never_puts_a_second_writer_on_the_wire() -> None:
     threading.Thread(target=server.serve_forever, daemon=True).start()
     port = server.server_address[1]
 
-    m = RunRecord(run_id="run-stall", url=f"http://127.0.0.1:{port}", autostart=True)
+    # A literal, not the module constant: the suite turns retries off, and
+    # without them the pump gives up on the stalled receiver early enough to
+    # be reaped, so close() takes its flushing path and never exercises the
+    # wedged-pump branch this test exists for.
+    m = RunRecord(
+        run_id="run-stall",
+        url=f"http://127.0.0.1:{port}",
+        autostart=True,
+        retries=3,
+    )
     m.begin()
 
     # Wait for the pump to be inside a send() and stuck there. Waiting on the

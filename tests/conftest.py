@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+import sparks.emit
+
 
 @pytest.fixture
 def textfile_dir(isolate_the_box: None) -> Path:
@@ -25,3 +27,6 @@ def isolate_the_box(
     # And the client's own config, so no test can write a host into the home
     # directory of whoever ran the suite. One did.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("config")))
+    # Most of this suite points a real pump at a port nothing listens on, and
+    # three retries with backoff cost three seconds per failed send.
+    monkeypatch.setattr(sparks.emit, "PUSH_RETRIES", 0)
