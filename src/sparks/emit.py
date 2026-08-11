@@ -263,10 +263,12 @@ class Run:
         window: int = RATE_WINDOW_STEPS,
         clock: "Callable[[], float]" = time.monotonic,
         record: "RunRecord | None" = None,
+        minted: bool = False,
     ) -> None:
         check_run_shape(total, tokens_per_step, window)
         self._pump = pump
         self._record = record
+        self._minted = minted
         self._labels = labels or {}
         Series("training_loss", self._labels)
         self.total = total
@@ -307,6 +309,12 @@ class Run:
             self._pump.close()
         if self._record is not None:
             self._record.end(status)
+
+        # Only the id this run minted, and only if nothing has replaced it: the
+        # supervisor's belongs to a container that outlives us, and leaving a
+        # minted one behind attaches the next run to this one's corpse.
+        if self._minted and os.environ.get("SPARKS_RUN_ID") == self.run_id:
+            del os.environ["SPARKS_RUN_ID"]
 
         # Last, so a failed end leaves the run reporting rather than silent.
         self._ended = True
@@ -466,6 +474,7 @@ def track(
         tokens_per_step=tokens_per_step,
         window=window,
         record=record,
+        minted=record is not None,
     )
 
 

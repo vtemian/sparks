@@ -814,3 +814,46 @@ def test_a_refused_shape_sends_nothing_from_that_call() -> None:
         run.log(grad_norm={"a": 1.0}, loss={"b": 0.5})
 
     assert sent(run) == []
+
+
+def test_a_minted_id_leaves_the_environment_when_the_run_ends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Nothing cleared it before, so a second phase attached itself to the first
+    # phase's dead run: record already ended, run_active already staled, and
+    # the dashboard showing it finished.
+    monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
+
+    with track(name="phase1") as run:
+        assert os.environ["SPARKS_RUN_ID"] == run.run_id
+
+    assert "SPARKS_RUN_ID" not in os.environ
+
+
+def test_a_second_run_after_the_first_ends_is_a_run_of_its_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
+
+    with track(name="phase1") as first:
+        pass
+    with track(name="phase2") as second:
+        pass
+
+    assert second.run_id != first.run_id
+    assert second._record is not None
+
+
+def test_a_supervised_run_leaves_the_supervisors_id_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The supervisor owns that variable and the container outlives this run.
+    monkeypatch.setenv("SPARKS_RUN_ID", "run-from-supervisor")
+    monkeypatch.setenv("SPARKS_PROMETHEUS_URL", "http://127.0.0.1:1")
+
+    with track() as run:
+        assert run._record is None
+
+    assert os.environ["SPARKS_RUN_ID"] == "run-from-supervisor"

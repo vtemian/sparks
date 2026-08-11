@@ -272,6 +272,10 @@ places persist:
   checkpoints = Path.cwd() / "runs" / os.environ["SPARKS_RUN_ID"]
   ```
 
+`SPARKS_RUN_ID` is set for you inside a job, and `track` sets it too when it mints an id for a
+run launched by hand. It is cleared again when that run ends, so read it inside the block: a
+second `track` afterwards is a new run with a new id, not a continuation of the last one.
+
   Write checkpoints there. Anywhere else in the container is discarded.
 
 ## Submit
