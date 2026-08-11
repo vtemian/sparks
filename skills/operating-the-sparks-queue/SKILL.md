@@ -155,8 +155,11 @@ Three boards, and each answers a different question:
   `tariff` textbox you set to your own price per kWh.
 
 **A run that ends normally stops dead rather than flat-lining.** The emitter marks every
-series it wrote stale on the way out, so `training_loss` vanishes from a bare query the moment
-the run ends and only `last_over_time(...)` still finds it. Two deliberate exceptions:
+series it wrote stale on the way out, so `training_loss` vanishes from a bare query about
+30 seconds after the run ends and only `last_over_time(...)` still finds it. That delay is
+deliberate and it is two scrape intervals: a marker any sooner ends a sample that no query
+step can reach, which is how runs used to lose their final epoch to a store that had it all
+along. Two deliberate exceptions:
 `training_run_info` is never staled, which is what keeps a finished run selectable in the
 dropdown, and `training_run_active` always is, so anything built on it draws the run's real
 span.

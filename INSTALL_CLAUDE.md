@@ -146,9 +146,12 @@ with track(total=epochs * len(loader), tokens_per_step=batch_size * BLOCK) as ru
 ```
 
 `track` picks up the run id and Prometheus URL the supervisor exported, so training code
-needs no arguments. Anywhere else it reports nothing, which is why **the call site carries no
-`is not None` guard**. It still checks names, labels and values there, so a typo fails on a
-laptop rather than on the box.
+needs no arguments. With a URL but no run id — on the box, launched by hand — it mints a run
+id, writes the record itself and ends it `crashed` or `finished` from the `with` block, since
+otherwise the loss lands under an id the dashboard's picker never lists; `name` and `info`
+name that run, and `run.run_id` reads it back. With neither it reports nothing, which is why
+**the call site carries no `is not None` guard**. It still checks names, labels and values
+there, so a typo fails on a laptop rather than on the box.
 
 `run.step` derives `step`, `progress`, `eta_seconds`, `steps_per_sec` and `tokens_per_sec`.
 A value you pass wins over the derived one. What `track` was not given is not emitted rather
@@ -163,12 +166,13 @@ labelled `group`. Any declared metric takes one, but a metric may not change sha
 
 Metric names are a closed set in `sparks.metrics.METRICS`; `run.step(loss=…)` writes
 `training_loss`, and an undeclared name raises. Keyword arguments other than `total`,
-`tokens_per_step` and `window` become labels, except `run_id` and `group`, which are the
-emitter's and are refused.
+`tokens_per_step`, `window`, `name` and `info` become labels, except `run_id` and `group`,
+which are the emitter's and are refused.
 
 A framework callback owns no loop, but the run `track` returns works without a `with` block:
 hold it and call `run.end()` when training is over. Build it once — two `track` calls in one
-process are two writers on one series.
+process are two writers on one series, and a second one opened after the first closed is a
+400 for 30 seconds, until the stale markers the first left behind are in the past.
 
 ## Where the results are
 
@@ -205,7 +209,8 @@ written. Check the job directory is writable by the submitting account; a full d
 wrong owner is the usual cause.
 
 **A killed run's curves flat-line for five minutes.** A run that ends normally marks every
-series it wrote stale on the way out, so its curves stop dead; a signal skips that flush, so
+series it wrote stale on the way out, so its curves stop dead about 30 seconds later — two
+scrape intervals, so the last sample stays queryable; a signal skips that flush, so
 an aborted or OOM-killed run holds its last values for the lookback window while
 `training_run_status` already says how it ended. `training_run_info` is exempt from stale
 marking either way, which is what keeps a finished run selectable in the dashboard's dropdown.

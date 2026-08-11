@@ -25,8 +25,9 @@ with track(total=epochs * len(loader), tokens_per_step=batch_size * BLOCK, arm="
         run.step(loss=float(loss))
 ```
 
-`total`, `tokens_per_step` and `window` are `track`'s own arguments; every other keyword is a
-label.
+`total`, `tokens_per_step`, `window`, `name` and `info` are `track`'s own arguments; every
+other keyword is a label. `name` and `info` describe the run rather than the samples, and a
+submitted job has both already, so they only do anything in the unsupervised mode below.
 
 `run.step` counts the step and derives `step`, `progress`, `eta_seconds`, `steps_per_sec` and
 `tokens_per_sec` from it. **A value you pass wins over the derived one**, so
@@ -55,6 +56,25 @@ Off the box, `track` yields a run that reports nothing, so the same script runs 
 names, label names, group keys and values, so a typo fails on the laptop rather than surviving
 to the first step on the box. An exception inside the `with` block propagates rather than being
 swallowed.
+
+Which run you get is decided by the two variables the supervisor exports, and the three
+answers behave differently enough to be worth knowing:
+
+- **`SPARKS_RUN_ID` and `SPARKS_PROMETHEUS_URL`** — a submitted job. The supervisor began the
+  record and will end it from how the process exited, so `track` reports values and nothing
+  else. `name` and `info` are its business and are ignored here.
+- **`SPARKS_PROMETHEUS_URL` alone** — on the box, launched by hand. Nobody owns this run's
+  identity, so `track` mints one and writes the record itself, ending it `crashed` or
+  `finished` as the `with` block exits. Without that, the loss arrives under a run id the
+  dashboard's picker never lists. `name` sets the run name and defaults to the slug of
+  `sys.argv[0]`; `info` adds labels to `training_run_info`; `run.run_id` reads back what it
+  settled on. It also exports `SPARKS_RUN_ID`, so a second `track` in the process becomes a
+  child rather than a second run, and a subprocess inherits the right id.
+- **Neither** — nothing is reported. This is the laptop case above, and `name` and `info`
+  mint nothing there however you call it.
+
+A run id with no URL is a misconfigured box rather than a mode: `track` warns and reports
+nothing.
 
 Labels ride on every sample, so keep them few and low-cardinality. `run_id` and `group` are
 the emitter's own and are refused: one would relabel the run away from the one the supervisor
@@ -129,7 +149,19 @@ signal never reaches that — Python's default SIGTERM handling skips `atexit` �
 or OOM-killed run does flat-line. Handle SIGTERM and call `run.end()` if you care what the
 graph looks like afterwards; nothing else about the run's record depends on it.
 
-The status is **not yours to set**: the supervisor decides it from how the process exited.
+**Those markers land 30 seconds after the last sample, not immediately**, because Prometheus
+and Grafana evaluate at steps no finer than the box's 15s scrape and a marker any sooner ends
+a sample no query step can reach. That is the grace, and it costs you one thing: **two
+emitters on one series across those 30 seconds is a 400**, since the second one's samples are
+older than the marker the first left behind. It takes the same run id and the same labels, so
+in practice it means one process opening a second `track` block after closing the first.
+Separate runs never collide; every run id carries a timestamp.
+
+In a submitted job the status is **not yours to set**: the supervisor decides it from how the
+process exited, and there is no argument to pass one. A run that minted its own identity
+records its own, derived the same way rather than passed: `crashed` when the `with` block
+exits on an exception, `finished` otherwise. The first `end` wins, so calling `run.end()`
+yourself inside the block records `finished` and no later exception can correct it.
 
 ### Bridging a framework
 
