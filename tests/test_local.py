@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from sparks.client import local
+from sparks.client import remote as client
 from sparks.client.remote import ClientError
 
 REGISTRY = "spark.local:5000"
@@ -121,7 +122,9 @@ class TestTheSetupCommand:
         monkeypatch: pytest.MonkeyPatch,
         daemon: Path,
         capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
     ) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
         monkeypatch.setattr(
             "sparks.client.local.fetch_registry_url", lambda host: f"http://{REGISTRY}"
         )
@@ -130,7 +133,7 @@ class TestTheSetupCommand:
 
         assert local.trust_box_registry("vlad@spark.local") == 0
 
-        assert "already trusts" in capsys.readouterr().out
+        assert "ready" in capsys.readouterr().out
         assert not daemon.exists()
 
     def test_it_writes_the_registry_and_asks_for_a_docker_restart(
@@ -138,7 +141,10 @@ class TestTheSetupCommand:
         monkeypatch: pytest.MonkeyPatch,
         daemon: Path,
         capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
     ) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setattr("sparks.client.local.restart_docker", lambda: False)
         monkeypatch.setattr(
             "sparks.client.local.fetch_registry_url", lambda host: f"http://{REGISTRY}"
         )
@@ -157,7 +163,10 @@ class TestTheSetupCommand:
         monkeypatch: pytest.MonkeyPatch,
         daemon: Path,
         capsys: pytest.CaptureFixture[str],
+        tmp_path: Path,
     ) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setattr("sparks.client.local.restart_docker", lambda: False)
         daemon.parent.mkdir(parents=True)
         daemon.write_text(json.dumps({"insecure-registries": [REGISTRY]}))
         monkeypatch.setattr(
@@ -169,3 +178,122 @@ class TestTheSetupCommand:
         assert local.trust_box_registry("vlad@spark.local") == 0
 
         assert "restart Docker" in capsys.readouterr().out
+
+
+class TestRememberingTheBox:
+    def test_it_writes_the_host_where_a_later_shell_will_find_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        client.remember_host("vlad@spark.local")
+
+        assert client.stored_host() == "vlad@spark.local"
+
+    def test_it_reports_no_host_when_nothing_was_ever_stored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        assert client.stored_host() is None
+
+    def test_a_second_setup_replaces_the_first(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        client.remember_host("vlad@old-box")
+
+        client.remember_host("vlad@new-box")
+
+        assert client.stored_host() == "vlad@new-box"
+
+    def test_a_config_that_is_not_readable_is_refused_rather_than_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Silently falling back to "no host" would print "set SPARKS_HOST" at
+        # somebody who set it, in a file, which is the wrong thing to debug.
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        client.config_path().parent.mkdir(parents=True, exist_ok=True)
+        client.config_path().write_text("host = ")
+
+        with pytest.raises(ClientError, match="not readable"):
+            client.stored_host()
+
+
+class TestFinishingTheJob:
+    def test_setup_remembers_the_box_it_was_given(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setattr(
+            "sparks.client.local.fetch_registry_url", lambda host: f"http://{REGISTRY}"
+        )
+        docker_reporting(monkeypatch, REGISTRY)
+
+        assert local.trust_box_registry("vlad@spark.local") == 0
+
+        assert client.stored_host() == "vlad@spark.local"
+        assert "ready" in capsys.readouterr().out
+
+    def test_a_box_it_cannot_reach_is_not_remembered(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Storing it first would leave every later command pointed at a box
+        # that never answered.
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+        def refuse(host: str) -> str:
+            raise ClientError("nope")
+
+        monkeypatch.setattr("sparks.client.local.fetch_registry_url", refuse)
+
+        with pytest.raises(ClientError):
+            local.trust_box_registry("vlad@spark.local")
+
+        assert client.stored_host() is None
+
+    def test_it_says_ready_once_docker_has_taken_the_registry(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        daemon: Path,
+    ) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setattr(
+            "sparks.client.local.fetch_registry_url", lambda host: f"http://{REGISTRY}"
+        )
+        monkeypatch.setattr("sparks.client.local.daemon_json_path", lambda: daemon)
+        monkeypatch.setattr("sparks.client.local.restart_docker", lambda: True)
+        seen = iter([set(), {REGISTRY}])
+        monkeypatch.setattr(
+            "sparks.client.local.trusted_registries", lambda: next(seen)
+        )
+
+        assert local.trust_box_registry("vlad@spark.local") == 0
+
+        assert "ready" in capsys.readouterr().out
+
+    def test_a_docker_it_cannot_restart_asks_rather_than_claiming_ready(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        daemon: Path,
+    ) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setattr(
+            "sparks.client.local.fetch_registry_url", lambda host: f"http://{REGISTRY}"
+        )
+        monkeypatch.setattr("sparks.client.local.daemon_json_path", lambda: daemon)
+        monkeypatch.setattr("sparks.client.local.restart_docker", lambda: False)
+        monkeypatch.setattr("sparks.client.local.trusted_registries", set)
+
+        assert local.trust_box_registry("vlad@spark.local") == 0
+
+        printed = capsys.readouterr().out
+        assert "ready" not in printed
+        assert "restart" in printed

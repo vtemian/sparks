@@ -31,6 +31,14 @@ def setup(args: argparse.Namespace, _argv: list[str]) -> int:
     return local.trust_box_registry(args.host)
 
 
+def wanted_box(args: argparse.Namespace) -> str | None:
+    # setup is the one verb that runs before there is anything to remember, so
+    # it takes the box as an argument and everything else reads it back.
+    box: str | None = getattr(args, "box", None)
+    host: str | None = args.host
+    return box or host
+
+
 def queue(args: argparse.Namespace, _argv: list[str]) -> int:
     server = ["queue"]
     if args.all:
@@ -114,7 +122,10 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser = subparsers.add_parser(
         "setup",
         parents=[host],
-        help="let this machine's Docker push to the box registry",
+        help="point this machine at a box and let its Docker push there",
+    )
+    setup_parser.add_argument(
+        "box", nargs="?", help="the box, as ssh addresses it: you@your-box"
     )
     setup_parser.set_defaults(func=setup)
     for verb, helping, func in (
@@ -248,10 +259,11 @@ def main(argv: list[str] | None = None) -> int:
     given = list(argv if argv is not None else sys.argv[1:])
     args = build_parser().parse_args(given)
 
+    args.host = wanted_box(args)
     if not remote.is_configured(args.host):
         print(
-            f"sparks: set {remote.HOST_ENV} or pass --host; "
-            f"the client always talks to the box",
+            "sparks: no box yet. Run `sparks setup you@your-box` once, "
+            f"or pass --host, or set {remote.HOST_ENV}",
             file=sys.stderr,
         )
         return os.EX_CONFIG

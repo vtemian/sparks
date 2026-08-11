@@ -18,6 +18,8 @@ from sparks.run import current_user, git_sha
 LOG = logging.getLogger("sparks")
 
 HOST_ENV = "SPARKS_HOST"
+
+HOST_KEY = "host"
 REMOTE_BIN_ENV = "SPARKS_REMOTE"
 DEFAULT_REMOTE_BIN = "fire-ctl"
 REMOTE_BOX_CONFIG = "/etc/sparks/box.toml"
@@ -274,8 +276,35 @@ def provenance(context: Path) -> tuple[str, bool]:
     return sha, bool(done.stdout.strip())
 
 
+def config_path() -> Path:
+    root = os.environ.get("XDG_CONFIG_HOME")
+    return (Path(root) if root else Path.home() / ".config") / "sparks" / "config.toml"
+
+
+def remember_host(host: str) -> None:
+    path = config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'{HOST_KEY} = "{host}"\n', encoding="utf-8")
+
+
+def stored_host() -> str | None:
+    path = config_path()
+    if not path.exists():
+        return None
+
+    try:
+        stored = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ClientError(f"{path} is not readable: {exc}") from exc
+
+    host = stored.get(HOST_KEY)
+    return host if isinstance(host, str) and host else None
+
+
 def host_from(explicit: str | None) -> str | None:
-    return explicit or os.environ.get(HOST_ENV) or None
+    # What setup remembered is the fallback, never an override: a one-off
+    # SPARKS_HOST has to be able to reach another box without editing a file.
+    return explicit or os.environ.get(HOST_ENV) or stored_host()
 
 
 def is_configured(explicit: str | None = None) -> bool:

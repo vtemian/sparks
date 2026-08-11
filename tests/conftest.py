@@ -22,3 +22,6 @@ def isolate_the_box(
     # file behind" - do not have to know this fixture exists.
     monkeypatch.setenv("SPARKS_TEXTFILE_DIR", str(tmp_path_factory.mktemp("textfile")))
     monkeypatch.setenv("SPARKS_BOX_CONFIG", str(tmp_path / "no-such-box.toml"))
+    # And the client's own config, so no test can write a host into the home
+    # directory of whoever ran the suite. One did.
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("config")))

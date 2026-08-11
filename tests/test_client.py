@@ -677,3 +677,42 @@ class TestSubmitRemote:
 
         monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
         assert client.fetch_registry_url("box") == "http://spark.local:5000"
+
+
+class TestWhichBoxTheClientTalksTo:
+    def test_an_explicit_host_beats_everything(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setenv("SPARKS_HOST", "vlad@from-env")
+        client.remember_host("vlad@from-config")
+
+        assert client.host_from("vlad@explicit") == "vlad@explicit"
+
+    def test_the_environment_beats_what_setup_remembered(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Otherwise a one-off SPARKS_HOST=other-box could not talk to another
+        # box without editing a file first.
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.setenv("SPARKS_HOST", "vlad@from-env")
+        client.remember_host("vlad@from-config")
+
+        assert client.host_from(None) == "vlad@from-env"
+
+    def test_what_setup_remembered_is_used_when_nothing_else_says(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.delenv("SPARKS_HOST", raising=False)
+        client.remember_host("vlad@from-config")
+
+        assert client.host_from(None) == "vlad@from-config"
+
+    def test_no_box_anywhere_is_no_box(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+        monkeypatch.delenv("SPARKS_HOST", raising=False)
+
+        assert client.host_from(None) is None
