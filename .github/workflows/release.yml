@@ -15,6 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      # A job block replaces the top-level one rather than merging, so contents
+      # has to be restated or checkout has nothing to read on a private repo.
+      contents: read
       # Trusted publishing: PyPI mints a short-lived token from this, so the
       # repository holds no API key to leak or rotate.
       id-token: write
