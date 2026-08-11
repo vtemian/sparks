@@ -99,7 +99,7 @@ keeps whatever you write.
 
 ### Classes only where state is the point
 Dataclasses for structured data, exceptions, protocols, and stateful
-lifecycle objects (Supervisor, RunMetrics, Buffer). Business logic is plain
+lifecycle objects (Supervisor, RunRecord, Buffer). Business logic is plain
 functions. No wrapper classes around what a function can do.
 
 ### Explicit over implicit

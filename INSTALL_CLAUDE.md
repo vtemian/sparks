@@ -97,6 +97,10 @@ The image is built from the current directory, or `--context`. Pass `--image` to
 build and reuse a tag already in the registry. The box never builds: `fire` only pulls, so
 changing code means rebuilding and submitting from a laptop.
 
+The tag is `<registry>/<user>/<name>:<sha>`, the sha being `--context`'s HEAD, so two submits
+from one commit under one `--name` push the same tag: the second overwrites the first, and a
+job still queued against that tag pulls the new image when it starts.
+
 ## Manage the queue
 
 ```sh
@@ -186,8 +190,8 @@ the range is what surfaces older ones.
 `/etc/sparks/box.toml` is missing, unreadable, or promises a path that does not exist.
 Converge sparkup; do not work around it.
 
-**Submit fails at push** — check `insecure-registries` above, and that `SPARKS_HOST` is
-reachable. The error names the tag that failed.
+**Submit fails at push** — check `insecure-registries` above, and that the box is reachable.
+The error names the tag that failed.
 
 **A job fails immediately with a pull error** — `sparks status <job>` says so in `detail`,
 and `pull.log` in the job directory has the registry's own output. The usual cause is a tag
@@ -200,6 +204,8 @@ Docker's layer cache served the version it was first built with. Pin a tag.
 written. Check the job directory is writable by the submitting account; a full disk or a
 wrong owner is the usual cause.
 
-**A finished run's curves flat-line for five minutes** rather than stopping dead. Pushed
-series are not marked stale automatically, so a killed run's non-lifecycle metrics hold their
-last value for the lookback window. This is expected.
+**A killed run's curves flat-line for five minutes.** A run that ends normally marks every
+series it wrote stale on the way out, so its curves stop dead; a signal skips that flush, so
+an aborted or OOM-killed run holds its last values for the lookback window while
+`training_run_status` already says how it ended. `training_run_info` is exempt from stale
+marking either way, which is what keeps a finished run selectable in the dashboard's dropdown.
