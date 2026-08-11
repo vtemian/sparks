@@ -270,6 +270,7 @@ class Run:
         self.count = 0
         self._ended = False
         self._warned = False
+        self._shapes: dict[str, bool] = {}
         self._marks: deque[float] = deque(maxlen=window)
 
     def __enter__(self) -> Self:
@@ -299,6 +300,16 @@ class Run:
         # Last, so a failed end leaves the run reporting rather than silent.
         self._ended = True
 
+    def _keep_shape(self, key: str, grouped: bool) -> None:
+        # A metric reported both ways is two series with one name. The receiver
+        # takes both without complaint, and the panel draws two lines carrying
+        # the same legend, which is a worse answer than an error.
+        if self._shapes.setdefault(key, grouped) is grouped:
+            return
+
+        shape = "a mapping" if grouped else "a number"
+        raise ValueError(f"{key} was already reported the other way; {shape} now")
+
     def _warn_once(self) -> None:
         if self._warned:
             return
@@ -322,12 +333,17 @@ class Run:
             self._warn_once()
             return
 
+        # Everything is checked before anything is sent, so a bad third keyword
+        # does not leave the first two already recorded. Checked here rather
+        # than where they are sent, too: checking only when an emitter exists
+        # is how a bad one survives every laptop run and then raises on the
+        # box, inside the training loop, after submit reported success.
+        for key, value in values.items():
+            training_metric(key)
+            self._keep_shape(key, isinstance(value, dict))
+
         plain: dict[str, float] = {}
         for key, value in values.items():
-            # Name, group names and values are all checked here rather than
-            # where they are sent. Checking only when an emitter exists is how
-            # a bad one survives every laptop run and then raises on the box,
-            # inside the training loop, after submit reported success.
             name = training_metric(key)
             if not isinstance(value, dict):
                 plain[key] = float(value)

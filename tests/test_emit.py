@@ -783,3 +783,45 @@ def test_a_value_reaches_the_buffer_as_a_float() -> None:
         float,
         float,
     ]
+
+
+def test_a_metric_cannot_change_shape_within_a_run() -> None:
+    # Both land, as different series with the same name, so the receiver says
+    # nothing and the panel draws two identically-labelled lines.
+    run = Run(None)
+    run.log(loss=0.5)
+
+    with pytest.raises(ValueError, match="loss"):
+        run.log(loss={"a": 0.75})
+
+
+def test_a_metric_that_started_grouped_stays_grouped() -> None:
+    run = Run(None)
+    run.log(learning_rate={"adapter": 1.0})
+
+    with pytest.raises(ValueError, match="learning_rate"):
+        run.log(learning_rate=1.0)
+
+
+def test_the_same_shape_twice_is_fine() -> None:
+    run = Run(None)
+
+    run.log(loss=0.5)
+    run.log(loss=0.4)
+    run.log(learning_rate={"adapter": 1.0})
+    run.log(learning_rate={"adapter": 0.5})
+
+
+def test_a_refused_shape_sends_nothing_from_that_call() -> None:
+    # grad_norm is new and fine; loss is the conflict, and it comes second. The
+    # grouped grad_norm must not have gone out already, or a caller who catches
+    # the error has half a step recorded.
+    emitter = child()
+    run = Run(emitter)
+    run.log(loss=0.5)
+    emitter._buffer.drain()
+
+    with pytest.raises(ValueError, match="loss"):
+        run.log(grad_norm={"a": 1.0}, loss={"b": 0.5})
+
+    assert emitter._buffer.drain() == []

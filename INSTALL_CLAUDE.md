@@ -198,6 +198,12 @@ gives a panel several values and no explanation. `metrics.py` states the opennes
 declaration itself, because the per-metric descriptions rotted once already by claiming labels
 no code produced.
 
+What is *not* open is changing a metric's shape mid-run: `Run` remembers how each name was
+first reported and raises on the other shape. Both forms are legal series with one name, so the
+receiver takes them without complaint and the panel draws two identically-labelled lines,
+which is a worse answer than an error. The whole call is checked before any of it is sent, so a
+bad third keyword does not leave the first two recorded.
+
 `track` is the only way training code gets an emitter, and `RunMetrics` is the supervisor's,
 not yours: it defaults to owning the run's lifecycle, so a training script that builds one
 directly writes the same series the supervisor does and both batches die on a 400. A framework

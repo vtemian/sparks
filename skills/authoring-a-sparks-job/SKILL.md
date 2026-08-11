@@ -92,7 +92,9 @@ Pass a mapping instead of a number and you get one series per group, labelled `g
 else a metric can be is a mapping, so this needs no method of its own. `run.log` takes them too.
 
 **Any declared metric takes one**, deliberately: a multi-task run groups `loss` by task, a
-multi-head one groups `eval_loss` by head. Grouping a metric that describes the run rather than
+multi-head one groups `eval_loss` by head. Pick one shape per metric and keep it: reporting the
+same name both ways raises, because the two are separate series with one name and the panel
+would draw two lines carrying the same legend. Grouping a metric that describes the run rather than
 a value is legal and probably not what you want, though: `progress` and `step` feed stat panels
 that expect a single series, and a mapping quietly gives them several.
 Use it wherever one averaged series would describe neither half — a LoRA adapter and the
