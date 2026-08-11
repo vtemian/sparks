@@ -220,7 +220,7 @@ def entries(queue_dir: Path) -> list[Entry]:
             found.append(load(path.parent))
         except (OSError, ValueError, KeyError, TypeError) as exc:
             LOG.warning("sparks: skipping unreadable job %s: %s", path.parent, exc)
-    return sorted(found, key=lambda e: (e.job.submitted_unix, e.job.job_id))
+    return sorted(found, key=lambda entry: (entry.job.submitted_unix, entry.job.job_id))
 
 
 def next_queued(queue_dir: Path) -> Entry | None:

@@ -45,47 +45,47 @@ NUMERIC: tuple[Numeric, ...] = (
     Numeric(
         "sparks_run_start_timestamp_seconds",
         "Unix time the run started.",
-        lambda s: s.started_unix,
+        lambda run: run.started_unix,
     ),
     Numeric(
         "sparks_run_duration_seconds",
         "Wall-clock duration of the run.",
-        lambda s: s.duration_seconds,
+        lambda run: run.duration_seconds,
     ),
     Numeric(
         "sparks_run_energy_window_seconds",
         "Window the energy counters bracketed, wider than the run's duration.",
-        lambda s: s.energy.window_seconds,
+        lambda run: run.energy.window_seconds,
     ),
     Numeric(
         "sparks_run_energy_joules",
         "Total energy drawn over the run.",
-        lambda s: s.energy.total_joules,
+        lambda run: run.energy.total_joules,
     ),
     Numeric(
         "sparks_run_marginal_energy_joules",
         "Energy above idle, attributable to the run.",
-        lambda s: s.energy.marginal_joules,
+        lambda run: run.energy.marginal_joules,
     ),
     Numeric(
         "sparks_run_idle_watts",
         "Idle baseline power measured before the run.",
-        lambda s: s.energy.idle_watts,
+        lambda run: run.energy.idle_watts,
     ),
     Numeric(
         "sparks_run_gpu_nvml_energy_joules",
         "GPU energy as NVML measures it.",
-        lambda s: s.energy.gpu_nvml_joules,
+        lambda run: run.energy.gpu_nvml_joules,
     ),
     Numeric(
         "sparks_run_gpu_firmware_energy_joules",
         "GPU energy at the firmware rail.",
-        lambda s: s.energy.gpu_firmware_joules,
+        lambda run: run.energy.gpu_firmware_joules,
     ),
     Numeric(
         "sparks_run_final_loss",
         "Training loss last reported by the run.",
-        lambda s: s.final_loss,
+        lambda run: run.final_loss,
     ),
 )
 
