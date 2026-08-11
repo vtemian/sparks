@@ -1,103 +1,87 @@
 # Installing and using sparks
 
-Everything an agent needs to install sparks, submit a training run, and find out what
-happened to it.
+Everything an agent needs to install sparks and its skills, submit a training run, and find
+out what happened to it.
 
-sparks owns training runs — emitting their metrics, launching them, queueing them. The box
+sparks owns training runs: emitting their metrics, launching them, queueing them. The box
 itself (Prometheus, Grafana, the image registry, the queue container) is provisioned by
-sparkup. If a box has never been converged by sparkup, nothing here will run: sparks reads
-a contract file sparkup writes, and refuses to start without it.
+sparkup. If a box has never been converged by sparkup, nothing here will run: sparks reads a
+contract file sparkup writes, and refuses to start without it.
 
-## The two halves
+`sparks` is the laptop client. `fire` is the box server, running as the queue container's
+entrypoint; you never invoke it, and neither the supervisor
+(`python -m sparks.fire.supervise`) nor any `sparks run`, `sparks-runner` or `sparks demo`
+exists to be called. Queue verbs typed on a laptop travel over SSH to `fire-ctl` on the box,
+which runs `fire <verb>` inside the queue container. Bulk data goes by rsync, not that path.
 
-`sparks` is the laptop client: it builds the job image, pushes it to the box registry,
-uploads the data folder, and enqueues the job.
+## Install the client
 
-`fire` is the box server, running as the queue container's entrypoint: it drains the
-spool, pulls the image, starts the job and honours cancel and abort.
-
-Queue verbs typed on a laptop travel over SSH to `fire-ctl` on the box, which runs
-`fire <verb>` inside the queue container. Bulk data goes by rsync, not through that path.
-
-Supervision of each training container is internal (`python -m sparks.fire.supervise`,
-called by `fire`). It is not on `PATH` and you never invoke it. There is no `sparks run`,
-no `sparks-runner`, no `sparks demo`.
-
-## Install
-
-On a laptop, as a tool rather than into a project venv: the client is run from your own
-training project and needs nothing from this checkout.
+On a laptop, as a tool rather than into a project venv: the client runs from your own
+training project and needs nothing from a sparks checkout.
 
 ```sh
 uv tool install git+https://github.com/vtemian/sparks@v0.1.0
+export SPARKS_HOST=you@your-box
 sparks setup                 # writes the box registry into Docker's daemon.json
 sparks --help                # confirms the client is on PATH
 ```
 
-Pin the tag. Without one you track `main`, and Docker's layer cache will keep serving whatever
-sparks an image was first built with, however far main has moved: that failed a run with
-`ImportError` on a name main had had for an hour. The `git+` form shells out to `git`; on a
-machine without it, `uv tool install
-https://github.com/vtemian/sparks/archive/refs/tags/v0.1.0.tar.gz` is the same package.
+Pin the tag. Without one you track `main`, and Docker's layer cache keeps serving whatever
+sparks an image was first built with, however far main has moved. The `git+` form shells out
+to `git`; on a machine without it,
+`uv tool install https://github.com/vtemian/sparks/archive/refs/tags/v0.1.0.tar.gz` is the
+same package. From a checkout, `make install` does the tool install and `sparks setup`.
 
-From a checkout, `make install` does the tool install and `sparks setup` against the working
-tree you have.
+On the box, sparks ships inside the queue image. Converge sparkup rather than installing by
+hand; `make deploy` does **not** update the queue server.
 
-On the box, sparks ships inside the queue image; converge sparkup rather than installing
-by hand. To put a working tree on the box for development:
+## Install the skills
+
+`skills/` holds two Claude Code skills: `authoring-a-sparks-job` for writing training code
+and its Dockerfile, `operating-the-sparks-queue` for watching and diagnosing runs. They are
+split because the triggers differ, and they cross-reference each other.
 
 ```sh
-make deploy                            # SPARKS_HOST and SPARKS_VENV from local.mk
-make deploy SPARKS_HOST=you@your-box   # or inline
+ln -s "$PWD"/skills/* ~/.claude/skills/
 ```
 
-That rsyncs the tree, installs it into `SPARKS_VENV` (the venv your *training* code runs
-in), and copies `monitoring/dashboards/` where Grafana reads them; it rescans within 10
-seconds, no restart and no root. Neither `SPARKS_HOST` nor `SPARKS_VENV` has a default and
-deploy refuses without them. It also refuses early if the box has no contract, or if your
-`SPARKS_SHARED_DIR` disagrees with the box's.
-
-`make deploy` does **not** update the queue server. `fire` ships as a container image:
-push, let CI build the tag, then converge sparkup to pull it.
+Read `authoring-a-sparks-job` before writing a job. It carries the container traps that make
+a correct-looking image fail on the box after submit already reported success.
 
 ## Configure
 
-**`SPARKS_HOST`** is how the client finds the box. Export it, or pass `--host`:
-
-```sh
-export SPARKS_HOST=you@your-box
-```
+**`SPARKS_HOST`** is how the client finds the box. Export it, or pass `--host`.
 
 **`/etc/sparks/box.toml`** is written by sparkup and read on the box. It carries the shared
 directory, the textfile directory, the Prometheus URL, the Grafana URL and `registry_url`.
-sparks does not guess any of those: if the file is missing or a promised path does not
-exist, `fire` and the supervisor refuse to start and exit **78** (`EX_CONFIG`), which is
-distinct so a queue can tell a misconfigured box from a crashed job.
+sparks guesses none of those: if the file is missing or a promised path does not exist,
+`fire` and the supervisor exit **78** (`EX_CONFIG`), which is distinct so a queue can tell a
+misconfigured box from a crashed job.
 
-**Laptop Docker must allow the plain-HTTP registry.** It is HTTP on purpose — the LAN trust
-boundary is the SSH one. Without this, `docker push` fails and submit dies before the job is
-reserved:
+**Laptop Docker must allow the plain-HTTP registry.** `sparks setup` does this for you. By
+hand it is the same host:port that `registry_url` names, followed by a Docker restart:
 
 ```json
 { "insecure-registries": ["your-box:5000"] }
 ```
 
-Restart Docker afterwards, and use the same host:port that `registry_url` names.
-
-**`local.mk`** (untracked; copy `local.mk.example`) overrides `SPARKS_HOST`,
-`SPARKS_SHARED_DIR` and `SPARKS_VENV` for `make deploy`. `SPARKS_VENV` has no default and
-deploy refuses without it: it is the venv your training code runs in, which belongs to a
-project sparks knows nothing about.
+**`local.mk`** (untracked; copy `local.mk.example`) sets `SPARKS_HOST`, `SPARKS_SHARED_DIR`
+and `SPARKS_VENV` for `make deploy`. `SPARKS_VENV` has no default and deploy refuses without
+it: it is the venv your training code runs in, which belongs to a project sparks knows
+nothing about.
 
 ## Submit a run
 
 ```sh
-sparks submit --data ./corpus --name e0 -- python train.py --data /data
+sparks submit --data ./corpus --name e0 -- python /app/train.py --data /data
 ```
 
 `--data` is required. That folder is uploaded into the job and mounted **read-only at
-`/data`** (also `$SPARKS_DATA`) inside the container. Training code must read that path — a
-script with a laptop path hard-coded will fail on the box even though submit succeeded.
+`/data`** (also `$SPARKS_DATA`). Training code must read that path: a script with a laptop
+path hard-coded fails on the box even though submit succeeded.
+
+Name the script by absolute path. The container's working directory is the box's shared
+directory, not the image's, so a bare `python train.py` does not resolve.
 
 The image is built from the current directory, or `--context`. Pass `--image` to skip the
 build and reuse a tag already in the registry. The box never builds: `fire` only pulls, so
@@ -110,7 +94,7 @@ sparks queue            # what is running and waiting
 sparks queue --all      # include finished jobs
 sparks logs <job>       # the last 200 lines the job printed; --all for every line
 sparks status <job>     # one job in full: state, exit code, duration, energy
-sparks wait <job>       # block until it ends; exit 0 only if it finished
+sparks wait <job>       # block until it ends
 sparks cancel <job>     # drop a job that has not started
 sparks abort <job>      # stop one whether or not it has started
 sparks retry <job>      # resubmit, reusing the image and data already on the box
@@ -120,45 +104,23 @@ sparks remove <job>     # delete a finished job
 `<job>` is a full job id, a unique fragment of one, or a job name. Ambiguity is refused
 rather than guessed, except that one running job among several finished ones is taken to be
 the one you meant. Only the account that submitted a job may control it; root may control
-any — but anyone may read any job's `queue`, `logs` and `status`, as reading is not
-controlling.
+any. Anyone may read any job's `queue`, `logs` and `status`.
 
-`queue --json` and `status --json` are the machine-readable forms, and are what a script or
-an agent should parse: the plain output is a padded table meant for a person. `status --json`
-carries three keys — `job` (what was submitted), `state` (where it is now), and `summary`
-(the run's permanent record, `null` until the run ends).
-
-`logs` needs the job to have reached a run: before that it fails and names the state, with
-the runner's `detail` when there is one (a failed pull says so). When the launch itself
-failed there is no container output, so `logs` prints `error.txt` under a
-`sparks could not run this job:` heading rather than passing it off as the job's own.
+`queue --json` and `status --json` are what a script or an agent should parse; the plain
+output is a padded table meant for a person. `status --json` carries three keys: `job` (what
+was submitted), `state` (where it is now), and `summary` (the permanent record, `null` until
+the run ends).
 
 `wait` exits **0 only when the job finished**, 1 when it ended any other way, and 75
 (`EX_TEMPFAIL`) when `--timeout` expired with the job still going, so `sparks wait "$JOB" &&
-next-step` is safe and a script can tell a broken job from a slow one. It polls
-`status --json` client-side every `--interval` seconds (10 by default) rather than blocking
-on the box: `capture` gives up on any single SSH call after 120s, so a server-side `wait`
-could never outlive two minutes, and an hours-long connection is the first thing a network
-blip kills.
+next-step` is safe and a script can tell a broken job from a slow one.
 
-## Driving sparks from an agent
-
-`skills/` holds two Claude Code skills, `authoring-a-sparks-job` and
-`operating-the-sparks-queue`, installed with `ln -s "$PWD"/skills/* ~/.claude/skills/`.
-
-They are split because the triggers are different — writing training code is not the same
-task as working out why last night's run died — and they cross-reference each other.
-
-When one of them wants something the CLI cannot do, **add the verb rather than teaching the
-skill to work around it.** `logs` and `status` exist for exactly that reason: the previous
-answer was to parse a padded table for a run id and `ssh` a path assembled from the box
-contract, which is knowledge a skill should never have to carry. The box already resolves
-those paths, so a new reader belongs in `fire/ctl.py` beside `queue`, proxied from
-`client/cli.py` the way `cancel` is.
+`logs` needs the job to have reached a run: before that it fails and names the state, with
+the runner's `detail` when there is one. When the launch itself failed there is no container
+output, so `logs` prints `error.txt` under a `sparks could not run this job:` heading rather
+than passing it off as the job's own.
 
 ## Instrument a run
-
-Training code wraps its loop in `track` and reports one step at a time:
 
 ```python
 from sparks.emit import track
@@ -170,63 +132,29 @@ with track(total=epochs * len(loader), tokens_per_step=batch_size * BLOCK) as ru
 ```
 
 `track` picks up the run id and Prometheus URL the supervisor exported, so training code
-needs no arguments. Anywhere else it yields a run whose every call is a no-op, which is why
-**the call site carries no `is not None` guard** and the same script runs on a laptop. It still
-counts steps and still checks metric names there, so a typo cannot survive a laptop run and
-then raise on the box. Reporting after the run has ended warns once and drops the sample.
-Keyword arguments other than `total`, `tokens_per_step` and `window` become labels on every
-sample, except `run_id`, which is refused: a label of that name would otherwise overwrite the
-run's own and every sample would be filed under a run that does not exist. `group` belongs to
-the grouped form and is overwritten there. A label name must match `[a-zA-Z_][a-zA-Z0-9_]*` and must
-not start with `__`. Note that this is only enforced once there is an emitter, so a bad label
-name passes on a laptop and raises on the box: the metric-name check above does not have that
-hole, and this one should be closed the same way.
+needs no arguments. Anywhere else it reports nothing, which is why **the call site carries no
+`is not None` guard**. It still checks names, labels and values there, so a typo fails on a
+laptop rather than on the box.
 
-`run.step` counts the step and derives `step`, `progress`, `eta_seconds`, `steps_per_sec` and
-`tokens_per_sec`. `progress` is clamped to 1 and `eta_seconds` to 0, because a run that
-overshoots its own `total` would otherwise report 167% complete on a panel bounded at 0-1. A value you pass wins over the derived one, so `run.step(step=global_step)`
-reports your own numbering. What `track` was not given is not emitted rather than guessed: no
-`total` means no `progress` and no `eta_seconds`, no `tokens_per_step` means no
-`tokens_per_sec`. A guessed denominator draws a progress bar that lies, which is worse than an
-empty panel. `epoch` is not derived at all; pass it.
+`run.step` derives `step`, `progress`, `eta_seconds`, `steps_per_sec` and `tokens_per_sec`.
+A value you pass wins over the derived one. What `track` was not given is not emitted rather
+than guessed: no `total` means no `progress` and no `eta_seconds`, no `tokens_per_step` means
+no `tokens_per_sec`. `epoch` is not derived; pass it. Rates come from a sliding window, so
+the first step reports none.
 
-Rates are measured over a sliding window of the most recent steps, so the first step reports
-no rate: a rate needs two of them. One missing point at the start of a run is not a bug.
+`run.log(...)` reports without advancing the step counter, which is what an `eval_loss` at
+the end of an epoch wants. A value that differs per group is a mapping rather than a number,
+`run.step(learning_rate={"adapter": 2e-4, "norms": 2e-5})`, giving one series per group
+labelled `group`. Any declared metric takes one, but a metric may not change shape mid-run.
 
-`run.log(...)` reports without advancing the step counter, which is what an `eval_loss` at the
-end of an epoch wants. A value that differs per parameter group is a mapping rather than a
-number, `run.step(learning_rate={"adapter": 2e-4, "norms": 2e-5})`, giving one series per group
-labelled `group`. There is no separate method: nothing else a metric can be is a mapping, and a
-second one would have been a second naming convention, since it wanted the full metric name
-while `step` and `log` want the short key.
+Metric names are a closed set in `sparks.metrics.METRICS`; `run.step(loss=…)` writes
+`training_loss`, and an undeclared name raises. Keyword arguments other than `total`,
+`tokens_per_step` and `window` become labels, except `run_id` and `group`, which are the
+emitter's and are refused.
 
-**Which metrics may be grouped is deliberately open**, and that decision was made rather than
-defaulted into. Restricting it to the obvious three was considered and rejected: a multi-task
-run wants `loss` per task and a multi-head one wants `eval_loss` per head, and a closed list
-would have to guess those in advance. The cost is real and accepted: `progress={...}` and
-`step={...}` are legal, and both feed stat panels that expect one series, so a mapping there
-gives a panel several values and no explanation. `metrics.py` states the openness on the
-declaration itself, because the per-metric descriptions rotted once already by claiming labels
-no code produced.
-
-What is *not* open is changing a metric's shape mid-run: `Run` remembers how each name was
-first reported and raises on the other shape. Both forms are legal series with one name, so the
-receiver takes them without complaint and the panel draws two identically-labelled lines,
-which is a worse answer than an error. The whole call is checked before any of it is sent, so a
-bad third keyword does not leave the first two recorded.
-
-`track` is the only way training code gets an emitter. There is no class a training script can
-build that would write the supervisor's series: `Run` has no method for them and refuses their
-names, `RunRecord` has no `log`, and `Pump` underneath both has no opinion about metric names at
-all. That used to be one class with a `lifecycle` flag, which meant the mode that destroys the
-supervisor's batch was the one you got by saying nothing. A framework
-callback owns no loop, but the run `track` returns works without a `with` block, so hold it and
-call `run.end()` when the framework says training is over. Build it once: two `track` calls in
-one process are two writers on one series.
-
-Metric names must be declared in `sparks.metrics.METRICS`; `run.step(loss=…)` writes
-`training_loss`. An undeclared name raises rather than being silently dropped, because a
-metric no dashboard can query is worse than an error.
+A framework callback owns no loop, but the run `track` returns works without a `with` block:
+hold it and call `run.end()` when training is over. Build it once — two `track` calls in one
+process are two writers on one series.
 
 ## Where the results are
 
@@ -239,14 +167,14 @@ every run, so the index survives losing the TSDB. The live queue is `sparks_queu
 beside it.
 
 Grafana has one board, `training-runs`, with a `$run_id` variable. The dropdown is scoped to
-the dashboard's time range, so with the default `now-3h` it lists recent runs only —
-widening the range is what surfaces older ones.
+the dashboard's time range, so with the default `now-3h` it lists recent runs only; widening
+the range is what surfaces older ones.
 
 ## When something goes wrong
 
-**Exit 78 from `fire` or the supervisor** means the box is not configured: `/etc/sparks/box.toml`
-is missing, unreadable, or promises a path that does not exist. Converge sparkup; do not
-work around it.
+**Exit 78 from `fire` or the supervisor** means the box is not configured:
+`/etc/sparks/box.toml` is missing, unreadable, or promises a path that does not exist.
+Converge sparkup; do not work around it.
 
 **Submit fails at push** — check `insecure-registries` above, and that `SPARKS_HOST` is
 reachable. The error names the tag that failed.
@@ -255,22 +183,13 @@ reachable. The error names the tag that failed.
 and `pull.log` in the job directory has the registry's own output. The usual cause is a tag
 that was never pushed.
 
-**A run shows on the dashboard with no end and no status** — that is a run whose record was
-never written. Check the job directory is writable by the submitting account; a full disk or
-a wrong owner is the usual cause.
+**A job fails on `import sparks`** — the image installed sparks from a branch URL, and
+Docker's layer cache served the version it was first built with. Pin a tag.
+
+**A run shows on the dashboard with no end and no status** — that run's record was never
+written. Check the job directory is writable by the submitting account; a full disk or a
+wrong owner is the usual cause.
 
 **A finished run's curves flat-line for five minutes** rather than stopping dead. Pushed
-series are not marked stale automatically, so a killed run's non-lifecycle metrics hold
-their last value for the lookback window. This is expected.
-
-## Develop
-
-```sh
-make check   # format, lint, mypy strict, tests, the custom checkers, dashboards
-make live    # the same against a real Prometheus in Docker
-make on-box  # the checks that only mean anything on real hardware; run ON the box
-```
-
-`make check` needs no Docker and is what CI runs. `make live` is required for anything
-touching the emitter's threading or the launch and supervise seam: no unit test can catch a
-second writer on a metric series.
+series are not marked stale automatically, so a killed run's non-lifecycle metrics hold their
+last value for the lookback window. This is expected.
