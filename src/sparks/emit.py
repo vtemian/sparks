@@ -2,9 +2,11 @@ import atexit
 import logging
 import os
 import struct
+import sys
 import threading
 import time
 from collections import deque
+from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self
 
@@ -12,6 +14,7 @@ from prometheus_remote_writer import RemoteWriter  # type: ignore[import-untyped
 
 from sparks.buffer import Buffer
 from sparks.metrics import LIFECYCLE, METRICS
+from sparks.run import current_user, git_sha, new_run_id, slug
 from sparks.series import Series
 
 if TYPE_CHECKING:
@@ -28,6 +31,10 @@ RATE_WINDOW_STEPS = 20  # what "over the last window" means for the rates
 MARKS_FOR_A_RATE = 2  # a rate is an interval, and an interval needs two ends
 
 STALE_NAN = struct.unpack("<d", struct.pack("<Q", 0x7FF0000000000002))[0]
+
+SCRAPE_SECONDS = 15.0  # the box's Prometheus, and the floor on any query step
+
+STALE_GRACE_MS = int(2 * SCRAPE_SECONDS * 1000)
 
 
 def training_metric(key: str) -> str:
@@ -163,9 +170,15 @@ class Pump:
             {
                 "metric": series.as_metric(),
                 "values": [STALE_NAN],
-                # Strictly after the last real sample: sharing its millisecond
-                # loses every marker in the batch.
-                "timestamps": [max(ended, last + 1)],
+                # Prometheus and Grafana evaluate at steps no finer than the
+                # scrape interval, so a marker sooner than one step falls
+                # between two of them and the sample it ends is queryable by
+                # nothing. Two intervals put a step inside the live window
+                # whatever its alignment, and the series still stops dead long
+                # before the 5m lookback would have let it flat-line. Off the
+                # later of the two, so a clock that stepped back still clears
+                # the sample rather than colliding with it.
+                "timestamps": [max(ended, last) + STALE_GRACE_MS],
             }
             for series, last in self._buffer.seen().items()
             if series.name not in self._never_stale
@@ -236,9 +249,11 @@ class Run:
         tokens_per_step: int | None = None,
         window: int = RATE_WINDOW_STEPS,
         clock: "Callable[[], float]" = time.monotonic,
+        record: "RunRecord | None" = None,
     ) -> None:
         check_run_shape(total, tokens_per_step, window)
         self._pump = pump
+        self._record = record
         self._labels = labels or {}
         Series("training_loss", self._labels)
         self.total = total
@@ -253,20 +268,32 @@ class Run:
     def __enter__(self) -> Self:
         return self
 
+    @property
+    def run_id(self) -> str:
+        return self._labels.get("run_id", "")
+
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
-        self.end()
+        # The status is derived, never a parameter: a child has no record to
+        # put one on, and an argument that is silently ignored for children is
+        # the defect this class was split to remove.
+        self._finish("crashed" if exc_type is not None else "finished")
 
     def end(self) -> None:
+        self._finish("finished")
+
+    def _finish(self, status: str) -> None:
         if self._ended:
             return
 
         if self._pump is not None:
             self._pump.close()
+        if self._record is not None:
+            self._record.end(status)
 
         # Last, so a failed end leaves the run reporting rather than silent.
         self._ended = True
@@ -378,6 +405,8 @@ def track(
     total: int | None = None,
     tokens_per_step: int | None = None,
     window: int = RATE_WINDOW_STEPS,
+    name: str | None = None,
+    info: dict[str, str] | None = None,
     **labels: str,
 ) -> Run:
     for reserved in ("run_id", "group"):
@@ -389,13 +418,31 @@ def track(
     run_id = os.environ.get("SPARKS_RUN_ID")
     url = (os.environ.get("SPARKS_PROMETHEUS_URL") or "").strip()
     pump = None
+    record = None
     if run_id and url:
+        # Submitted: the supervisor began the record and will end it from how
+        # the process exited. `name` and `info` are its business, not ours.
         pump = Pump(url)
     elif run_id:
         LOG.warning(
             "sparks: SPARKS_RUN_ID is set but SPARKS_PROMETHEUS_URL is not, "
             "so this run reports nothing"
         )
+    elif url:
+        # On the box, launched by hand. Nobody else owns this run's identity,
+        # and without the record the dashboard's run picker never lists it: the
+        # loss arrives under a run_id no query selects.
+        run_id = new_run_id(run_name(name), current_user())
+        record = RunRecord(
+            run_id=run_id,
+            url=url,
+            info={"run_name": run_name(name), "git_sha": git_sha(), **(info or {})},
+        )
+        record.begin()
+        # So a second track in this process becomes a child rather than minting
+        # a second run, and so a subprocess inherits the right id.
+        os.environ["SPARKS_RUN_ID"] = run_id
+        pump = Pump(url)
     else:
         LOG.debug("not inside a job: this run reports nothing")
 
@@ -405,4 +452,12 @@ def track(
         total=total,
         tokens_per_step=tokens_per_step,
         window=window,
+        record=record,
     )
+
+
+def run_name(name: str | None) -> str:
+    if name:
+        return name
+
+    return slug(Path(sys.argv[0]).stem, "run")
