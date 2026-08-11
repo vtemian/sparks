@@ -164,7 +164,7 @@ reported success.
   script with a laptop path hard-coded fails on the box.
 - **sparks must be installed in the image**, or `from sparks.emit import track` fails at
   import. A slim base has no `git`, so `pip install git+https://...` fails there; install the
-  tarball. **Pin a commit or a tag, never a branch.** Docker keys the layer on the text of the
+  tarball. **Pin a tag, never a branch.** Docker keys the layer on the text of the
   instruction, so a branch URL never changes and the cache keeps serving whatever sparks it
   first built with. That failed a real run with `ImportError` on a name main had had for an
   hour, and nothing in the build output said why.
@@ -186,7 +186,7 @@ FROM python:3.12-slim
 WORKDIR /app
 ENV HOME=/tmp
 RUN pip install --no-cache-dir \
-    "https://github.com/vtemian/sparks/archive/01f3ea95aba2bad1d5a892e87f174c1aa08d6c0d.tar.gz"
+    "https://github.com/vtemian/sparks/archive/refs/tags/v0.1.0.tar.gz"
 COPY *.py /app/
 ```
 

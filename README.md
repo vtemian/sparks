@@ -36,7 +36,7 @@ the queue container's entrypoint on the box; you never invoke it yourself.
 ## Install
 
 ```sh
-uv tool install git+https://github.com/vtemian/sparks
+uv tool install git+https://github.com/vtemian/sparks@v0.1.0
 export SPARKS_HOST=you@your-box
 sparks setup
 ```
@@ -46,10 +46,12 @@ because that registry is plain HTTP on your LAN. It prints a Docker restart comm
 know that a restart stops whatever containers you have. Skip this step and `docker push` fails,
 which kills a submit before the job is even reserved.
 
-That install form shells out to `git`. Without it, use the tarball, which is the same package:
+Both forms name a tag. Without one you track `main`, and two people installing on the same day can
+get different code with no way to say which. That install form shells out to `git`; without it, use
+the tarball, which is the same package:
 
 ```sh
-uv tool install https://github.com/vtemian/sparks/archive/refs/heads/main.tar.gz
+uv tool install https://github.com/vtemian/sparks/archive/refs/tags/v0.1.0.tar.gz
 ```
 
 From a checkout, `make install` does both steps against the working tree you have.
