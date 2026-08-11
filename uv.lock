@@ -597,7 +597,7 @@ wheels = [
 ]
 
 [[package]]
-name = "sparks"
+name = "sparks-dgx"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
