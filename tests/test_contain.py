@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 from docker.types import DeviceRequest
 
-from sparks import dock
+from sparks import dock, spool
 from sparks.fire import contain
 
 
@@ -105,6 +105,53 @@ class TestContainerEnvironment:
         assert "SPARKS_PROMETHEUS_URL" not in env
         assert env["PYTHONUNBUFFERED"] == "1"
         assert env["SPARKS_DATA"] == "/data"
+
+
+class TestTheEnvironmentTheJobIsGiven:
+    def test_it_merges_the_public_pairs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("SPARKS_RUN_ID", raising=False)
+        env = contain.container_environment(["WANDB_MODE=offline"])
+        assert env["WANDB_MODE"] == "offline"
+        assert env["SPARKS_DATA"] == "/data"
+
+    def test_it_merges_the_secret_file(self, tmp_path: Path) -> None:
+        spool.write_env(tmp_path, {"HF_TOKEN": "hunter2"})
+        env = contain.container_environment(env_file=tmp_path / spool.ENV_FILE)
+        assert env == {**contain.container_environment(), "HF_TOKEN": "hunter2"}
+
+    def test_a_secret_file_that_is_not_there_stops_the_job(
+        self, tmp_path: Path
+    ) -> None:
+        # The alternative is a training run that starts, reaches the hub an
+        # hour in and fails with 401.
+        with pytest.raises(spool.EnvError, match="could not be read"):
+            contain.container_environment(env_file=tmp_path / "env")
+
+    def test_a_secret_file_that_is_not_what_sparks_wrote_stops_the_job(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "env").write_text("HF_TOKEN=hunter2\n")
+        with pytest.raises(spool.EnvError, match="JSON"):
+            contain.container_environment(env_file=tmp_path / "env")
+
+    def test_the_job_cannot_move_the_mount_it_was_promised(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SPARKS_RUN_ID", "run-abc")
+        env = contain.container_environment(
+            ["SPARKS_DATA=/elsewhere", "SPARKS_RUN_ID=somebody-elses"]
+        )
+        assert env["SPARKS_DATA"] == "/data"
+        assert env["SPARKS_RUN_ID"] == "run-abc"
+
+    def test_a_secret_wins_over_a_public_pair_of_the_same_name(
+        self, tmp_path: Path
+    ) -> None:
+        spool.write_env(tmp_path, {"HF_TOKEN": "hunter2"})
+        env = contain.container_environment(
+            ["HF_TOKEN=placeholder"], env_file=tmp_path / spool.ENV_FILE
+        )
+        assert env == {**contain.container_environment(), "HF_TOKEN": "hunter2"}
 
 
 class TestMain:
@@ -412,6 +459,54 @@ class TestParseArgs:
         assert args.workdir == Path("/shared")
         assert args.image == "img:tag"
         assert args.command == ["python", "train.py", "--epochs", "3"]
+
+    def test_the_environment_is_read_off_the_flags(self) -> None:
+        args = contain.parse_args(
+            [
+                "--name",
+                "n",
+                "--cidfile",
+                "/tmp/cid",
+                "--user",
+                "1:2",
+                "--shared-dir",
+                "/shared",
+                "--data-dir",
+                "/data/job",
+                "--workdir",
+                "/shared",
+                "--env",
+                "WANDB_MODE=offline",
+                "--env-file",
+                "/q/job-1/env",
+                "img:tag",
+                "true",
+            ]
+        )
+        assert args.env == ["WANDB_MODE=offline"]
+        assert args.env_file == Path("/q/job-1/env")
+
+    def test_a_job_with_no_environment_asks_for_no_file(self) -> None:
+        args = contain.parse_args(
+            [
+                "--name",
+                "n",
+                "--cidfile",
+                "/tmp/cid",
+                "--user",
+                "1:2",
+                "--shared-dir",
+                "/shared",
+                "--data-dir",
+                "/data/job",
+                "--workdir",
+                "/shared",
+                "img:tag",
+                "true",
+            ]
+        )
+        assert args.env == []
+        assert args.env_file is None
 
     def test_gpus_defaults_to_empty(self) -> None:
         args = contain.parse_args(

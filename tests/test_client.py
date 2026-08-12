@@ -1,4 +1,5 @@
 import os
+import stat
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -279,6 +280,73 @@ class TestRetry:
         again = control.retry(queue, spool.load(entry.path))
         assert again.owner_uid == os.getuid()
 
+    def test_a_retry_carries_the_secret_across(self, queue: Path, data: Path) -> None:
+        entry = _submit(queue, data)
+        spool.write_env(entry.path, {"HF_TOKEN": "hunter2"})
+        spool.set_state(entry.path, spool.State(state=spool.FINISHED))
+
+        again = control.retry(queue, spool.load(entry.path))
+
+        carried = again.path / spool.ENV_FILE
+        assert spool.read_env(carried) == {"HF_TOKEN": "hunter2"}
+        assert stat.S_IMODE(carried.stat().st_mode) == 0o600
+
+    def test_a_retry_without_the_secret_it_needs_is_refused_not_started(
+        self, queue: Path
+    ) -> None:
+        # data/ is hardlinked and the env file is not, so a retry that said
+        # nothing would run without the token and fail somewhere far away.
+        entry = spool.submit(
+            queue,
+            name="e0",
+            user="rex",
+            command=["true"],
+            image=IMAGE,
+            secret_names=["HF_TOKEN"],
+        )
+        spool.set_state(entry.path, spool.State(state=spool.FINISHED))
+
+        with pytest.raises(control.ControlError, match="HF_TOKEN"):
+            control.retry(queue, spool.load(entry.path))
+
+    def test_a_refused_retry_leaves_no_second_job_behind(self, queue: Path) -> None:
+        entry = spool.submit(
+            queue,
+            name="e0",
+            user="rex",
+            command=["true"],
+            image=IMAGE,
+            secret_names=["HF_TOKEN"],
+        )
+        spool.set_state(entry.path, spool.State(state=spool.FINISHED))
+
+        with pytest.raises(control.ControlError, match="HF_TOKEN"):
+            control.retry(queue, spool.load(entry.path))
+
+        assert [found.job.job_id for found in spool.entries(queue)] == [
+            entry.job.job_id
+        ]
+
+    def test_a_retry_keeps_the_public_environment_and_the_secret_names(
+        self, queue: Path
+    ) -> None:
+        entry = spool.submit(
+            queue,
+            name="e0",
+            user="rex",
+            command=["true"],
+            image=IMAGE,
+            env={"WANDB_MODE": "offline"},
+            secret_names=["HF_TOKEN"],
+        )
+        spool.write_env(entry.path, {"HF_TOKEN": "hunter2"})
+        spool.set_state(entry.path, spool.State(state=spool.FINISHED))
+
+        again = control.retry(queue, spool.load(entry.path))
+
+        assert again.job.env == {"WANDB_MODE": "offline"}
+        assert again.job.secret_names == ["HF_TOKEN"]
+
     def test_retrying_someone_elses_job_is_refused(
         self, queue: Path, data: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -290,6 +358,150 @@ class TestRetry:
         )
         with pytest.raises(control.ControlError, match="belongs to"):
             control.retry(queue, spool.load(entry.path))
+
+
+class TestTheJobsEnvironment:
+    def test_a_secret_value_appears_in_no_argv(
+        self, data: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Every argv here is public: `fire commit` shows in ps, job.json is
+        # 0644, and summary.json keeps the container argv forever.
+        monkeypatch.setenv("HF_TOKEN", "hunter2")
+        argvs: list[list[str]] = []
+        stdins: list[bytes] = []
+
+        def fake_run(
+            argv: list[str], **kwargs: Any
+        ) -> subprocess.CompletedProcess[bytes]:
+            argvs.append(list(argv))
+            given = kwargs.get("input")
+            if given is not None:
+                stdins.append(given)
+            return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
+
+        def fake_capture(host: str, argv: list[str]) -> str:
+            argvs.append(list(argv))
+            return "/q/job-1" if argv[0] == "reserve" else "job-1"
+
+        monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
+        monkeypatch.setattr(client, "capture", fake_capture)
+        monkeypatch.setattr(client, "provenance", lambda _ctx: ("abc1234", False))
+
+        client.submit_remote(
+            "box",
+            name="exp",
+            command=["true"],
+            context=data,
+            data=data,
+            image="already:pushed",
+            secrets=["HF_TOKEN"],
+        )
+
+        assert [argv for argv in argvs if "hunter2" in " ".join(argv)] == []
+        assert b"hunter2" in b"".join(stdins)
+        secret = next(argv for argv in argvs if argv[:2] == ["ssh", "box"])
+        assert secret[2] == "fire-ctl secret /q/job-1"
+        commit = next(argv for argv in argvs if argv[0] == "commit")
+        assert commit[commit.index("--secret-name") + 1] == "HF_TOKEN"
+
+    def test_the_secret_is_sent_before_the_job_is_committed(
+        self, data: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A job committed first is a job the runner may start before its
+        # environment has arrived.
+        monkeypatch.setenv("HF_TOKEN", "hunter2")
+        order: list[str] = []
+
+        def fake_run(
+            argv: list[str], **kwargs: Any
+        ) -> subprocess.CompletedProcess[bytes]:
+            order.append("secret" if kwargs.get("input") else "rsync")
+            return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
+
+        def fake_capture(host: str, argv: list[str]) -> str:
+            order.append(argv[0])
+            return "/q/job-1" if argv[0] == "reserve" else "job-1"
+
+        monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
+        monkeypatch.setattr(client, "capture", fake_capture)
+        monkeypatch.setattr(client, "provenance", lambda _ctx: ("abc1234", False))
+
+        client.submit_remote(
+            "box",
+            name="exp",
+            command=["true"],
+            context=data,
+            data=data,
+            image="already:pushed",
+            secrets=["HF_TOKEN"],
+        )
+
+        assert order == ["reserve", "rsync", "secret", "commit"]
+
+    def test_a_secret_this_shell_does_not_set_is_refused_by_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("HF_TOKEN", raising=False)
+        with pytest.raises(client.ClientError, match="HF_TOKEN"):
+            client.read_secrets(["HF_TOKEN"])
+
+    def test_a_secret_is_read_from_the_submitting_shell(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HF_TOKEN", "hunter2")
+        assert client.read_secrets(["HF_TOKEN"]) == {"HF_TOKEN": "hunter2"}
+
+    def test_an_env_pair_without_a_value_is_refused(self) -> None:
+        with pytest.raises(client.ClientError, match="KEY=VALUE"):
+            client.parse_env(["WANDB_MODE"])
+
+    def test_an_env_value_may_carry_its_own_equals_signs(self) -> None:
+        assert client.parse_env(["URL=http://x/?a=b"]) == {"URL": "http://x/?a=b"}
+
+    def test_no_ssh_happens_when_there_is_no_secret_to_send(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def refuse(*args: Any, **kwargs: Any) -> None:
+            raise AssertionError("nothing to send, so nothing should be sent")
+
+        monkeypatch.setattr("sparks.client.remote.subprocess.run", refuse)
+        client.send_secrets("box", "/q/job-1", {})
+
+    def test_a_box_that_refuses_the_secret_never_echoes_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fake_run(
+            argv: list[str], **kwargs: Any
+        ) -> subprocess.CompletedProcess[bytes]:
+            return subprocess.CompletedProcess(
+                argv, 1, stdout=b"", stderr=b"fire: no such job\n"
+            )
+
+        monkeypatch.setattr("sparks.client.remote.subprocess.run", fake_run)
+        with pytest.raises(client.ClientError, match="no such job") as raised:
+            client.send_secrets("box", "/q/job-1", {"HF_TOKEN": "hunter2"})
+        assert "hunter2" not in str(raised.value)
+
+    def test_commit_argv_names_a_secret_and_spells_out_an_env_pair(self) -> None:
+        argv = client.commit_argv(
+            "/q/job-1",
+            "e0",
+            ["python", "t.py"],
+            "sha",
+            False,
+            "img",
+            "vlad",
+            env={"WANDB_MODE": "offline"},
+            secret_names=["HF_TOKEN"],
+        )
+        flags = argv[: argv.index("--")]
+        assert flags[flags.index("--env") + 1] == "WANDB_MODE=offline"
+        assert flags[flags.index("--secret-name") + 1] == "HF_TOKEN"
+
+    def test_commit_argv_says_nothing_when_there_is_no_environment(self) -> None:
+        argv = client.commit_argv("/q/job-1", "e0", ["true"], "sha", False, "img")
+        assert "--env" not in argv
+        assert "--secret-name" not in argv
 
 
 class TestListing:

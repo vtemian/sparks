@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import docker.types
 
-from sparks import dock
+from sparks import dock, spool
 from sparks.fire import process
 
 if TYPE_CHECKING:
@@ -23,11 +23,16 @@ if TYPE_CHECKING:
 LOG = logging.getLogger("sparks")
 
 
-def container_environment() -> dict[str, str]:
-    env: dict[str, str] = {
-        "PYTHONUNBUFFERED": "1",
-        "SPARKS_DATA": "/data",
-    }
+def container_environment(
+    pairs: Sequence[str] | None = None, env_file: Path | None = None
+) -> dict[str, str]:
+    env = spool.env_from(list(pairs or []))
+    if env_file is not None:
+        env.update(spool.read_env(env_file))
+    # Last, so a job cannot name itself another run or move the mount it was
+    # promised: both would look like success and report somewhere wrong.
+    env["PYTHONUNBUFFERED"] = "1"
+    env["SPARKS_DATA"] = "/data"
     for name in ("SPARKS_RUN_ID", "SPARKS_PROMETHEUS_URL"):
         value = os.environ.get(name)
         if value is not None:
@@ -82,6 +87,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--shared-dir", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
     parser.add_argument("--workdir", type=Path, required=True)
+    parser.add_argument("--env", action="append", default=[])
+    parser.add_argument("--env-file", type=Path, default=None)
     parser.add_argument("image")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     return parser.parse_args(list(argv))
@@ -140,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
                 data_dir=args.data_dir,
                 workdir=args.workdir,
                 gpus=args.gpus,
-                environment=container_environment(),
+                environment=container_environment(args.env, args.env_file),
             )
         )
         # docker-py types the id optional; one we cannot name we cannot stop.

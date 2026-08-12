@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 import time
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Self
 
@@ -21,8 +21,12 @@ LAUNCH_LOG = "launch.log"
 CID_FILE = "container.id"
 RUN_ID_FILE = "run_id"
 REQUESTS_DIR = "requests"
+ENV_FILE = "env"
 
 QUEUE_MODE = 0o3775
+ENV_MODE = 0o600
+
+MAX_VALUE = 4000
 
 QUEUED = "queued"
 BUILDING = "building"
@@ -42,6 +46,9 @@ ACTIONS = frozenset({CANCEL, ABORT})
 RETENTION_SECONDS = 6 * 3600.0
 
 
+class EnvError(Exception): ...
+
+
 @dataclass(frozen=True)
 class Job:
     job_id: str
@@ -53,6 +60,10 @@ class Job:
     git_sha: str = "unknown"
     git_dirty: bool = False
     retry_of: str | None = None
+    # Published: to_dict is what `status --json` hands every account on the
+    # box. Secret VALUES live in ENV_FILE at 0600 and only their names here.
+    env: dict[str, str] = field(default_factory=dict)
+    secret_names: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -69,6 +80,8 @@ class Job:
             git_sha=data.get("git_sha", "unknown"),
             git_dirty=bool(data.get("git_dirty", False)),
             retry_of=data.get("retry_of"),
+            env=dict(data.get("env") or {}),
+            secret_names=list(data.get("secret_names") or []),
         )
 
 
@@ -126,6 +139,10 @@ class Entry:
     def data_dir(self) -> Path:
         return self.path / DATA_DIR
 
+    @property
+    def env_file(self) -> Path:
+        return self.path / ENV_FILE
+
     def may_be_controlled_by(self, uid: int) -> bool:
         return uid in (0, self.owner_uid)
 
@@ -182,6 +199,8 @@ def submit(
     git_sha: str = "unknown",
     git_dirty: bool = False,
     retry_of: str | None = None,
+    env: dict[str, str] | None = None,
+    secret_names: list[str] | None = None,
 ) -> Entry:
     submitted = time.time() if when is None else when
     job_id, path = reserve(queue_dir, name, user, when=when)
@@ -191,14 +210,61 @@ def submit(
             job_id=job_id,
             name=shared.clean(name, "job"),
             user=shared.clean(user, "unknown"),
-            command=[shared.clean(arg, "", limit=4000) for arg in command],
+            command=[shared.clean(arg, "", limit=MAX_VALUE) for arg in command],
             submitted_unix=submitted,
             image=image,
             git_sha=git_sha,
             git_dirty=git_dirty,
             retry_of=retry_of,
+            env=dict(env or {}),
+            secret_names=list(secret_names or []),
         ),
     )
+
+
+def env_from(pairs: list[str]) -> dict[str, str]:
+    settings: dict[str, str] = {}
+    for pair in pairs:
+        name, _, value = pair.partition("=")
+        settings[shared.clean(name, "", limit=MAX_VALUE)] = shared.clean(
+            value, "", limit=MAX_VALUE
+        )
+    return settings
+
+
+def write_env(job_path: Path, values: dict[str, str]) -> Path:
+    target = job_path / ENV_FILE
+    summary.write_atomically(
+        target, lambda: json.dumps(values, indent=2) + "\n", mode=ENV_MODE
+    )
+    # The same reason commit chowns job.json: write_atomically leaves the file
+    # owned by whoever ran the verb, which inside the queue container is root,
+    # and contain reads it after dropping to the submitter.
+    uid = authenticated_uid()
+    if uid is not None and os.geteuid() == 0:
+        with contextlib.suppress(OSError):
+            os.chown(target, uid, -1)
+    return target
+
+
+def read_env(env_path: Path) -> dict[str, str]:
+    try:
+        raw = env_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise EnvError(
+            f"{env_path} is this job's environment and could not be read: {exc}. "
+            "Submit the job again rather than running it without one"
+        ) from exc
+
+    try:
+        loaded = json.loads(raw)
+    except ValueError as exc:
+        raise EnvError(f"{env_path} is not the JSON object sparks wrote") from exc
+
+    if not isinstance(loaded, dict):
+        raise EnvError(f"{env_path} is not the JSON object sparks wrote")
+
+    return {str(name): str(value) for name, value in loaded.items()}
 
 
 def load(path: Path) -> Entry:

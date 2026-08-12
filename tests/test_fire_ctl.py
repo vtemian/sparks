@@ -1,10 +1,12 @@
+import io
 import json
+import stat
 from pathlib import Path
 
 import pytest
 
 from sparks import spool, summary
-from sparks.fire import cli
+from sparks.fire import cli, control
 
 IMAGE = "spark.local:5000/demo:1"
 
@@ -89,6 +91,72 @@ def test_status_json_carries_state_and_summary(
     assert payload["state"]["state"] == spool.QUEUED
     assert payload["summary"] is None
     assert payload["job"]["command"] == ["python", "train.py"]
+
+
+def test_the_secret_verb_writes_a_file_only_its_owner_can_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "queue").mkdir()
+    _, path = spool.reserve(tmp_path / "queue", "e0", "rex")
+    sent = json.dumps({"HF_TOKEN": "hunter2"}).encode()
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(sent)))
+
+    assert cli.main(["secret", str(path)]) == 0
+
+    written = path / spool.ENV_FILE
+    assert spool.read_env(written) == {"HF_TOKEN": "hunter2"}
+    assert stat.S_IMODE(written.stat().st_mode) == 0o600
+
+
+def test_the_secret_verb_prints_the_path_and_not_the_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "queue").mkdir()
+    _, path = spool.reserve(tmp_path / "queue", "e0", "rex")
+    sent = json.dumps({"HF_TOKEN": "hunter2"}).encode()
+    monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(sent)))
+
+    assert cli.main(["secret", str(path)]) == 0
+
+    said = capsys.readouterr()
+    assert "hunter2" not in said.out + said.err
+    assert str(path / spool.ENV_FILE) in said.out
+
+
+def test_a_committed_job_records_the_secret_names_and_never_the_values(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "queue").mkdir()
+    _, path = spool.reserve(tmp_path / "queue", "e0", "rex")
+    spool.write_env(path, {"HF_TOKEN": "hunter2"})
+
+    code = cli.main(
+        [
+            "commit",
+            str(path),
+            "--name",
+            "e0",
+            "--user",
+            "rex",
+            "--image",
+            IMAGE,
+            "--env",
+            "WANDB_MODE=offline",
+            "--secret-name",
+            "HF_TOKEN",
+            "--",
+            "python",
+            "train.py",
+        ]
+    )
+    capsys.readouterr()
+
+    assert code == 0
+    entry = spool.load(path)
+    assert entry.job.env == {"WANDB_MODE": "offline"}
+    assert entry.job.secret_names == ["HF_TOKEN"]
+    assert "hunter2" not in (path / spool.JOB_FILE).read_text(encoding="utf-8")
+    assert "hunter2" not in json.dumps(control.status(entry, tmp_path))
 
 
 def test_status_without_json_is_readable(
