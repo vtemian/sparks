@@ -20,7 +20,7 @@ On a laptop, as a tool rather than into a project venv: the client runs from you
 training project and needs nothing from a sparks checkout.
 
 ```sh
-uv tool install git+https://github.com/vtemian/sparks@v0.1.0
+uv tool install sparks-dgx
 sparks setup you@your-box
 ```
 
@@ -29,15 +29,14 @@ sparks setup you@your-box
 where no password is needed; elsewhere it prints the command. A box it cannot reach is not
 remembered.
 
-Once the package is on PyPI this becomes `uv tool install sparks-dgx`. The distribution is
-`sparks-dgx` because PyPI's `sparks` is held by a project abandoned in 2019; the command and
-the import stay `sparks`, so the odd name is seen once.
+The distribution is `sparks-dgx` because PyPI's `sparks` is held by an unrelated project
+abandoned in 2019; the command and the import stay `sparks`, so the odd name is seen once.
+From a checkout, `make install` does the tool install and `sparks setup`.
 
-Pin the tag. Without one you track `main`, and Docker's layer cache keeps serving whatever
-sparks an image was first built with, however far main has moved. The `git+` form shells out
-to `git`; on a machine without it,
-`uv tool install https://github.com/vtemian/sparks/archive/refs/tags/v0.1.0.tar.gz` is the
-same package. From a checkout, `make install` does the tool install and `sparks setup`.
+An install predating the rename was registered under the tool name `sparks`, so the upgrade
+fails with `Executables already exist: fire, sparks`. Run `uv tool uninstall sparks` first.
+`--force` also installs, but leaves both tools present and claiming the same two executables,
+and then whichever was written last owns them.
 
 On the box, sparks ships inside the queue image. Converge sparkup rather than installing by
 hand; `make deploy` does **not** update the queue server.
@@ -201,8 +200,9 @@ The error names the tag that failed.
 and `pull.log` in the job directory has the registry's own output. The usual cause is a tag
 that was never pushed.
 
-**A job fails on `import sparks`** — the image installed sparks from a branch URL, and
-Docker's layer cache served the version it was first built with. Pin a tag.
+**A job fails on `import sparks`** — the image installed sparks unpinned, and Docker's layer
+cache served the version it was first built with. Pin the exact version:
+`pip install --no-cache-dir "sparks-dgx==0.1.1"`.
 
 **A run shows on the dashboard with no end and no status** — that run's record was never
 written. Check the job directory is writable by the submitting account; a full disk or a

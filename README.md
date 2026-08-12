@@ -23,9 +23,12 @@ an image registry and the queue runner. On your own machine you need Docker and 
 ## Install
 
 ```sh
-uv tool install git+https://github.com/vtemian/sparks@v0.1.0
+uv tool install sparks-dgx
 sparks setup you@your-box
 ```
+
+The distribution is `sparks-dgx` because PyPI's `sparks` is an unrelated package; the command and
+the import are both `sparks`.
 
 `setup` remembers the box, lets your Docker push to its registry, restarts Docker, and says when it
 is ready. The restart stops whatever containers you have running.

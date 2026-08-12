@@ -246,8 +246,7 @@ satisfies all of them, for a job with no ML dependencies:
 FROM python:3.12-slim
 WORKDIR /app
 ENV HOME=/tmp
-RUN pip install --no-cache-dir \
-    "https://github.com/vtemian/sparks/archive/refs/tags/v0.1.0.tar.gz"
+RUN pip install --no-cache-dir "sparks-dgx==0.1.1"
 COPY *.py /app/
 ```
 

@@ -44,12 +44,11 @@ ENV HOME=/tmp \
     TRITON_CACHE_DIR=/tmp/triton \
     HF_HUB_OFFLINE=1
 
-# Pinned to a tag, not to a branch. Docker keys this layer on the text of the
-# instruction, so a branch URL never changes and the cache serves whatever
-# sparks it first built with, however far main has moved. That failed a run
-# with ImportError on a name main had had for an hour. Its own layer, below
-# everything expensive, so bumping the tag rebuilds seconds, not gigabytes.
-RUN pip install --no-cache-dir \
-    "https://github.com/vtemian/sparks/archive/refs/tags/v0.1.0.tar.gz"
+# Pinned to an exact version. Docker keys this layer on the text of the
+# instruction, so an unpinned name never changes and the cache serves whatever
+# sparks it first built with, however far the release train has moved. That
+# failed a run with ImportError on a name main had had for an hour. Its own
+# layer, below everything expensive, so a bump rebuilds seconds, not gigabytes.
+RUN pip install --no-cache-dir "sparks-dgx==0.1.1"
 
 COPY *.py /app/
