@@ -135,6 +135,10 @@ on the box.
 reuses the tag already in the registry, so it costs nothing but a queue slot. Prefer it over
 resubmitting whenever the code has not changed.
 
+A job submitted with `--secret` carries its secret into the retry. If the original job's
+secret file has since been removed, `retry` refuses and names the variable rather than
+starting a run that would fail on the first authenticated call.
+
 ## The curves
 
 The supervisor hands you the link: where the box's contract names a Grafana, the second line

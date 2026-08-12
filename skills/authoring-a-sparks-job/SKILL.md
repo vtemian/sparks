@@ -286,7 +286,35 @@ sparks submit --data ./corpus --name e0 -- python /app/train.py --epochs 3
 - `--data` is **required** even for a job that reads nothing; pass an empty folder.
 - `--context` defaults to the current directory and must contain a `Dockerfile`.
 - `--image <tag>` skips build and push entirely and reuses a tag already in the registry.
+- `--env KEY=VALUE` sets a variable in the job. Repeatable.
+- `--secret KEY` sets one whose value comes from your shell. Repeatable.
 - Everything after `--` is the command, run inside the container.
+
+### `--env` is public; `--secret` is the one for tokens
+
+```sh
+export HF_TOKEN=...
+sparks submit --data ./corpus --name e0 \
+  --env WANDB_MODE=offline --secret HF_TOKEN -- python /app/train.py
+```
+
+**Anything passed with `--env` is readable by every account on the box, permanently.** It is
+written into the job spec at mode 0644, published by `sparks status <job> --json`, visible in
+`ps` while the submit runs, and recorded verbatim in the run's `summary.json`, which outlives
+the job. Use it for `WANDB_MODE`, `TOKENIZERS_PARALLELISM`, a log level — never for a token.
+
+`--secret KEY` names the variable and **takes its value from the submitting shell**, so it
+never appears on a command line, in your shell history, or in any record. It travels over ssh
+stdin into a file only the submitting account can read, and the spec keeps the name alone.
+Export the value first, or the submit fails naming the variable it could not find.
+
+Inside the job both arrive as ordinary environment variables. sparks' own `SPARKS_DATA`,
+`SPARKS_RUN_ID`, `SPARKS_PROMETHEUS_URL` and `PYTHONUNBUFFERED` are set last and cannot be
+overridden by either flag.
+
+A job that asked for a secret **will not start** if the value is missing on the box, rather
+than starting with the variable unset and failing at the hub an hour later. `sparks retry`
+carries the secret into the retried job, and refuses if it cannot.
 
 Submit prints the job id on stdout and nothing else — build and push progress go to stderr —
 so `JOB=$(sparks submit --data ./corpus --name e0 -- python /app/train.py)` means what it

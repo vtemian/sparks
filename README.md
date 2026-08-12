@@ -46,6 +46,9 @@ sparks submit --context ./examples --data ./examples/data \
 Name the script by absolute path, because the container's working directory is the box's shared
 directory rather than your image's.
 
+`--env KEY=VALUE` sets a variable in the job, and everyone on the box can read it. For a token use
+`--secret KEY`, which takes the value from your shell and keeps it out of every record.
+
 ## Instrument the loop
 
 ```python
