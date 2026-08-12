@@ -25,7 +25,7 @@ ENV UV_LINK_MODE=copy \
 # Dependencies first, as their own layer: they change far less often than the
 # source, and rebuilding them on every commit is the difference between a
 # 4-second image and a 90-second one.
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock PYPI.md ./
 RUN uv sync --locked --no-dev --no-install-project --no-editable
 
 COPY src/ ./src/
