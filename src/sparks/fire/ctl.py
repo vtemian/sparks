@@ -25,6 +25,7 @@ VERBS = frozenset(
         "remove",
         "reserve",
         "commit",
+        "secret",
         "contract",
     }
 )
@@ -99,9 +100,27 @@ def commit(args: argparse.Namespace) -> int:
             git_sha=args.git_sha,
             git_dirty=args.git_dirty,
             image=args.image,
+            env=spool.env_from(args.env),
+            secret_names=list(args.secret_name),
         ),
     )
     print(entry.job.job_id)
+    return 0
+
+
+def secret(args: argparse.Namespace) -> int:
+    # Read off stdin, never off argv: this process's command line is readable
+    # by every account on the box for as long as it runs.
+    raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
+    try:
+        given = dict(json.loads(raw))
+    except (ValueError, TypeError) as exc:
+        raise spool.EnvError("a job's secrets arrive as one JSON object") from exc
+
+    written = spool.write_env(
+        args.path, {str(name): str(value) for name, value in given.items()}
+    )
+    print(written)
     return 0
 
 
@@ -200,8 +219,14 @@ def add_rpc_verbs(subparsers: Subparsers, shared: argparse.ArgumentParser) -> No
     commit_parser.add_argument("--git-sha", default="unknown")
     commit_parser.add_argument("--git-dirty", action="store_true")
     commit_parser.add_argument("--image", required=True)
+    commit_parser.add_argument("--env", action="append", default=[])
+    commit_parser.add_argument("--secret-name", action="append", default=[])
     commit_parser.add_argument("command", nargs="+")
     commit_parser.set_defaults(func=commit)
+
+    secret_parser = subparsers.add_parser("secret", help=argparse.SUPPRESS)
+    secret_parser.add_argument("path", type=Path)
+    secret_parser.set_defaults(func=secret)
 
     contract_parser = subparsers.add_parser("contract", help=argparse.SUPPRESS)
     contract_parser.set_defaults(func=contract)
@@ -212,7 +237,7 @@ def main(argv: list[str]) -> int:
     try:
         func = cast("Callable[[argparse.Namespace], int]", args.func)
         return func(args)
-    except control.ControlError as exc:
+    except (control.ControlError, spool.EnvError) as exc:
         print(f"fire: {exc}", file=sys.stderr)
         return 1
     except (box.NotProvisionedError, box.MalformedError) as exc:

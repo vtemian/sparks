@@ -64,6 +64,8 @@ def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
             "can retry it (retry clones their data directory)"
         )
 
+    # Before anything is reserved, so a refusal leaves no half-built job.
+    carried = carried_secrets(entry)
     who = entry.job.user
     job_id, path = spool.reserve(queue_dir, entry.job.name, who)
     source = entry.data_dir
@@ -76,6 +78,10 @@ def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
         except OSError as exc:
             LOG.info("sparks: could not hardlink data (%s); copying instead", exc)
             shutil.copytree(source, destination, dirs_exist_ok=True)
+    if carried is not None:
+        # Copied rather than hardlinked: the retry belongs to whoever asked
+        # for it, and a hardlink would give both jobs one 0600 file.
+        spool.write_env(path, carried)
 
     return spool.commit(
         path,
@@ -89,7 +95,24 @@ def retry(queue_dir: Path, entry: spool.Entry) -> spool.Entry:
             git_dirty=entry.job.git_dirty,
             retry_of=entry.job.job_id,
             image=entry.job.image,
+            env=dict(entry.job.env),
+            secret_names=list(entry.job.secret_names),
         ),
+    )
+
+
+def carried_secrets(entry: spool.Entry) -> dict[str, str] | None:
+    if entry.env_file.is_file():
+        return spool.read_env(entry.env_file)
+
+    if not entry.job.secret_names:
+        return None
+
+    named = ", ".join(entry.job.secret_names)
+    raise ControlError(
+        f"{entry.job.job_id} was submitted with {named}, and {entry.env_file} "
+        "is gone, so the retry would start without it. Submit the job again "
+        f"with --secret {entry.job.secret_names[0]}"
     )
 
 
@@ -259,6 +282,8 @@ def render_status(payload: dict[str, Any]) -> str:
         ("state", state["state"]),
         ("image", job["image"]),
         ("command", shlex.join(job["command"])),
+        ("env", " ".join(f"{name}={value}" for name, value in job["env"].items())),
+        ("secrets", " ".join(job["secret_names"])),
         ("run", state["run_id"] or ""),
         ("exit", "" if state["exit_code"] is None else str(state["exit_code"])),
         ("detail", state["detail"] or ""),

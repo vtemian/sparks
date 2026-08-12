@@ -22,6 +22,8 @@ def submit(args: argparse.Namespace, _argv: list[str]) -> int:
             context=args.context,
             data=args.data,
             image=args.image,
+            env=args.env,
+            secrets=args.secret,
         )
     )
     return 0
@@ -169,6 +171,23 @@ def add_submit(subparsers: Subparsers, host: argparse.ArgumentParser) -> None:
     submit_parser.add_argument(
         "--image",
         help="skip build/push; use this registry tag",
+    )
+    submit_parser.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="set KEY in the job. Recorded in the job spec, which `sparks "
+        "status` shows every account on the box: never a secret. Repeatable",
+    )
+    submit_parser.add_argument(
+        "--secret",
+        action="append",
+        default=[],
+        metavar="KEY",
+        help="set KEY in the job, taking its value from this shell. The value "
+        "goes over ssh stdin into a 0600 file and appears in no command line "
+        "and no record; only the name is kept. Repeatable",
     )
     submit_parser.add_argument("command", nargs="+", help="after a -- separator")
     submit_parser.set_defaults(func=submit)

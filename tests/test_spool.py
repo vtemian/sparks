@@ -1,5 +1,6 @@
 import json
 import os
+import stat
 import time
 from pathlib import Path
 
@@ -348,3 +349,48 @@ def test_a_claimed_uid_is_ignored_when_ssh_did_not_vouch_for_it(
     )
 
     assert chowned == []
+
+
+def test_the_env_file_is_readable_only_by_its_owner(tmp_path: Path) -> None:
+    written = spool.write_env(tmp_path, {"HF_TOKEN": "hunter2"})
+    assert stat.S_IMODE(written.stat().st_mode) == 0o600
+    assert spool.read_env(written) == {"HF_TOKEN": "hunter2"}
+
+
+def test_a_secret_survives_a_newline(tmp_path: Path) -> None:
+    # A PEM key is the ordinary case, and KEY=VALUE lines cannot carry one.
+    key = "-----BEGIN KEY-----\nabc\n-----END KEY-----\n"
+    written = spool.write_env(tmp_path, {"SSH_KEY": key})
+    assert spool.read_env(written) == {"SSH_KEY": key}
+
+
+def test_the_env_file_belongs_to_the_account_ssh_authenticated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # write_atomically leaves it owned by whoever ran the verb, which inside
+    # the queue container is root; contain reads it as the submitter.
+    chowned: list[tuple[Path, int]] = []
+    monkeypatch.setenv("SPARKS_SSH_UID", "501")
+    monkeypatch.setattr("sparks.spool.os.geteuid", lambda: 0)
+    monkeypatch.setattr(
+        "sparks.spool.os.chown",
+        lambda path, uid, _gid: chowned.append((Path(path), uid)),
+    )
+
+    written = spool.write_env(tmp_path, {"HF_TOKEN": "hunter2"})
+
+    assert chowned == [(written, 501)]
+
+
+def test_an_env_file_that_is_not_there_is_an_error_not_an_empty_environment(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(spool.EnvError, match="could not be read"):
+        spool.read_env(tmp_path / "env")
+
+
+def test_env_pairs_are_split_on_the_first_equals_sign() -> None:
+    assert spool.env_from(["URL=http://x/?a=b", "EMPTY="]) == {
+        "URL": "http://x/?a=b",
+        "EMPTY": "",
+    }

@@ -41,6 +41,40 @@ def test_submit_parses_data_and_command() -> None:
     assert args.command == ["python", "t.py"]
 
 
+def test_submit_takes_env_pairs_and_secret_names() -> None:
+    args = build_parser().parse_args(
+        [
+            "submit",
+            "--data",
+            "/tmp/d",
+            "--env",
+            "WANDB_MODE=offline",
+            "--secret",
+            "HF_TOKEN",
+            "--",
+            "true",
+        ]
+    )
+    assert args.env == ["WANDB_MODE=offline"]
+    assert args.secret == ["HF_TOKEN"]
+
+
+def test_submit_asks_for_no_environment_by_default() -> None:
+    args = build_parser().parse_args(["submit", "--data", "/tmp/d", "--", "true"])
+    assert args.env == []
+    assert args.secret == []
+
+
+def test_a_secret_is_named_not_valued_on_the_command_line() -> None:
+    # `--secret HF_TOKEN=hunter2` would put the value in this shell's history
+    # and in ps on the laptop.
+    args = build_parser().parse_args(
+        ["submit", "--data", "/tmp/d", "--secret", "HF_TOKEN", "--", "true"]
+    )
+    assert args.secret == ["HF_TOKEN"]
+    assert "=" not in args.secret[0]
+
+
 def test_queue_verbs_require_host(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

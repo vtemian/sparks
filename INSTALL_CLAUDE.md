@@ -103,6 +103,56 @@ The tag is `<registry>/<user>/<name>:<sha>`, the sha being `--context`'s HEAD, s
 from one commit under one `--name` push the same tag: the second overwrites the first, and a
 job still queued against that tag pulls the new image when it starts.
 
+## Give the job an environment
+
+```sh
+export HF_TOKEN=...
+sparks submit --data ./corpus --name e0 \
+  --env WANDB_MODE=offline --secret HF_TOKEN -- python /app/train.py
+```
+
+Both flags are repeatable. They are two different things, and the difference is who can
+read the value.
+
+**`--env KEY=VALUE` is public to every account on the box.** Four separate copies, all of
+them 0644 or worse, and this is by design rather than an oversight:
+
+- `job.json` in the job directory, mode 0644, until `sparks remove`.
+- `sparks status <job> --json`, under `job.env`. Anyone may read any job's status.
+- the `fire commit` command line, visible in `ps` while the submit runs.
+- `summary.json` in the run directory, which records the container's whole argv verbatim
+  at 0644 and keeps it after the job is gone.
+
+**`--secret KEY` names a variable and never carries its value.** The value is read from the
+submitting shell's environment — so it is not in your shell history or in `ps` on the laptop
+either — and travels over **ssh stdin** to `fire secret <job-dir>`, which writes it into
+`<job-dir>/env` as JSON at mode **0600**, chowned to the account ssh authenticated. The job
+spec records `secret_names`, the names alone. The container argv carries `--env-file <path>`
+and never a value, which is what keeps it out of `summary.json`. **The file itself is never
+mounted into the container**; `contain` reads it (already running as the submitter) and hands
+the values to `docker run` as environment.
+
+`secret` is sent after the data and **before the commit**: a committed job can be started by
+the runner, and one started before its secrets arrived would fail an hour later at the hub.
+
+Inside the container the merge order is `--env` pairs, then the secret file, then sparks'
+own `PYTHONUNBUFFERED`, `SPARKS_DATA`, `SPARKS_RUN_ID` and `SPARKS_PROMETHEUS_URL`, which
+always win. `--env SPARKS_DATA=/elsewhere` therefore does nothing: a job that could rename
+its own run or move its own mount would report somewhere wrong and look successful.
+
+A job that declared secrets and whose `env` file has gone **does not start**: `contain`
+raises rather than running with the variable unset, because a training run that starts and
+fails at the hub an hour in is the expensive way to learn this. For the same reason
+`sparks retry` copies the env file into the new job (copied, not hardlinked — the retry is
+its own 0600 file) and refuses outright when there is nothing to copy and the job declared
+one. Note that both the retry copy and the `data/` clone rest on the same permission gate,
+`Entry.may_be_controlled_by`: whatever can retry someone else's job can also read what it
+carried.
+
+A box whose queue image predates this fails a `--secret` submit inside the `secret` verb,
+before anything is committed. Converge sparkup to update the queue server; `make deploy`
+does not.
+
 ## Manage the queue
 
 ```sh
@@ -125,7 +175,9 @@ any. Anyone may read any job's `queue`, `logs` and `status`.
 `queue --json` and `status --json` are what a script or an agent should parse; the plain
 output is a padded table meant for a person. `status --json` carries three keys: `job` (what
 was submitted), `state` (where it is now), and `summary` (the permanent record, `null` until
-the run ends).
+the run ends). `job` is the whole spec as `asdict` renders it, so **every field added to
+`spool.Job` is published to every account on the box** — which is why a secret's value is
+never one.
 
 `wait` exits **0 only when the job finished**, 1 when it ended any other way, and 75
 (`EX_TEMPFAIL`) when `--timeout` expired with the job still going, so `sparks wait "$JOB" &&

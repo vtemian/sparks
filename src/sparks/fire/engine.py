@@ -201,6 +201,7 @@ class Docker:
             str(entry.data_dir),
             "--workdir",
             str(self.shared_dir),
+            *environment_argv(entry),
             # A job image that looks like a flag must not be parsed as one.
             "--",
             image,
@@ -209,6 +210,21 @@ class Docker:
 
     def release(self, container_id: str) -> None:
         dock.remove_quietly(container_id)
+
+
+def environment_argv(entry: spool.Entry) -> list[str]:
+    argv = [
+        piece
+        for name, value in entry.job.env.items()
+        for piece in ("--env", f"{name}={value}")
+    ]
+    # Named whenever the job declared one, present or not: contain refuses to
+    # start without a file it was promised, and starting a job whose token
+    # silently went missing is the outcome nobody can debug.
+    if not entry.job.secret_names:
+        return argv
+
+    return [*argv, "--env-file", str(entry.env_file)]
 
 
 def shared_group(shared_dir: Path) -> int | None:

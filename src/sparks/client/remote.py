@@ -394,11 +394,15 @@ def submit_remote(
     data: Path,
     image: str | None = None,
     registry_url: str | None = None,
+    env: list[str] | None = None,
+    secrets: list[str] | None = None,
 ) -> str:
     if not data.is_dir():
         raise ClientError(f"--data {data} is not a directory")
 
     who = submitting_user(host)
+    settings = parse_env(env or [])
+    values = read_secrets(secrets or [])
     sha, dirty = provenance(context)
     if image is None and registry_url is None:
         registry_url = fetch_registry_url(host)
@@ -412,7 +416,75 @@ def submit_remote(
     )
     reserved = reserve(host, name, who)
     ship_to(data, host, reserved)
-    return capture(host, commit_argv(reserved, name, command, sha, dirty, tag, who))
+    # Before the commit, never after: a committed job may be started by the
+    # runner, and one started before its secrets arrived fails far from here.
+    send_secrets(host, reserved, values)
+    return capture(
+        host,
+        commit_argv(
+            reserved,
+            name,
+            command,
+            sha,
+            dirty,
+            tag,
+            who,
+            env=settings,
+            secret_names=sorted(values),
+        ),
+    )
+
+
+def parse_env(pairs: list[str]) -> dict[str, str]:
+    settings: dict[str, str] = {}
+    for pair in pairs:
+        name, separator, value = pair.partition("=")
+        if not name or not separator:
+            raise ClientError(f"--env {pair!r} is not KEY=VALUE")
+
+        settings[name] = value
+    return settings
+
+
+def read_secrets(names: list[str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for name in names:
+        value = os.environ.get(name)
+        if value is None:
+            raise ClientError(
+                f"--secret {name} takes its value from this shell, and {name} "
+                "is not set here"
+            )
+
+        values[name] = value
+    return values
+
+
+def send_secrets(host: str, reserved: str, values: dict[str, str]) -> None:
+    if not values:
+        return
+
+    # Over stdin, because everything else about a submit is public: the ssh
+    # command line shows in ps on the box, job.json is 0644 and permanent, and
+    # summary.json keeps the container's argv verbatim forever.
+    try:
+        done = subprocess.run(
+            ssh_argv(host, ["secret", reserved]),
+            input=json.dumps(values).encode(),
+            capture_output=True,
+            timeout=SSH_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise ClientError("ssh is not installed") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ClientError(f"timed out sending the job's secrets to {host}") from exc
+    if done.returncode != 0:
+        # done.stderr only: stdout could carry back what we just sent.
+        raise ClientError(
+            f"{host} refused the job's secrets: "
+            f"{done.stderr.decode(errors='replace').strip()}"
+        )
 
 
 def reserve(host: str, name: str, who: str) -> str:
@@ -448,6 +520,8 @@ def commit_argv(
     dirty: bool,
     image: str,
     who: str | None = None,
+    env: dict[str, str] | None = None,
+    secret_names: list[str] | None = None,
 ) -> list[str]:
     argv = [
         "commit",
@@ -461,6 +535,11 @@ def commit_argv(
     ]
     if dirty:
         argv.append("--git-dirty")
+
+    for setting, value in (env or {}).items():
+        argv += ["--env", f"{setting}={value}"]
+    for secret in secret_names or []:
+        argv += ["--secret-name", secret]
 
     argv += ["--image", image]
     return [*argv, "--", *command]

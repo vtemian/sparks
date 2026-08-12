@@ -19,13 +19,20 @@ def docker(tmp_path: Path) -> engine.Docker:
 IMAGE = "spark.local:5000/demo:1"
 
 
-def an_entry(tmp_path: Path, command: list[str] | None = None) -> spool.Entry:
+def an_entry(
+    tmp_path: Path,
+    command: list[str] | None = None,
+    env: dict[str, str] | None = None,
+    secret_names: list[str] | None = None,
+) -> spool.Entry:
     entry = spool.submit(
         tmp_path / "queue",
         name="e0",
         user="rex",
         command=command or ["python", "train.py"],
         image=IMAGE,
+        env=env,
+        secret_names=secret_names,
     )
     entry.data_dir.mkdir(parents=True, exist_ok=True)
     return entry
@@ -129,6 +136,74 @@ class TestTheContainerCommand:
         assert args.shared_dir == Path("/srv/spark")
         assert args.image == "--shared-dir"
         assert args.command == ["/", "real/img", "sh"]
+
+
+class TestTheJobsEnvironment:
+    def test_a_public_pair_is_spelled_out_in_the_argv(
+        self, tmp_path: Path, docker: engine.Docker
+    ) -> None:
+        entry = an_entry(tmp_path, env={"WANDB_MODE": "offline"})
+        argv = docker.container_argv(
+            entry, "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
+        )
+        flags = argv[: argv.index("--")]
+        assert flags[flags.index("--env") + 1] == "WANDB_MODE=offline"
+
+    def test_a_secret_reaches_the_container_as_a_path_and_never_a_value(
+        self, tmp_path: Path, docker: engine.Docker
+    ) -> None:
+        # summary.json keeps this argv verbatim at 0644, forever.
+        entry = an_entry(tmp_path, secret_names=["HF_TOKEN"])
+        spool.write_env(entry.path, {"HF_TOKEN": "hunter2"})
+        argv = docker.container_argv(
+            entry, "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
+        )
+        assert argv[argv.index("--env-file") + 1] == str(entry.env_file)
+        assert "hunter2" not in " ".join(argv)
+
+    def test_a_job_with_no_secret_is_given_no_env_file(
+        self, tmp_path: Path, docker: engine.Docker
+    ) -> None:
+        # Passing one that is not there would be a hard error in contain, and
+        # a job that declared nothing has nothing to fail over.
+        argv = docker.container_argv(
+            an_entry(tmp_path), "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
+        )
+        assert "--env-file" not in argv
+
+    def test_a_declared_secret_is_named_even_when_the_file_is_gone(
+        self, tmp_path: Path, docker: engine.Docker
+    ) -> None:
+        # The alternative is running the job without it, quietly.
+        entry = an_entry(tmp_path, secret_names=["HF_TOKEN"])
+        argv = docker.container_argv(
+            entry, "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
+        )
+        assert "--env-file" in argv
+
+    def test_the_job_command_cannot_choose_its_own_environment(
+        self, tmp_path: Path, docker: engine.Docker
+    ) -> None:
+        entry = an_entry(
+            tmp_path, ["--env-file", "/etc/shadow", "sh"], secret_names=["HF_TOKEN"]
+        )
+        argv = docker.container_argv(
+            entry, "sha256:abc", tmp_path / "cid", uid=1001, gid=1002
+        )
+        args = contain.parse_args(argv[3:])
+        assert args.env_file == entry.env_file
+        assert args.command == ["--env-file", "/etc/shadow", "sh"]
+
+    def test_a_flag_like_image_cannot_choose_the_env_file_either(
+        self, tmp_path: Path, docker: engine.Docker
+    ) -> None:
+        entry = an_entry(tmp_path, ["sh"], secret_names=["HF_TOKEN"])
+        argv = docker.container_argv(
+            entry, "--env-file", tmp_path / "cid", uid=1001, gid=1002
+        )
+        args = contain.parse_args(argv[3:])
+        assert args.env_file == entry.env_file
+        assert args.image == "--env-file"
 
 
 class TestTheWholeCommand:
