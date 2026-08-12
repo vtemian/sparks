@@ -36,7 +36,10 @@ From a checkout, `make install` does the tool install and `sparks setup`.
 An install predating the rename was registered under the tool name `sparks`, so the upgrade
 fails with `Executables already exist: fire, sparks`. Run `uv tool uninstall sparks` first.
 `--force` also installs, but leaves both tools present and claiming the same two executables,
-and then whichever was written last owns them.
+and then whichever was written last owns them. A training venv that `make deploy` installed
+into before the rename carries the same stale record: `uv pip uninstall sparks` in that venv,
+then deploy again, or it keeps a `sparks` distribution owning the `sparks` and `fire` scripts
+that `sparks-dgx` has since replaced.
 
 On the box, sparks ships inside the queue image. Converge sparkup rather than installing by
 hand; `make deploy` does **not** update the queue server.
