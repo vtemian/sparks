@@ -6,7 +6,9 @@
 name = "sparks-dgx"
 version = "0.1.1"
 description = "Training runs on the DGX Spark: metrics, launcher, queue"
-readme = "README.md"
+# Not README.md: PyPI renders the long description without rewriting relative
+# links, so the screenshot and the examples/ link would arrive broken.
+readme = "PYPI.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Vlad Temian", email = "vladtemian@gmail.com" }]
