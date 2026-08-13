@@ -23,6 +23,15 @@ and branch limits; only the Makefile-invoked scripts in `tests/`
 (`check_dashboard.py`, `on_box.py`) are exempt, and `tests/**` may run long in
 statements because one arrange/act/assert is one thought.
 
+None of this is taste. Most code here is written by models, and unenforced
+model output trends toward slop: docstrings that restate the signature,
+comments that narrate, two-line helper soup. So every rule is a bright line
+that fails the build, never a judgment call — a judgment call can be argued
+with, and a model under pressure will argue. The `check_*.py` files under
+`tests/` are those gates: lint tools wired into `make lint`, not tests. They
+assert nothing about behaviour; they refuse patterns. When a new slop pattern
+lands, the fix is tightening one of them, not adding a heuristic dependency.
+
 ### Narrate at runtime, not in the margin
 Say what is happening in `LOG.debug`, present tense, one line per state
 transition: "starting pid %d", "got SIGTERM; forwarding and waiting %ds",
