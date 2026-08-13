@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCAN = (ROOT / "src" / "sparks", ROOT / "tests")
+SCAN = (ROOT / "src" / "sparks", ROOT / "tests", ROOT / "gates")
 
 # `# -- title ---`, `# === title ===`, or a line that is mostly dashes/equals.
 BANNER = re.compile(

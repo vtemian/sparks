@@ -41,21 +41,21 @@ sync:
 	uv sync
 
 fmt:
-	uv run ruff format src tests
-	uv run ruff check --fix src tests
+	uv run ruff format src tests gates
+	uv run ruff check --fix src tests gates
 
 lint:
-	uv run ruff format --check src tests
-	uv run ruff check src tests
+	uv run ruff format --check src tests gates
+	uv run ruff check src tests gates
 	# House rules ruff cannot express yet.
-	uv run python tests/check_names.py
-	uv run python tests/check_banners.py
-	uv run python tests/check_short_funcs.py
-	uv run python tests/check_file_header.py
-	uv run python tests/check_unused.py
-	uv run python tests/check_private_prefix.py
-	uv run python tests/check_no_docstrings.py
-	uv run python tests/check_blank_after_return.py
+	uv run python gates/check_names.py
+	uv run python gates/check_banners.py
+	uv run python gates/check_short_funcs.py
+	uv run python gates/check_file_header.py
+	uv run python gates/check_unused.py
+	uv run python gates/check_private_prefix.py
+	uv run python gates/check_no_docstrings.py
+	uv run python gates/check_blank_after_return.py
 
 typecheck:
 	uv run mypy
@@ -67,7 +67,7 @@ test:
 # sparks.metrics.METRICS, so a panel naming something the emitter cannot
 # produce fails here rather than showing an empty graph on the box.
 dashboard:
-	uv run python tests/check_dashboard.py
+	uv run python gates/check_dashboard.py
 
 check: lint typecheck test dashboard
 

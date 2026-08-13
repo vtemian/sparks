@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "sparks"
 TESTS = ROOT / "tests"
+GATES = ROOT / "gates"
 
 MIN_CONFIDENCE = 60
 
@@ -21,7 +22,7 @@ IGNORE_NAMES = frozenset(
 
 
 def findings(paths: list[Path] | None = None) -> list[str]:
-    scanned = [SRC, TESTS] if paths is None else paths
+    scanned = [SRC, TESTS, GATES] if paths is None else paths
     cmd = [
         sys.executable,
         "-m",

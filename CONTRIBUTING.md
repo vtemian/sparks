@@ -35,7 +35,7 @@ never runs that either.
 
 ## Style
 
-Ruff and the eight checkers in `tests/check_*.py` enforce it from `make lint`, so read the
+Ruff and the eight checkers in `gates/check_*.py` enforce it from `make lint`, so read the
 failure rather than a list. The two that catch first-timers:
 
 - **No docstrings, anywhere.** Not in `src`, not in `tests`, not in `examples`. Every file
@@ -46,8 +46,9 @@ failure rather than a list. The two that catch first-timers:
   here, and it has cost this repo real bugs. Do not `noqa` past a cap; do not aim at one either.
 
 The checkers' roots differ, so a rule that fires in one tree may not exist in another.
-`check_no_docstrings` scans `src`, `tests` and `examples`, `check_banners` scans `src` and
-`tests`, `check_unused` reports only `src`, and the other five scan `src/sparks` alone.
+`check_no_docstrings` scans `src`, `tests`, `examples` and `gates`, `check_banners` scans
+`src`, `tests` and `gates`, `check_unused` reports only `src`, and the other five scan
+`src/sparks` alone.
 
 [CLAUDE.md](CLAUDE.md) is the long form, with the reasoning behind each of these.
 

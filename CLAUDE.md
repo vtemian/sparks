@@ -19,18 +19,18 @@ cap as a target either: it is deliberately wide enough that a linear function
 which narrates itself fits whole. Splitting a function you could have read top
 to bottom is the more common mistake here, and it has cost this repo real bugs
 — see the helper-soup note below. Test modules are held to the same complexity
-and branch limits; only the Makefile-invoked scripts in `tests/`
-(`check_dashboard.py`, `on_box.py`) are exempt, and `tests/**` may run long in
+and branch limits; only the Makefile-invoked scripts
+(`gates/check_dashboard.py`, `tests/on_box.py`) are exempt, and `tests/**` may run long in
 statements because one arrange/act/assert is one thought.
 
 None of this is taste. Most code here is written by models, and unenforced
 model output trends toward slop: docstrings that restate the signature,
 comments that narrate, two-line helper soup. So every rule is a bright line
 that fails the build, never a judgment call — a judgment call can be argued
-with, and a model under pressure will argue. The `check_*.py` files under
-`tests/` are those gates: lint tools wired into `make lint`, not tests. They
-assert nothing about behaviour; they refuse patterns. When a new slop pattern
-lands, the fix is tightening one of them, not adding a heuristic dependency.
+with, and a model under pressure will argue. Those gates are the `check_*.py`
+files in `gates/`: lint tools wired into `make lint`, not tests. They assert
+nothing about behaviour; they refuse patterns. When a new slop pattern lands,
+the fix is tightening one of them, not adding a heuristic dependency.
 
 ### Narrate at runtime, not in the margin
 Say what is happening in `LOG.debug`, present tense, one line per state
@@ -49,7 +49,7 @@ remote-write rollback had been written out nine times across six files.
 Flatten control flow with guard clauses and early returns. One level of
 indentation inside a function body. Private helpers and nested `def`s need
 at least three statements — a one- or two-liner is an inline, not a function.
-`tests/check_short_funcs.py` enforces that (`make lint`). Class methods and
+`gates/check_short_funcs.py` enforces that (`make lint`). Class methods and
 public module names may stay thin; they are the API.
 
 A single-use private helper has to earn its frame: it should spare the reader
@@ -65,10 +65,10 @@ A function does what its name says, all of it, and nothing else. `fetch_*`
 returns or raises; `find_*` may return None; `*_argv` builds argv and never
 runs it. No Manager/Service/Helper/Data names. A leading `_` means private to
 a class: module-level and nested functions take plain names, because privacy is
-modules and classes rather than punctuation (`tests/check_private_prefix.py`).
+modules and classes rather than punctuation (`gates/check_private_prefix.py`).
 Locals are a noun or a verb, never a letter:
 `parser` / `exc` / `handle`, not `p` / `e` / `f`; `submit_parser`, never
-`submit_p`. Ruff has no VNE001 yet — `tests/check_names.py` is the rule
+`submit_p`. Ruff has no VNE001 yet — `gates/check_names.py` is the rule
 (`make lint`). pep8-naming (`N` in ruff) covers class/function shape.
 
 ### Fail fast, fail visible
@@ -84,7 +84,7 @@ in `runner.py`, the record-failed handler in `launch.py`, the pump guard in
 **There are no docstrings anywhere.** Not in `src`, not in `tests`, not on
 modules, classes or functions, with no exceptions: every file starts with its
 imports. `--help` text is passed to `ArgumentParser(description=...)` as a
-string, never taken from `__doc__`. `tests/check_no_docstrings.py` enforces
+string, never taken from `__doc__`. `gates/check_no_docstrings.py` enforces
 this from `make lint`, so adding one fails the build. The name and the
 signature are the documentation; if they are not enough, fix them rather than
 writing prose about them.
@@ -96,12 +96,12 @@ it does not meet that test, delete it. If it describes what happens at runtime,
 it is a `LOG.debug` line instead.
 
 No section banners (`# -- title ---`, `# ====`) and no `#` comments before the
-first top-level `def`/`class` (`tests/check_banners.py`,
-`tests/check_file_header.py`, both from `make lint`).
+first top-level `def`/`class` (`gates/check_banners.py`,
+`gates/check_file_header.py`, both from `make lint`).
 
 ### Let it breathe
 A block ending in `return` gets a blank line after it, so a guard clause is not
-welded to the code it guards (`tests/check_blank_after_return.py`). Beyond that
+welded to the code it guards (`gates/check_blank_after_return.py`). Beyond that
 rule, use blank lines freely between statements: a function is a few paragraphs,
 not one. Vertical space is the cheapest thing in the file and the formatter
 keeps whatever you write.

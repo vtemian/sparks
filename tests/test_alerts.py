@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
+from gates.check_dashboard import allowed as dashboard_allowed
+from gates.check_dashboard import metric_names
 from tests import promtool
-from tests.check_dashboard import allowed as dashboard_allowed
-from tests.check_dashboard import metric_names
 
 ROOT = Path(__file__).resolve().parents[1]
 ALERTS = sorted((ROOT / "monitoring" / "alerts").glob("*.yml"))

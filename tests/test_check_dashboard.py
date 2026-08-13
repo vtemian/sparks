@@ -1,6 +1,6 @@
 import pytest
 
-from tests.check_dashboard import (
+from gates.check_dashboard import (
     ROOT,
     CheckError,
     check,

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.check_names import SRC, is_banned, violations_in
+from gates.check_names import SRC, is_banned, violations_in
 
 if TYPE_CHECKING:
     from pathlib import Path

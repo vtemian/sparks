@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.check_file_header import SRC, is_header_comment, violations_in
+from gates.check_file_header import SRC, is_header_comment, violations_in
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.check_short_funcs import SRC, is_too_short, violations_in
+from gates.check_short_funcs import SRC, is_too_short, violations_in
 
 if TYPE_CHECKING:
     from pathlib import Path

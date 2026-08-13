@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.check_unused import SRC, findings
+from gates.check_unused import SRC, findings
 
 if TYPE_CHECKING:
     from pathlib import Path

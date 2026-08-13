@@ -65,7 +65,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 # N = pep8-naming (class/function shape). Single-letter locals (VNE001) and
-# letter-suffix abbreviations (submit_p) are not in ruff yet; tests/check_names.py
+# letter-suffix abbreviations (submit_p) are not in ruff yet; gates/check_names.py
 # is the rule, wired into `make lint`.
 select = [
     "F", "E", "W", "I", "B", "C4", "UP", "SIM", "S", "T20",
@@ -115,16 +115,11 @@ max-statements = 30
     "S101",    # assert
     "S108",    # "/tmp/..." literals are argparse fixtures; nothing is created
 ]
-# Makefile-invoked CLI scripts that live in tests/, not test modules.
-"tests/check_dashboard.py" = ["C901", "PLR0912", "T201"]
-"tests/check_names.py" = ["T201"]
-"tests/check_banners.py" = ["T201"]
-"tests/check_short_funcs.py" = ["T201"]
-"tests/check_file_header.py" = ["T201"]
-"tests/check_private_prefix.py" = ["T201"]
-"tests/check_no_docstrings.py" = ["T201"]
-"tests/check_blank_after_return.py" = ["T201"]
-"tests/check_unused.py" = ["T201"]
+# The gates: Makefile-invoked lint tools, not test modules. Printing findings
+# is their output contract.
+"gates/*.py" = ["T201"]
+"gates/check_dashboard.py" = ["C901", "PLR0912"]
+# Makefile-invoked CLI script that lives in tests/, not a test module.
 "tests/on_box.py" = ["BLE001", "C901", "PLR0912", "T201"]
 # The CLI surface prints; that is its output contract.
 "src/sparks/client/cli.py" = ["T201"]
@@ -136,7 +131,7 @@ max-statements = 30
 
 [tool.mypy]
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "gates"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

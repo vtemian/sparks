@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.check_banners import is_banner, iter_python, violations_in
+from gates.check_banners import is_banner, iter_python, violations_in
 
 
 def test_dashed_title_is_a_banner() -> None:
