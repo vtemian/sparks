@@ -27,9 +27,6 @@ uv tool install sparks-dgx
 sparks setup you@your-box
 ```
 
-The distribution is `sparks-dgx` because PyPI's `sparks` is an unrelated package; the command and
-the import are both `sparks`.
-
 `setup` remembers the box, lets your Docker push to its registry, restarts Docker, and says when it
 is ready. The restart stops whatever containers you have running.
 
@@ -42,9 +39,7 @@ sparks submit --context ./examples --data ./examples/data \
   --name lora-r16 -- python /app/lora_finetune.py --epochs 12
 ```
 
-`--data` arrives read-only at `/data`, also `$SPARKS_DATA`; read that path and never a laptop one.
-Name the script by absolute path, because the container's working directory is the box's shared
-directory rather than your image's.
+`--data` is `/data`. Scripts are `/app/...`; cwd is the shared dir, not the image.
 
 `--env KEY=VALUE` sets a variable in the job, and everyone on the box can read it. For a token use
 `--secret KEY`, which takes the value from your shell and keeps it out of every record.
@@ -60,8 +55,7 @@ with track(total=epochs * len(loader), tokens_per_step=batch_size * BLOCK) as ru
         run.step(loss=float(loss))
 ```
 
-`run.step` derives `step`, `progress`, `eta_seconds` and the rates. Pass a mapping rather than a
-number for one series per group, which is where the two learning-rate lines above come from:
+`run.step` derives `step`, `progress`, `eta_seconds` and the rates. A mapping is one series per group:
 `run.step(learning_rate={"adapter": 2e-4, "norms": 2e-5})`.
 
 Off the box `track` reports nothing, so the same script runs on your laptop unguarded. Metric names
@@ -82,16 +76,6 @@ sparks remove <job>     # delete a finished one
 ```
 
 `<job>` is an id, a unique fragment of one, or a name. `queue` and `status` take `--json`.
-
-## Layout
-
-```
-src/sparks/     the client, the emitter, and fire (the queue server)
-examples/       a runnable LoRA fine-tune and the image it needs
-monitoring/     the Grafana dashboards and Prometheus alerts the box displays
-skills/         Claude Code skills for writing a job and operating the queue
-tests/          the suite, the house-rule checkers, and the on-box acceptance script
-```
 
 ## Developing it
 

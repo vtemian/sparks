@@ -1,6 +1,6 @@
 ---
 name: operating-the-sparks-queue
-description: Use when watching, diagnosing, stopping or resubmitting training jobs already on a sparks box - reading sparks queue, logs and status, working out why a run failed, and cancel/abort/retry/remove. Covers the machine-readable --json forms, the states, what each failure detail actually means, which Grafana board answers which question, and how to tell a stuck runner from a busy one.
+description: Use when starting, watching, diagnosing, stopping or resubmitting training jobs on a sparks box — including before launching (is the queue free?), make train, sparks queue/logs/status, and cancel/abort/retry/remove. Covers the machine-readable --json forms, the states, what each failure detail actually means, which Grafana board answers which question, and how to tell a stuck runner from a busy one.
 ---
 
 # Operating the sparks queue

@@ -7,7 +7,9 @@ __pycache__/
 .coverage
 dist/
 tests/harness/rendered/
-.claude/
+# Local Claude session state. Skills are tracked under .claude/skills/.
+.claude/plans/
+.claude/worktrees/
 local.mk
 .DS_Store
 .worktrees/

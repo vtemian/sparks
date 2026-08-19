@@ -24,15 +24,18 @@ SPARKS_SHARED_DIR ?= /srv/spark
 SPARKS_VENV ?=
 
 
-# The one command a new user runs: put `sparks` on PATH, then ask the box which
-# registry it publishes and let this machine's Docker push to it. Docker still
-# has to be restarted afterwards, which is why setup prints the command rather
-# than running it: a restart kills whatever containers you have running.
+# The one command a new user runs. Puts `sparks` on PATH, installs the
+# skills where every harness looks, then asks the box which registry it
+# publishes and lets this machine's Docker push to it. Docker still has
+# to be restarted afterwards, which is why setup prints the command
+# rather than running it: a restart kills whatever containers you have
+# running.
 #
-# A tool install rather than `uv sync`, because the client is run from your own
-# project directory and a submit needs nothing from this checkout. Called
-# through uv's bin directory rather than by name: on a fresh machine that
-# directory is not on PATH yet, and `uv tool install` only warns about it.
+# A tool install rather than `uv sync`, because the client is run from
+# your own project directory and a submit needs nothing from this
+# checkout. Called through uv's bin directory rather than by name: on a
+# fresh machine that directory is not on PATH yet, and `uv tool install`
+# only warns about it.
 install:
 	uv tool install --force .
 	@$$(uv tool dir --bin)/sparks setup

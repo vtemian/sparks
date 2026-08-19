@@ -62,6 +62,9 @@ packages = ["src/sparks"]
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+# Agent-facing markdown that ships in the wheel. ruff format would wrap the
+# examples; the gate walks `src` and would rewrite them on every check.
+extend-exclude = ["src/sparks/skills"]
 
 [tool.ruff.lint]
 # N = pep8-naming (class/function shape). Single-letter locals (VNE001) and

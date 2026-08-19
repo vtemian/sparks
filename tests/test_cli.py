@@ -239,3 +239,45 @@ def test_a_status_that_is_not_json_is_refused(monkeypatch: pytest.MonkeyPatch) -
         pytest.raises(client.ClientError, match="did not answer with a status"),
     ):
         client.wait("box", "job-1", interval=0.0)
+
+
+def test_setup_with_a_box_does_not_ask(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv(client.HOST_ENV, raising=False)
+    monkeypatch.setattr("sparks.client.cli.local.install_skills", list)
+
+    def must_not_ask() -> str | None:
+        raise AssertionError("setup asked for a box it was given")
+
+    monkeypatch.setattr("sparks.client.cli.local.ask_box", must_not_ask)
+    monkeypatch.setattr(
+        "sparks.client.cli.local.trust_box_registry",
+        lambda host: 0 if host == "vlad@box" else 1,
+    )
+
+    assert cli.main(["setup", "vlad@box"]) == 0
+
+
+def test_setup_without_a_box_asks_when_the_terminal_can(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(client.HOST_ENV, raising=False)
+    monkeypatch.setattr("sparks.client.cli.local.install_skills", list)
+    monkeypatch.setattr("sparks.client.cli.local.ask_box", lambda: "vlad@spark.local")
+    monkeypatch.setattr(
+        "sparks.client.cli.local.trust_box_registry",
+        lambda host: 0 if host == "vlad@spark.local" else 1,
+    )
+
+    assert cli.main(["setup"]) == 0
+
+
+def test_setup_without_a_box_refuses_when_it_cannot_ask(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv(client.HOST_ENV, raising=False)
+    monkeypatch.setattr("sparks.client.cli.local.install_skills", list)
+    monkeypatch.setattr("sparks.client.cli.local.ask_box", lambda: None)
+
+    assert cli.main(["setup"]) == os.EX_CONFIG
+    assert client.HOST_ENV in capsys.readouterr().err

@@ -1,10 +1,8 @@
 # Skills
 
-Two Claude Code skills for driving sparks. Install by linking them where Claude looks:
-
-```sh
-ln -s "$PWD"/skills/* ~/.claude/skills/
-```
+The skills live in `src/sparks/skills/` and ship in the package. `sparks setup`
+(and so `make install`) is what puts them in `~/.claude/skills` and
+`~/.agents/skills`. This directory is the same two folders, linked.
 
 `authoring-a-sparks-job` covers instrumenting training code, the job Dockerfile, and
 submitting. `operating-the-sparks-queue` covers watching a run, working out why it failed,

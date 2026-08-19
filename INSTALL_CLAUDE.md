@@ -21,17 +21,27 @@ training project and needs nothing from a sparks checkout.
 
 ```sh
 uv tool install sparks-dgx
-sparks setup you@your-box
+sparks setup
 ```
 
-`setup` reads the box's contract, remembers the box, writes its registry into Docker's
-`daemon.json`, restarts Docker and verifies the registry took. It restarts only on macOS,
-where no password is needed; elsewhere it prints the command. A box it cannot reach is not
-remembered.
+`uv tool install` cannot finish the machine. A wheel is unpacked, not
+executed: there is no post-install hook, and uv will not add one. The
+command that finishes it is `sparks setup`. Run with no argument on a
+terminal and it asks for the box (`you@your-box`). A pipe, or a box
+already in `$SPARKS_HOST` or `~/.config/sparks/config.toml`, does not
+ask. From a checkout, `make install` is those two commands.
+
+`setup` installs the skills where Claude, Codex and Cursor already look
+(`~/.claude/skills` and `~/.agents/skills`), reads the box's contract,
+remembers the box, writes its registry into Docker's `daemon.json`,
+restarts Docker and verifies the registry took. It restarts only on
+macOS, where no password is needed; elsewhere it prints the command. A
+box it cannot reach is not remembered. A real directory already in
+`~/.claude/skills` is someone else's skill and is left alone; only a
+symlink is created or repointed.
 
 The distribution is `sparks-dgx` because PyPI's `sparks` is held by an unrelated project
 abandoned in 2019; the command and the import stay `sparks`, so the odd name is seen once.
-From a checkout, `make install` does the tool install and `sparks setup`.
 
 An install predating the rename was registered under the tool name `sparks`, so the upgrade
 fails with `Executables already exist: fire, sparks`. Run `uv tool uninstall sparks` first.
@@ -44,18 +54,21 @@ that `sparks-dgx` has since replaced.
 On the box, sparks ships inside the queue image. Converge sparkup rather than installing by
 hand; `make deploy` does **not** update the queue server.
 
-## Install the skills
+## The skills
 
-`skills/` holds two Claude Code skills: `authoring-a-sparks-job` for writing training code
-and its Dockerfile, `operating-the-sparks-queue` for watching and diagnosing runs. They are
-split because the triggers differ, and they cross-reference each other.
+They ship in the package, under `src/sparks/skills/`. `setup` is what
+installs them; there is no second command. `.agents/skills/` and
+`.claude/skills/` in this checkout are the same two folders, linked, so
+an agent working here sees them before anyone runs setup.
 
-```sh
-ln -s "$PWD"/skills/* ~/.claude/skills/
-```
+`authoring-a-sparks-job` is for writing training code and its Dockerfile.
+`operating-the-sparks-queue` is for watching and diagnosing runs. They
+are split because the triggers differ, and they cross-reference each
+other.
 
-Read `authoring-a-sparks-job` before writing a job. It carries the container traps that make
-a correct-looking image fail on the box after submit already reported success.
+Read `authoring-a-sparks-job` before writing a job. It carries the
+container traps that make a correct-looking image fail on the box after
+submit already reported success.
 
 ## Configure
 

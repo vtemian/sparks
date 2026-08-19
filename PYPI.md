@@ -33,9 +33,7 @@ sparks submit --context ./examples --data ./examples/data \
   --name lora-r16 -- python /app/lora_finetune.py --epochs 12
 ```
 
-`--data` arrives read-only at `/data`, also `$SPARKS_DATA`; read that path and never a laptop one.
-Name the script by absolute path, because the container's working directory is the box's shared
-directory rather than your image's.
+`--data` is `/data`. Scripts are `/app/...`; cwd is the shared dir, not the image.
 
 ## Instrument the loop
 

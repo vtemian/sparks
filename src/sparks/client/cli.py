@@ -30,7 +30,18 @@ def submit(args: argparse.Namespace, _argv: list[str]) -> int:
 
 
 def setup(args: argparse.Namespace, _argv: list[str]) -> int:
-    return local.trust_box_registry(args.host)
+    for line in local.install_skills():
+        print(f"sparks: {line}")
+    host = args.host or remote.host_from(None) or local.ask_box()
+    if host is None:
+        print(
+            "sparks: no box yet. Run `sparks setup you@your-box` once, "
+            f"or pass --host, or set {remote.HOST_ENV}",
+            file=sys.stderr,
+        )
+        return os.EX_CONFIG
+
+    return local.trust_box_registry(host)
 
 
 def wanted_box(args: argparse.Namespace) -> str | None:
@@ -124,7 +135,7 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser = subparsers.add_parser(
         "setup",
         parents=[host],
-        help="point this machine at a box and let its Docker push there",
+        help="install the skills, point this machine at a box, let Docker push there",
     )
     setup_parser.add_argument(
         "box", nargs="?", help="the box, as ssh addresses it: you@your-box"
@@ -279,7 +290,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(given)
 
     args.host = wanted_box(args)
-    if not remote.is_configured(args.host):
+    # setup is the one verb that can start without a box: it asks, then
+    # remembers. Everything else needs one already.
+    if args.func is not setup and not remote.is_configured(args.host):
         print(
             "sparks: no box yet. Run `sparks setup you@your-box` once, "
             f"or pass --host, or set {remote.HOST_ENV}",
@@ -287,9 +300,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         return os.EX_CONFIG
 
-    host = remote.host_from(args.host)
-    assert host is not None  # noqa: S101 -- narrowing; the None case returned above
-    args.host = host
+    if args.func is not setup:
+        host = remote.host_from(args.host)
+        assert host is not None  # noqa: S101 -- narrowing; the None case returned above
+        args.host = host
 
     command: Command = args.func
     try:

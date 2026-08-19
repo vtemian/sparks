@@ -4,6 +4,7 @@ import json
 import logging
 import platform
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -137,3 +138,57 @@ def trust_box_registry(host: str) -> int:
 
     print(f"sparks: restart Docker to pick it up:\n  {restart_hint()}")
     return 0
+
+
+def ask_box() -> str | None:
+    # Wheels cannot run setup. A TTY is the only place left to finish the
+    # machine after `uv tool install`. A pipe must not hang waiting for one.
+    if not sys.stdin.isatty():
+        return None
+
+    try:
+        answer = input("sparks: the box, as ssh addresses it (you@your-box): ").strip()
+    except EOFError:
+        return None
+
+    return answer or None
+
+
+SKILL_HOMES = (Path(".claude") / "skills", Path(".agents") / "skills")
+
+
+def packaged_skills() -> Path:
+    return Path(__file__).resolve().parents[1] / "skills"  # the wheel and a checkout
+
+
+def skill_dirs(root: Path) -> list[Path]:
+    if not root.is_dir():
+        return []
+
+    return sorted(
+        path
+        for path in root.iterdir()
+        if path.is_dir() and (path / "SKILL.md").is_file()
+    )
+
+
+def install_one(skill: Path, dest: Path) -> str:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() and not dest.is_symlink():
+        return f"SKIP    {dest} is a real directory"
+
+    dest.unlink(missing_ok=True)
+    dest.symlink_to(skill.resolve())
+    return f"linked  {dest}"
+
+
+def install_skills(*, home: Path | None = None, root: Path | None = None) -> list[str]:
+    # Same two homes every harness already scans. A real directory there is
+    # someone else's skill; leave it. A symlink we own is ours to repoint.
+    base = Path.home() if home is None else home
+    source = packaged_skills() if root is None else root
+    return [
+        install_one(skill, base / skill_home / skill.name)
+        for skill in skill_dirs(source)
+        for skill_home in SKILL_HOMES
+    ]

@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -297,3 +298,79 @@ class TestFinishingTheJob:
         printed = capsys.readouterr().out
         assert "ready" not in printed
         assert "restart" in printed
+
+
+def plant_skill(root: Path, name: str) -> Path:
+    skill = root / name
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: demo\ndescription: demo\n---\n")
+    return skill
+
+
+class TestInstallingSkills:
+    def test_the_package_ships_both_skills(self) -> None:
+        names = {path.name for path in local.skill_dirs(local.packaged_skills())}
+        assert names == {"authoring-a-sparks-job", "operating-the-sparks-queue"}
+
+    def test_it_links_each_skill_into_both_homes(self, tmp_path: Path) -> None:
+        root = tmp_path / "pkg"
+        home = tmp_path / "home"
+        plant_skill(root, "authoring-a-sparks-job")
+        plant_skill(root, "operating-the-sparks-queue")
+
+        lines = local.install_skills(home=home, root=root)
+
+        for name in ("authoring-a-sparks-job", "operating-the-sparks-queue"):
+            for rel in (".claude/skills", ".agents/skills"):
+                dest = home / rel / name
+                assert dest.is_symlink()
+                assert dest.resolve() == (root / name).resolve()
+        assert any(line.startswith("linked") for line in lines)
+
+    def test_it_leaves_a_real_directory_alone(self, tmp_path: Path) -> None:
+        root = tmp_path / "pkg"
+        home = tmp_path / "home"
+        plant_skill(root, "authoring-a-sparks-job")
+        taken = home / ".claude" / "skills" / "authoring-a-sparks-job"
+        taken.mkdir(parents=True)
+        (taken / "mine.md").write_text("keep\n")
+
+        lines = local.install_skills(home=home, root=root)
+
+        assert (taken / "mine.md").read_text() == "keep\n"
+        assert not taken.is_symlink()
+        assert any("SKIP" in line and str(taken) in line for line in lines)
+
+    def test_it_repoints_a_symlink_it_already_owns(self, tmp_path: Path) -> None:
+        root = tmp_path / "pkg"
+        home = tmp_path / "home"
+        plant_skill(root, "authoring-a-sparks-job")
+        dest = home / ".claude" / "skills" / "authoring-a-sparks-job"
+        dest.parent.mkdir(parents=True)
+        dest.symlink_to(tmp_path / "stale")
+
+        local.install_skills(home=home, root=root)
+
+        assert dest.resolve() == (root / "authoring-a-sparks-job").resolve()
+
+
+class TestAskingForTheBox:
+    def test_it_is_silent_when_stdin_is_not_a_tty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+
+        assert local.ask_box() is None
+
+    def test_it_reads_the_line(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: list[str] = []
+
+        def fake_input(prompt: str) -> str:
+            seen.append(prompt)
+            return "  vlad@box  "
+
+        monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", fake_input)
+
+        assert local.ask_box() == "vlad@box"
+        assert seen and "you@your-box" in seen[0]

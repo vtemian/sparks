@@ -1,6 +1,6 @@
 ---
 name: authoring-a-sparks-job
-description: Use when writing or preparing training code to run on a sparks box - instrumenting a loop with sparks.emit, writing the job Dockerfile, and submitting with sparks submit. Covers the closed metric vocabulary, the read-only /data mount, where output survives, how the image is tagged and when a submit overwrites one, and the container traps that make a job fail on the box after submit already succeeded.
+description: Use when writing, preparing, starting, submitting, or launching a training job on a sparks box — including make train, sparks submit, a GPU run, or anything that would otherwise be nohup or ssh python. Instrumenting a loop with sparks.emit, writing the job Dockerfile, and submitting with sparks submit. Covers the closed metric vocabulary, the read-only /data mount, where output survives, how the image is tagged and when a submit overwrites one, and the container traps that make a job fail on the box after submit already succeeded.
 ---
 
 # Authoring a sparks job
