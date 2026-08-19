@@ -26,6 +26,9 @@ sparks setup you@your-box
 `setup` remembers the box, lets your Docker push to its registry, restarts Docker, and says when
 it is ready. The restart stops whatever containers you have running.
 
+It also installs two skills into `~/.claude/skills` and `~/.agents/skills`, so Claude Code, Codex
+and Cursor can write a job and drive the queue for you.
+
 ## Submit a job
 
 ```sh

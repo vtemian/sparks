@@ -77,6 +77,17 @@ sparks remove <job>     # delete a finished one
 
 `<job>` is an id, a unique fragment of one, or a name. `queue` and `status` take `--json`.
 
+## Ask an agent instead
+
+`setup` installs two skills into `~/.claude/skills` and `~/.agents/skills`, where Claude Code,
+Codex and Cursor look:
+
+- `authoring-a-sparks-job` — instrument the loop, write the job Dockerfile, submit.
+- `operating-the-sparks-queue` — watch a run, diagnose a failure, stop or resubmit it.
+
+There is nothing to invoke. Ask for what you want — *"train this on the box and tell me when it
+breaks"* — and the agent reads the right one and runs the commands above.
+
 ## Developing it
 
 ```sh
