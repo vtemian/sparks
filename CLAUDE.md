@@ -1,7 +1,7 @@
 # CLAUDE.md
 
-Standing rules for working in sparks. How to install it and run a job is
-INSTALL_CLAUDE.md.
+Standing rules for working in sparks. How to author and run a job is the two
+skills under `skills/`; setup is the README.
 
 ## Before every commit
 
@@ -132,3 +132,10 @@ looks like success is the worst outcome.
 
 Plain imperative sentences in the repo's voice; `fix:` prefix for bugfixes.
 Small and frequent. Never `git add -A` without `git status` first.
+
+## Dates and deployment facts
+
+Never write a date into a comment, a skill, or doc prose - git history holds when, the
+text holds what and why. The skills under `skills/` ship with the tool: generic mechanism
+only, no usernames, no host-specific paths, no incident stories. Repo facts belong
+here, procedures in the skills.

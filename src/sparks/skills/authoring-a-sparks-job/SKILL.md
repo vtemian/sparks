@@ -320,6 +320,14 @@ Submit prints the job id on stdout and nothing else — build and push progress 
 so `JOB=$(sparks submit --data ./corpus --name e0 -- python /app/train.py)` means what it
 looks like.
 
+The build and push run through the **local Docker daemon**, so a submit inherits the daemon's
+failures as its own. Docker Desktop auto-installing an update mid-push kills the stream
+(`ProtocolError: IncompleteRead`), and a resubmit inside the restart window gets
+`ConnectionRefusedError` before anything builds. Neither loses work: the local image and the
+registry's completed layers survive, so restart the daemon and resubmit and the push resumes.
+On a machine that submits, turn off Docker Desktop's automatic update install; an engine
+restart is harmless between submits and fatal under one.
+
 `--data` goes up with rsync, mirroring the folder (`--archive --delete`) and always skipping
 `.git/`, `__pycache__/`, `*.pyc` and `.venv/`. A `.dockerignore` **inside that folder** is read
 as a further exclude list. Submitting needs `rsync` and `ssh` on this machine.

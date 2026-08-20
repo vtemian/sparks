@@ -11,6 +11,14 @@ Every verb here runs on a laptop and travels over SSH to the box. Which box, in 
 so a one-off `SPARKS_HOST` reaches another box without editing a file. There is no local
 mode: a command that says there is no box yet never reached one at all.
 
+One escape hatch, for when no laptop can stay connected mid-pipeline: the client can be
+installed on the box itself and pointed at `localhost`, so a box-side script can wait,
+stage and submit laptop-free. `--image <tag already in the registry>` is what makes a
+box-side submit buildless — the box never builds, so a submit that needs a build cannot
+run there. While a laptop is present, use its client; wrapping the box-side one in ssh
+adds a hop and buys nothing. The `sparks` already on the box's PATH is the RUNNER, not
+the client — client verbs against it print the runner's own usage error.
+
 ## Read the queue
 
 ```sh
@@ -35,6 +43,11 @@ empty `queue` is not evidence that a job never existed.
 The runner takes **one job at a time**, waiting for it to finish before starting the next, and
 gives that job every GPU on the box. A job sitting at `queued` is not stuck; it is behind the
 one that is running.
+
+The other honest reason for a long `queued` is the job's own image: the **first pull of a new
+multi-GB tag takes minutes**, the state stays `queued` with no `run_id` the whole time, and
+`pull.log` in the job directory is the only artifact of the work. Every later job on that tag
+starts in seconds, so this is paid once per image, on its first job.
 
 ## Naming a job
 
@@ -143,7 +156,9 @@ starting a run that would fail on the first authenticated call.
 
 The supervisor hands you the link: where the box's contract names a Grafana, the second line
 of `launch.log` in the job directory is a deep link into `training-runs`, already scoped to
-this run and to the minute before it started. It prints nothing there rather than guessing a
+this run and to the minute before it started. `launch.log` exists only once the job actually
+launches — while it is queued or pulling, the job directory holds `job.json` and `pull.log`
+and there is no link to hand out yet. It prints nothing there rather than guessing a
 hostname, so on a box without one, `sparks status <job> --json` gives the id under
 `state.run_id` and the dashboard's `$run_id` dropdown takes it. That dropdown is scoped to
 the dashboard's time range, so with the default `now-3h` it lists recent runs only — widening
@@ -183,6 +198,15 @@ written on every pass the runner takes, including the ones that find nothing to 
 minutes old, the container is up and `docker ps` is green and yet nothing will ever start —
 that is the one failure the queue cannot report about itself, and the reason the heartbeat
 exists at all.
+
+**A stale heartbeat is not yet a verdict.** A pass that blocks on a first-time image pull
+writes no heartbeat for as long as the pull runs, and from the queue it is indistinguishable
+from a dead runner: heartbeat aging, job `queued`, no `run_id`, and no pull process anywhere,
+because the runner drives dockerd over the API and the work shows up nowhere but inside
+dockerd. A pull of tens of GB holds the heartbeat silent for minutes, and a runner restart
+in that window kills the mid-start job it looked like it was failing to start. The
+discriminator is on the box, not in the queue: **dockerd CPU high and disk growing means
+busy; both flat means stuck.** Only the stuck case is remedied by restarting the runner.
 
 Prometheus evaluates `monitoring/alerts/sparks.yml` on the box, but nothing routes it: there
 is no Alertmanager, so "firing" means a series says so and somebody has to look. They are in
